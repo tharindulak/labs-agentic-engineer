@@ -224,24 +224,24 @@ unset GITHUB_WEBHOOK_PROXY_URL
 docker compose up --build -d
 echo "✅ Docker services started"
 
-# 7b. Verify the aep-mcp-server (the OpenChoreo SRE agent's door into AEP —
-#     issue creation + coding-agent dispatch during the RCA handoff). Compose
-#     starts it; this just fails loudly instead of leaving the handoff to 502
-#     at RCA time. See docs/developer-guide/sre-handoff-runbook.md.
+# 7b. Verify aep-api is up — it now hosts the OpenChoreo SRE agent's door into
+#     AEP (POST /sre-mcp: issue creation + coding-agent dispatch during the RCA
+#     handoff, served in-process). This just fails loudly instead of leaving the
+#     handoff to fail at RCA time. See docs/developer-guide/sre-handoff-runbook.md.
 echo ""
-echo "🤝 Checking aep-mcp-server (SRE-agent handoff endpoint)..."
+echo "🤝 Checking aep-api (SRE-agent handoff surface /sre-mcp)..."
 MCP_OK=""
 for i in 1 2 3 4 5 6 7 8 9 10; do
-    if curl -s --max-time 2 http://localhost:3401/healthz 2>/dev/null | grep -q '"ok"'; then
+    if curl -s --max-time 2 http://localhost:9090/healthz 2>/dev/null | grep -q '"ok"'; then
         MCP_OK=yes; break
     fi
     sleep 2
 done
 if [ -n "$MCP_OK" ]; then
-    echo "✅ aep-mcp-server healthy on :3401"
+    echo "✅ aep-api healthy on :9090 (SRE handoff at POST /sre-mcp)"
 else
-    echo "⚠️  aep-mcp-server not responding on :3401 — the RCA→coding-agent handoff"
-    echo "    will fail its ae_* tool calls. Check: docker logs aep-mcp-server"
+    echo "⚠️  aep-api not responding on :9090 — the RCA→coding-agent handoff"
+    echo "    will fail its ae_* tool calls. Check: docker logs aep-api"
 fi
 
 # 7c. Verify the cluster half of the handoff — the ai-rca-agent deployment.
@@ -260,10 +260,10 @@ if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/d
             echo "✅ ai-rca-agent ready (AE_HANDOFF=${RCA_HANDOFF:-unset})"
         elif [ -n "$MCP_OK" ] && [ "$RCA_HANDOFF" = "true" ]; then
             # Expected after a fresh setup.sh: with AE_HANDOFF=true the agent's
-            # boot-time MCP test is FATAL, and aep-mcp-server wasn't running
-            # until a moment ago — the pod is in CrashLoopBackOff whose next
-            # retry may be minutes away. Bounce it now that the MCP is up.
-            echo "   ai-rca-agent not ready but aep-mcp-server just came up —"
+            # boot-time MCP test is FATAL, and aep-api wasn't running until a
+            # moment ago — the pod is in CrashLoopBackOff whose next retry may
+            # be minutes away. Bounce it now that the MCP surface is up.
+            echo "   ai-rca-agent not ready but aep-api just came up —"
             echo "   restarting it to break the crash-loop backoff..."
             kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" rollout restart deploy/ai-rca-agent >/dev/null
             if kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" rollout status deploy/ai-rca-agent --timeout=180s >/dev/null 2>&1; then
@@ -344,8 +344,8 @@ echo ""
 echo "  Console:          http://localhost:8090"
 echo "  API:              http://localhost:9090"
 echo "  Agents:           http://localhost:4000"
-echo "  SRE-handoff MCP:  http://localhost:3401 (alert → AI-RCA → issue → coding agent;"
-echo "                    see docs/developer-guide/sre-handoff-runbook.md)"
+echo "  SRE-handoff MCP:  http://localhost:9090/sre-mcp (alert → AI-RCA → issue → coding agent;"
+echo "                    served in-process by aep-api; see docs/developer-guide/sre-handoff-runbook.md)"
 echo "  Temporal Web UI:  http://localhost:8233   (devflow workflow dashboard)"
 echo ""
 echo "  Coding-agent:     dispatched as a one-shot pod via the"

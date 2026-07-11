@@ -40,7 +40,7 @@ Wire an OpenChoreo alert → AI RCA → GitHub issue → coding-agent PR, end to
 
 ```
 ERROR log → alert rule → observer → ai-rca-agent (RCA → remediation → handoff)
-  → aep-mcp-server → aep-api → GitHub issue → coding-agent Job → PR (human merges)
+  → aep-api /sre-mcp → GitHub issue → coding-agent Job → PR (human merges)
   → webhook → build → deploy
 ```
 
@@ -58,9 +58,9 @@ Condensed steps:
 
 **AEP side**
 ```bash
-# 5. Start the MCP server (the SRE agent's door into AEP)
-cd deployments && docker compose up -d aep-api aep-mcp-server
-curl -s http://localhost:3401/healthz    # {"status":"ok"}
+# 5. Start aep-api (it hosts the SRE agent's door into AEP at POST /sre-mcp)
+cd deployments && docker compose up -d aep-api
+curl -s http://localhost:9090/healthz    # {"status":"ok"}
 
 # 6. Verify aep-api accepts the RCA agent's token audience (compose default already does)
 docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
@@ -81,7 +81,7 @@ kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
 
 # 8. Enable the handoff (AE_AUTO_DISPATCH=false → issue-only, human dispatches)
 kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \
-  '{"data":{"AE_HANDOFF":"true","AE_AUTO_DISPATCH":"true","AE_API_URL":"http://host.k3d.internal:3401"}}'
+  '{"data":{"AE_HANDOFF":"true","AE_AUTO_DISPATCH":"true","AE_API_URL":"http://host.k3d.internal:9090"}}'
 kubectl rollout restart deploy/ai-rca-agent -n openchoreo-observability-plane
 kubectl logs -n openchoreo-observability-plane deploy/ai-rca-agent | grep "MCP connection"
 # expect: "loaded 102 tools" (99 + the 3 ae_* tools)

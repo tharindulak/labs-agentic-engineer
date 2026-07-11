@@ -161,9 +161,16 @@ func TestMCPSurface_FullRoundTrip(t *testing.T) {
 		name, _ := tool["name"].(string)
 		names[name] = true
 	}
+	// The discovery surface exposes exactly 7 read-only tools. Asserting the
+	// exact count guards against the SRE-handoff merge (POST /sre-mcp) leaking
+	// its ae_* tools onto this mount — the two surfaces must stay separate.
+	if len(tools) != 7 {
+		t.Errorf("discovery tools/list returned %d tools, want exactly 7 (got %v)", len(tools), names)
+	}
 	for _, want := range []string{
 		"list_external_resources", "get_external_resource_schema",
-		"list_org_endpoints", "list_platform_resource_types",
+		"list_org_endpoints", "list_org_component_endpoints", "list_platform_resource_types",
+		"get_remote_git_file_contents", "search_remote_git_code",
 	} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q (got %v)", want, names)

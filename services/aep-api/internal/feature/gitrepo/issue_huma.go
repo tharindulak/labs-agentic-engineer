@@ -107,7 +107,7 @@ func RegisterIssue(api huma.API, svc IssueService) {
 			return nil, huma.Error500InternalServerError("failed to list issues")
 		}
 
-		return &issueListOutput{Body: rankIssuesByQuery(issues, in.Query)}, nil
+		return &issueListOutput{Body: RankIssuesByQuery(issues, in.Query)}, nil
 	})
 }
 
@@ -125,7 +125,7 @@ var issueSearchStopwords = map[string]bool{
 	"into": true, "via": true, "issue": true, "error": true, "errors": true,
 }
 
-// rankIssuesByQuery replaces the old single-substring filter, which returned
+// RankIssuesByQuery replaces the old single-substring filter, which returned
 // nothing whenever the caller passed a multi-word query (the exact miss that
 // left same-incident issues unlinked): "service1 timeout retry" was never a
 // literal substring of any issue. Now the query is tokenised and each issue
@@ -137,7 +137,7 @@ var issueSearchStopwords = map[string]bool{
 //
 // Empty/all-stopword query → return everything (unchanged contract for a
 // "list all" call). No overlap → empty, same as before.
-func rankIssuesByQuery(issues []IssueInfo, query string) []IssueInfo {
+func RankIssuesByQuery(issues []IssueInfo, query string) []IssueInfo {
 	terms := tokenizeIssueQuery(query)
 	if len(terms) == 0 {
 		return issues

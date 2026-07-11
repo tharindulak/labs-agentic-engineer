@@ -17,11 +17,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/feature/dependencies"
+	"github.com/wso2/aep/aep-api/internal/feature/handoff"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
@@ -42,6 +44,8 @@ import (
 //	               /mcp/playground-token  NONE — flag-gated only                   dependencies/playground_token.go
 //	               (POST, local dev)      (PLAYGROUND_TOKEN_ENABLED, off by         (mounted only when the flag is true —
 //	                                      default; docker-compose sets it)          404 by absence otherwise)
+//	SRE handoff    /sre-mcp             Thunder user JWT + org gate                handoff/mcp_handoff.go ·
+//	               (POST, JSON-RPC)     (org from the verified token, never input)  jwt → orgensure (no spec — JSON-RPC)
 //	external       /api/v1/webhooks,    per-route bespoke: GitHub HMAC /           webhook_routes.go · org_github_routes.go
 //	               .../github/connect    signed connect-state (org from payload)    (no generated spec; paths kept — Q4)
 //	dev/test       /_dev/v1             none — registration-gated to dev tier      dev.go · RegisterAllDev
@@ -188,6 +192,21 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 		})
 	}
 	mux.Handle("/api/", jwt(ensureOrg(stampGateMode(apiMux))))
+
+	// ── SRE handoff MCP (POST /sre-mcp) ──────────────────────────────────────
+	// A raw (non-Huma) JSON-RPC mount for the OpenChoreo SRE/RCA agent's ae_*
+	// handoff tools (file issue + dispatch coding agent), the in-process
+	// successor to the retired services/aep-mcp-server bridge. It rides the SAME
+	// public-edge jwt + ensureOrg middleware as /api/, so the SRE agent
+	// authenticates with the exact Thunder token it already presents; the org is
+	// resolved from the verified claims (auth.ResolveOuHandle), never the request.
+	// The more-specific "POST /sre-mcp" pattern wins over "/api/" in ServeMux.
+	mux.Handle("POST /sre-mcp", jwt(ensureOrg(handoff.NewHandoffMCPHandler(
+		params.HumaDeps.IssueSvc, params.HumaDeps.TaskCommands,
+		func(ctx context.Context) (string, bool) {
+			h := auth.ResolveOuHandle(auth.ClaimsFromContext(ctx))
+			return h, h != ""
+		}))))
 
 	return mux
 }

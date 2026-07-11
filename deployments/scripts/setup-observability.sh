@@ -93,8 +93,9 @@
 #                   shows in the console Alerts bell/list (default: true;
 #                   handoff-v14+). Needs AEP_API_URL.
 #   AEP_API_URL     aep-api REST base for report publishing
-#                   (default: http://host.k3d.internal:9090). NOT AE_API_URL
-#                   (that is the MCP server on :3401).
+#                   (default: http://host.k3d.internal:9090). Same aep-api as
+#                   AE_API_URL now — the SRE handoff MCP moved in-process onto
+#                   aep-api (POST /sre-mcp), so both point at :9090.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -109,14 +110,15 @@ OBS_LOGS_VERSION="0.5.1"
 NS="openchoreo-observability-plane"
 
 # SRE-agent handoff knobs (see header). AE_API_URL is how the in-cluster RCA
-# agent reaches the docker-compose-hosted aep-mcp-server on the host.
+# agent reaches aep-api's SRE handoff MCP surface (POST /sre-mcp) on the host;
+# the agent appends /sre-mcp to this base.
 AE_HANDOFF="${AE_HANDOFF:-true}"
 AE_AUTO_DISPATCH="${AE_AUTO_DISPATCH:-true}"
-AE_API_URL="${AE_API_URL:-http://host.k3d.internal:3401}"
+AE_API_URL="${AE_API_URL:-http://host.k3d.internal:9090}"
 # Report publishing (handoff-v14+): POST each completed RCA report to aep-api
 # so it surfaces in the console Alerts bell/list. AEP_API_URL is aep-api's REST
-# base — DISTINCT from AE_API_URL (the MCP server on :3401); reports go to the
-# HTTP API on :9090.
+# base — now the SAME aep-api as AE_API_URL (:9090), since the handoff MCP is
+# served in-process by aep-api rather than a separate server.
 AE_PUBLISH_REPORTS="${AE_PUBLISH_REPORTS:-true}"
 AEP_API_URL="${AEP_API_URL:-http://host.k3d.internal:9090}"
 
@@ -427,7 +429,7 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #   rca-agent-config:
 #     AE_HANDOFF               enables the RCA→AEP handoff stage (issue+dispatch)
 #     AE_AUTO_DISPATCH         false ⇒ issue-only; a human dispatches from AEP
-#     AE_API_URL               aep-mcp-server base URL (host.k3d.internal:3401)
+#     AE_API_URL               aep-api base URL for /sre-mcp (host.k3d.internal:9090)
 #     AE_PUBLISH_REPORTS       publish RCA reports to aep-api (console Alerts)
 #     AEP_API_URL              aep-api REST base (host.k3d.internal:9090)
 echo ""
@@ -447,15 +449,15 @@ fi
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deploy/observer --timeout=300s
 if [ "$AE_HANDOFF" = "true" ]; then
     # With AE_HANDOFF=true the agent's boot-time MCP test is FATAL: it must
-    # reach aep-mcp-server (docker-compose, started later by start.sh). Only
-    # wait for readiness if that server is already up (i.e. setup is being
-    # re-run on a live stack); on a fresh setup the crash-loop is expected
+    # reach aep-api's /sre-mcp surface (docker-compose, started later by
+    # start.sh). Only wait for readiness if aep-api is already up (i.e. setup is
+    # being re-run on a live stack); on a fresh setup the crash-loop is expected
     # and start.sh auto-recovers the agent once compose is up.
-    if curl -s --max-time 2 http://localhost:3401/healthz 2>/dev/null | grep -q '"ok"'; then
+    if curl -s --max-time 2 http://localhost:9090/healthz 2>/dev/null | grep -q '"ok"'; then
         kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deploy/ai-rca-agent --timeout=300s || \
             echo "⚠️  ai-rca-agent not ready — check the RCA image import in step 1b"
     else
-        echo "ℹ️  aep-mcp-server not running yet — ai-rca-agent will crash-loop until"
+        echo "ℹ️  aep-api not running yet — ai-rca-agent will crash-loop until"
         echo "    'bash scripts/start.sh' brings the compose stack up (start.sh then"
         echo "    auto-restarts the agent). This is expected on a fresh setup."
     fi

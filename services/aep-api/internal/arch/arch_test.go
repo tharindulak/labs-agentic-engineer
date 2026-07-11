@@ -98,10 +98,20 @@ var featureEdgeAllowlist = map[string][]string{
 	// TaskFlow workflow (devflow, nil-safe). Design at HEAD is read through a
 	// consumer-side port, not a direct artifacts import. It NEVER imports
 	// feature/task — the §1 split is a package boundary.
-	"execution":    {"gitrepo", "devflow"},
-	"files":        {"gitrepo"},
-	"genai":        {"gitrepo"},
-	"gitrepo":      {},
+	"execution": {"gitrepo", "devflow"},
+	"files":     {"gitrepo"},
+	"genai":     {"gitrepo"},
+	"gitrepo":   {},
+	// handoff is the SRE handoff MCP surface (POST /sre-mcp): the in-process
+	// successor to the standalone aep-mcp-server. Its 3 ae_* tools ARE thin
+	// adapters over aep-api's own issue/dispatch services, so the two edges are
+	// the feature — ae_search_related_issues/ae_create_issue call
+	// gitrepo.IssueService (+ gitrepo.RankIssuesByQuery), and
+	// ae_dispatch_coding_agent calls task.Commands.PromoteAndExecute. Both are
+	// consumed directly (not behind a new port) precisely because folding the
+	// former HTTP proxy back in-process is the point of the merge. It NEVER
+	// imports feature/execution — dispatch flows through task, same as the §1 split.
+	"handoff":      {"gitrepo", "task"},
 	"idp":          {"orgcreds"},
 	"organization": {},
 	// orgconfig is the consolidated /config surface (org-config-consolidation.md):

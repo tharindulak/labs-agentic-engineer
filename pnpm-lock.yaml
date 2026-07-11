@@ -366,31 +366,6 @@ importers:
         specifier: ^25.5.0
         version: 25.9.4
 
-  services/aep-mcp-server:
-    dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.24.0
-        version: 1.29.0(zod@4.4.3)
-      express:
-        specifier: ^5.0.0
-        version: 5.2.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.4.3
-    devDependencies:
-      '@types/express':
-        specifier: ^5.0.0
-        version: 5.0.6
-      '@types/node':
-        specifier: ^25.6.0
-        version: 25.9.4
-      tsx:
-        specifier: ^4.21.0
-        version: 4.22.4
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
   services/agents:
     dependencies:
       '@aep/agent-stream':
@@ -5562,7 +5537,7 @@ snapshots:
 
   '@emotion/sheet@1.4.0': {}
 
-  '@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)':
+  '@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@emotion/babel-plugin': 11.13.5
@@ -6027,20 +6002,20 @@ snapshots:
 
   '@mui/core-downloads-tracker@7.3.11': {}
 
-  '@mui/icons-material@5.15.21(@mui/material@5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)':
+  '@mui/icons-material@5.15.21(@mui/material@5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)':
     dependencies:
       '@babel/runtime': 7.29.7
-      '@mui/material': 5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@mui/material': 5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react: 18.3.1
     optionalDependencies:
       '@types/react': 19.1.6
 
-  '@mui/material@5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+  '@mui/material@5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@mui/base': 5.0.0-beta.6(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@mui/core-downloads-tracker': 5.18.0
-      '@mui/system': 5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)
+      '@mui/system': 5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
       '@mui/types': 7.4.12(@types/react@19.1.6)
       '@mui/utils': 5.17.1(@types/react@19.1.6)(react@18.3.1)
       '@types/react-transition-group': 4.4.12(@types/react@19.1.6)
@@ -6053,7 +6028,7 @@ snapshots:
       react-transition-group: 4.4.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
     optionalDependencies:
       '@emotion/react': 11.14.0(@types/react@19.1.6)(react@18.3.1)
-      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)
+      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
       '@types/react': 19.1.6
 
   '@mui/material@7.3.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
@@ -6095,7 +6070,7 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.1.6
 
-  '@mui/styled-engine@5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(react@18.3.1)':
+  '@mui/styled-engine@5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(react@18.3.1)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@emotion/cache': 11.14.0
@@ -6105,7 +6080,7 @@ snapshots:
       react: 18.3.1
     optionalDependencies:
       '@emotion/react': 11.14.0(@types/react@19.1.6)(react@18.3.1)
-      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)
+      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
 
   '@mui/styled-engine@7.3.10(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(react@19.2.3)':
     dependencies:
@@ -6120,11 +6095,11 @@ snapshots:
       '@emotion/react': 11.14.0(@types/react@19.1.6)(react@19.2.3)
       '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3)
 
-  '@mui/system@5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)':
+  '@mui/system@5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@mui/private-theming': 5.17.1(@types/react@19.1.6)(react@18.3.1)
-      '@mui/styled-engine': 5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(react@18.3.1)
+      '@mui/styled-engine': 5.18.0(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(react@18.3.1)
       '@mui/types': 7.2.24(@types/react@19.1.6)
       '@mui/utils': 5.17.1(@types/react@19.1.6)(react@18.3.1)
       clsx: 2.1.1
@@ -6133,7 +6108,7 @@ snapshots:
       react: 18.3.1
     optionalDependencies:
       '@emotion/react': 11.14.0(@types/react@19.1.6)(react@18.3.1)
-      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)
+      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
       '@types/react': 19.1.6
 
   '@mui/system@7.3.11(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3)':
@@ -6326,21 +6301,21 @@ snapshots:
       react: 18.3.1
       resize-observer-polyfill: 1.5.1
 
-  '@projectstorm/react-diagrams-defaults@6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)':
+  '@projectstorm/react-diagrams-defaults@6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)':
     dependencies:
       '@emotion/react': 11.14.0(@types/react@19.1.6)(react@18.3.1)
-      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)
+      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
       '@projectstorm/react-diagrams-core': 6.7.4(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
       lodash: 4.18.1
       react: 18.3.1
     transitivePeerDependencies:
       - resize-observer-polyfill
 
-  '@projectstorm/react-diagrams-routing@6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)':
+  '@projectstorm/react-diagrams-routing@6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)':
     dependencies:
       '@projectstorm/geometry': 6.7.4
       '@projectstorm/react-diagrams-core': 6.7.4(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
-      '@projectstorm/react-diagrams-defaults': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
+      '@projectstorm/react-diagrams-defaults': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
       dagre: 0.8.5
       lodash: 4.18.1
       pathfinding: 0.4.18
@@ -6351,11 +6326,11 @@ snapshots:
       - '@emotion/styled'
       - resize-observer-polyfill
 
-  '@projectstorm/react-diagrams@6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)':
+  '@projectstorm/react-diagrams@6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)':
     dependencies:
       '@projectstorm/react-diagrams-core': 6.7.4(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
-      '@projectstorm/react-diagrams-defaults': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
-      '@projectstorm/react-diagrams-routing': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)
+      '@projectstorm/react-diagrams-defaults': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
+      '@projectstorm/react-diagrams-routing': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)
     transitivePeerDependencies:
       - '@emotion/react'
       - '@emotion/styled'
@@ -7549,16 +7524,16 @@ snapshots:
   '@wso2/cell-diagram@0.2.0(@types/react@19.1.6)(pathfinding@0.4.18)(paths-js@0.4.11)(resize-observer-polyfill@1.5.1)':
     dependencies:
       '@emotion/react': 11.14.0(@types/react@19.1.6)(react@18.3.1)
-      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@18.3.1)
+      '@emotion/styled': 11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
       '@material-ui/core': 4.12.4(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      '@mui/icons-material': 5.15.21(@mui/material@5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
-      '@mui/material': 5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@mui/icons-material': 5.15.21(@mui/material@5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@types/react@19.1.6)(react@18.3.1)
+      '@mui/material': 5.13.7(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@projectstorm/geometry': 6.7.4
       '@projectstorm/react-canvas-core': 6.7.4(lodash@4.18.1)(react@18.3.1)
-      '@projectstorm/react-diagrams': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)
+      '@projectstorm/react-diagrams': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)
       '@projectstorm/react-diagrams-core': 6.7.4(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
-      '@projectstorm/react-diagrams-defaults': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
-      '@projectstorm/react-diagrams-routing': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@19.2.3))(@types/react@19.1.6)(react@19.2.3))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)
+      '@projectstorm/react-diagrams-defaults': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(lodash@4.18.1)(react@18.3.1)(resize-observer-polyfill@1.5.1)
+      '@projectstorm/react-diagrams-routing': 6.7.4(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@emotion/styled@11.14.1(@emotion/react@11.14.0(@types/react@19.1.6)(react@18.3.1))(@types/react@19.1.6)(react@18.3.1))(dagre@0.8.5)(lodash@4.18.1)(pathfinding@0.4.18)(paths-js@0.4.11)(react@18.3.1)(resize-observer-polyfill@1.5.1)
       '@types/lodash': 4.17.24
       '@types/node': 18.19.130
       dagre: 0.8.5

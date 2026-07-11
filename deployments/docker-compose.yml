@@ -143,8 +143,9 @@ services:
       JWT_ISSUER: "${JWT_ISSUER:-http://thunder.openchoreo.localhost:8080}"
       # openchoreo-rca-agent: accept the OpenChoreo SRE/RCA agent's service-account
       # tokens (same Thunder issuer, ouHandle=default) so the AE-handoff stage can
-      # call the issue/dispatch endpoints via aep-mcp-server. See
-      # AE-HANDOFF-DESIGN.md §9 in openchoreo/agents/sre-agent.
+      # reach the SRE handoff MCP surface (POST /sre-mcp) and its issue/dispatch
+      # tools directly on aep-api. See AE-HANDOFF-DESIGN.md §9 in
+      # openchoreo/agents/sre-agent.
       JWT_AUDIENCE: "${BFF_AUDIENCE:-aep-*,openchoreo-rca-agent}"
 
       # ── Phase 3 of api-platform-integration — Thunder admin client
@@ -313,27 +314,12 @@ services:
       - aep
 
   # ---------------------------------------------------------------------------
-  # aep-mcp-server — Streamable-HTTP MCP wrapper over aep-api's issue/dispatch
-  # REST endpoints, so external agents (e.g. the OpenChoreo SRE/RCA agent) can
-  # file a GitHub issue and dispatch the coding agent without holding AE's
-  # GitHub credentials themselves — every call forwards the caller's bearer
-  # straight through to aep-api, which does the actual org-scoped auth check.
-  # See AE-HANDOFF-DESIGN.md in openchoreo/agents/sre-agent.
+  # NOTE: the standalone aep-mcp-server was removed — its 3 ae_* handoff tools
+  # are now served in-process by aep-api at POST /sre-mcp (see
+  # services/aep-api/internal/feature/handoff). The OpenChoreo SRE/RCA agent
+  # points AE_API_URL at aep-api (:9090) and reaches them at /sre-mcp with the
+  # same bearer, verified by aep-api's public-edge auth.
   # ---------------------------------------------------------------------------
-  aep-mcp-server:
-    build:
-      context: ..
-      dockerfile: services/aep-mcp-server/Dockerfile
-    container_name: aep-mcp-server
-    ports:
-      - "3401:3400"
-    environment:
-      PORT: "3400"
-      AEP_API_BASE_URL: "http://aep-api:9090"
-    depends_on:
-      - aep-api
-    networks:
-      - aep
 
   # ---------------------------------------------------------------------------
   # secret-manager-api (Phase 1 — WS1.1) — in-repo local STUB of the cloud
