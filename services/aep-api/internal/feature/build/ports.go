@@ -107,6 +107,8 @@ type WorkflowRunner interface {
 // GitHub ⋈ executions read (the same one behind GET /tasks), scoped by the build
 // to its own lineage tag via the aep:spec/<tag> label. It survives an archived
 // Temporal run — the workflow query only refines in-flight status on top of it.
+// Returns implementation Tasks only: the aep:validation Task is excluded at the
+// read-model boundary, matching the build tally that never counts it.
 // Satisfied by *task.Reads.
 type TaskReader interface {
 	ListByTag(ctx context.Context, orgID, projectID, state, tag string) ([]task.TaskView, error)

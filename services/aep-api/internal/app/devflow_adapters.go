@@ -91,7 +91,9 @@ func (p devflowPlanner) RunPlan(ctx context.Context, orgID, projectID string) ([
 // planned-task graph, EXCLUDING the validation task. Validation is not an
 // implementation task: it runs in the validating phase (after every component
 // deploys), so keeping it out of the graph stops it blocking/hanging the
-// executing fan-out.
+// executing fan-out. The list read model now excludes the validation task
+// itself, making the skip below redundant — kept as defense-in-depth, because
+// a validation task leaking into this graph would hang the dev workflow.
 func implementationTasks(views []task.TaskView) []devflow.PlannedTask {
 	out := make([]devflow.PlannedTask, 0, len(views))
 	for _, v := range views {

@@ -68,10 +68,10 @@ export function TasksList({
     );
   }
 
-  // The project's validation task is surfaced on the deployments board (its
-  // status rides deploy.validation), not as a coding-task row here — it targets
-  // the whole project, not a component.
-  const visibleTasks = tasks.data.filter((t) => t.executorClass !== "validation");
+  // Implementation tasks only: the backend list read excludes the project's
+  // validation task (its status rides deploy.validation on the deployments
+  // board), so no client-side filtering is needed.
+  const visibleTasks = tasks.data;
 
   if (visibleTasks.length === 0) {
     return (

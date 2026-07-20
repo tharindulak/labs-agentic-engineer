@@ -36,6 +36,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/taskplan"
 )
 
+// NOTE: playground/src/engine/compose.ts carries a verbatim copy of this
+// string (and mirrors renderPlanContext); its steer-parity test fails when
+// they drift. Update both together.
+//
 // planInstruction is the steering directive the BFF composes server-side (§9.1:
 // the request body is empty; the BFF assembles the whole generation directive).
 // The design/requirements content is NOT inlined anymore — the agents service

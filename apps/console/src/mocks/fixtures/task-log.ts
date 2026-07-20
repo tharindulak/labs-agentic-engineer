@@ -1,5 +1,5 @@
 import type { components } from "../../generated/aep-api";
-import { projectTasks, type ProjectScenario } from "./project";
+import { projectTasks, validationTask, type ProjectScenario } from "./project";
 
 type TaskView = components["schemas"]["TaskView"];
 type TaskDetail = components["schemas"]["TaskDetail"];
@@ -14,6 +14,19 @@ type TaskStreamEvent = components["schemas"]["TaskStreamEvent"];
 
 const T0 = Date.parse("2026-07-10T09:00:00Z");
 const iso = (offsetSec: number) => new Date(T0 + offsetSec * 1000).toISOString();
+
+// Task lookup for the detail/log fixtures: the list fixtures plus the
+// validation task, which list-tasks excludes but get-task and the log stream
+// still serve by issue number (the validation chip deep-links to it).
+export function findTask(
+  scenario: Exclude<ProjectScenario, "error">,
+  issueNumber: number,
+): TaskView | undefined {
+  return (
+    projectTasks[scenario].find((t) => t.issueNumber === issueNumber) ??
+    (validationTask.issueNumber === issueNumber ? validationTask : undefined)
+  );
+}
 
 function codingExecution(task: TaskView): ExecutionView {
   const settled = !["pending", "on_hold", "in_progress"].includes(
@@ -35,6 +48,8 @@ function codingExecution(task: TaskView): ExecutionView {
 }
 
 function buildExecution(task: TaskView): ExecutionView | null {
+  // A validation task's merged PR spawns no build — coding is its whole story.
+  if (task.executorClass === "validation") return null;
   if (!["building", "deployed", "failed"].includes(task.derivedStatus)) {
     return null;
   }
@@ -66,9 +81,7 @@ export function taskDetailOf(
   scenario: Exclude<ProjectScenario, "error">,
   issueNumber: number,
 ): TaskDetail | null {
-  const task = projectTasks[scenario].find(
-    (t) => t.issueNumber === issueNumber,
-  );
+  const task = findTask(scenario, issueNumber);
   if (!task) return null;
   const history = executionsOf(task);
   return {
@@ -84,9 +97,7 @@ export function taskTimeline(
   scenario: Exclude<ProjectScenario, "error">,
   issueNumber: number,
 ): TimelineEvent[] {
-  const task = projectTasks[scenario].find(
-    (t) => t.issueNumber === issueNumber,
-  );
+  const task = findTask(scenario, issueNumber);
   if (!task) return [];
   const lines: TimelineEvent[] = [];
   let seq = 0;
@@ -205,9 +216,7 @@ export function streamFrames(
   scenario: Exclude<ProjectScenario, "error">,
   issueNumber: number,
 ): TaskStreamEvent[] {
-  const task = projectTasks[scenario].find(
-    (t) => t.issueNumber === issueNumber,
-  );
+  const task = findTask(scenario, issueNumber);
   if (!task) return [];
   const frames: TaskStreamEvent[] = [{ type: "task", task }];
   for (const execution of executionsOf(task)) {

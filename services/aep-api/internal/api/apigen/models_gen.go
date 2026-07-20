@@ -526,6 +526,9 @@ type DeployStage struct {
 	// Validation Coarse validation-task run state for the latest build: none (not reached, or no acceptance criteria), running, completed (ran to completion; the pass/fail verdict lives in the report), failed (the validation run failed mechanically).
 	Validation DeployStageValidation `json:"validation"`
 
+	// ValidationIssue Issue number of the project's validation task; absent when there is no validation run. The console uses it to open the internal validation log page (get-task / stream-task-log accept it).
+	ValidationIssue int64 `json:"validationIssue,omitempty"`
+
 	// ValidationURL Link to the associated validation PR (the validation issue as a fallback before a PR exists); "" when there is no validation.
 	ValidationURL string `json:"validationUrl,omitempty"`
 
@@ -929,8 +932,11 @@ type TaskDetail struct {
 	Lineage          Lineage                  `json:"lineage"`
 	Operation        string                   `json:"operation,omitempty"`
 	Origin           string                   `json:"origin,omitempty"`
-	Rationale        string                   `json:"rationale,omitempty"`
-	Title            string                   `json:"title"`
+
+	// PrURL Link to the task's pull request, recovered from the succeeded coding execution's "pr#N" reason; absent before a PR opens.
+	PrURL     string `json:"prUrl,omitempty"`
+	Rationale string `json:"rationale,omitempty"`
+	Title     string `json:"title"`
 }
 
 // TaskStreamEvent One SSE frame on the task-log stream. `type` discriminates the payload: `task` carries the full TaskView (client upserts by issue), `execution` one ExecutionView (client upserts by id), `line` one TimelineEvent (client appends, deduped by executionId+seq), and `done` the settled derivedStatus (the server then closes the stream).
@@ -966,8 +972,11 @@ type TaskView struct {
 	Lineage       Lineage                  `json:"lineage"`
 	Operation     string                   `json:"operation,omitempty"`
 	Origin        string                   `json:"origin,omitempty"`
-	Rationale     string                   `json:"rationale,omitempty"`
-	Title         string                   `json:"title"`
+
+	// PrURL Link to the task's pull request, recovered from the succeeded coding execution's "pr#N" reason; absent before a PR opens.
+	PrURL     string `json:"prUrl,omitempty"`
+	Rationale string `json:"rationale,omitempty"`
+	Title     string `json:"title"`
 }
 
 // TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.

@@ -104,11 +104,38 @@ export interface PerTaskSkills {
   preloadSkillNames: string[];
 }
 
+// BaseAgentConfig parameterizes the two values that were hardcoded until the
+// playground's local mode (docs/design/playground.md §3): the always-loaded
+// workflow plugin and the startup skill preload. Both default byte-identically
+// to today's behavior (pinned in runner.test.ts); production callers pass
+// nothing. A caller that overrides `basePreload` owns the FULL preload list —
+// the validation-task append only applies to the default.
+export interface BaseAgentConfig {
+  /** The always-loaded workflow plugin dir; defaults to the shipped `plugin/`. */
+  basePluginPath?: string;
+  /** The startup `skills:` preload; defaults to ["aep:aep"] (+ the validation body for validation tasks). */
+  basePreload?: string[];
+}
+
+// resolveBaseAgentConfig is a pure seam (the buildMcpOptions pattern) so the
+// byte-identical defaults are unit-pinnable without constructing a query().
+export function resolveBaseAgentConfig(
+  base: BaseAgentConfig | undefined,
+  taskKind: DispatchRequest["taskKind"],
+): { pluginPath: string; preload: string[] } {
+  const pluginPath = base?.basePluginPath ?? PLUGIN_PATH;
+  if (base?.basePreload) return { pluginPath, preload: [...base.basePreload] };
+  const preload = ["aep:aep"];
+  if (taskKind === "validation") preload.push("aep:aep-validation");
+  return { pluginPath, preload };
+}
+
 export function runClaudeQuery(
   req: DispatchRequest,
   layout: WorkspaceLayout,
   log: TaskLog,
   perTaskSkills?: PerTaskSkills,
+  base?: BaseAgentConfig,
 ): StartedRun {
   // Spawn env: bearer + git-service URL passed by file path / URL only.
   // No tokens cross via env, so transcripts cannot leak credentials.
@@ -137,9 +164,6 @@ export function runClaudeQuery(
   // `skills:` preload so the SDK injects their full bodies at startup;
   // custom + imported sit in the same plugin and surface via the SDK's
   // standard discovery (description in context, body on invoke).
-  const plugins: Array<{ type: "local"; path: string }> = [
-    { type: "local", path: PLUGIN_PATH },
-  ];
   // Related-issue discovery/cross-linking moved to the SRE agent's handoff
   // stage (a "## Related issues" section in the issue body; GitHub #N
   // mentions back-link automatically) — issues arrive pre-linked, so the
@@ -148,10 +172,11 @@ export function runClaudeQuery(
   // Validation tasks additionally preload the validation workflow body:
   // it replaces the implementation workflow and the run cannot afford
   // the agent skipping a description-triggered load of it.
-  const skillPreload: string[] = ["aep:aep"];
-  if (req.taskKind === "validation") {
-    skillPreload.push("aep:aep-validation");
-  }
+  const resolvedBase = resolveBaseAgentConfig(base, req.taskKind);
+  const plugins: Array<{ type: "local"; path: string }> = [
+    { type: "local", path: resolvedBase.pluginPath },
+  ];
+  const skillPreload: string[] = resolvedBase.preload;
   if (perTaskSkills?.skillsPluginDir) {
     plugins.push({ type: "local", path: perTaskSkills.skillsPluginDir });
     for (const name of perTaskSkills.preloadSkillNames) {

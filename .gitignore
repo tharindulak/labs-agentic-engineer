@@ -49,3 +49,12 @@ learning/
 **/.vitest-attachments/
 .scratch/
 .agents/worktrees/
+
+# AI SDK DevTools captures (playground runs with AGENT_DEVTOOLS always on)
+.devtools/
+
+# Playground project homes (pnpm play default) — never repo sources
+playground/.projects/
+# Playground per-project state — belt-and-braces: an accidental run anywhere
+# inside the repo must never become committable
+.aep-playground/

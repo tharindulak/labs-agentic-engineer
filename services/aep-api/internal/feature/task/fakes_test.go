@@ -287,6 +287,29 @@ func (f fakeDesign) OrgServiceDepNames(context.Context, string, string) (map[str
 	return f.orgService, nil
 }
 
+// validationIssue builds the project's seeded aep:validation Task, mirroring
+// the minted shape (feature/validation EnsureValidationIssue): an operation
+// block stamped with the spec tag, classed aep:validation + the aep:spec/<tag>
+// label — so it would match the same state/tag list filters as coding Tasks.
+func validationIssue(number int, specTag string) gitrepo.IssueInfo {
+	block := taskmeta.Block{
+		Operation: "validate",
+		Origin:    taskmeta.OriginSpecPlan,
+		SpecTag:   specTag,
+		DesignTag: specTag,
+	}
+	body := taskmeta.ComposeBody(block, taskmeta.Human{Rationale: "validate the deployed system"})
+	labels := append(taskmeta.NewTaskLabels(taskmeta.ClassValidation, taskmeta.OriginSpecPlan), taskmeta.SpecTagLabel(specTag))
+	return gitrepo.IssueInfo{
+		Number: number,
+		Title:  "Validate deployed system against acceptance criteria",
+		Body:   body,
+		State:  "open",
+		URL:    fmt.Sprintf("https://github.com/o/r/issues/%d", number),
+		Labels: labels,
+	}
+}
+
 // provisionGateIssue builds a seeded aep:provision gate issue whose machine-block
 // component IS the dependency name it gates (dependency-management §3.6) — the
 // exact shape the read path indexes into provisionByDep.

@@ -18,6 +18,7 @@ import {
   type ProjectScenario,
 } from "../fixtures/project";
 import {
+  findTask,
   isSettledStatus,
   liveLine,
   streamFrames,
@@ -113,7 +114,7 @@ export const projectHandlers = [
       }
       const issueNumber = Number(params.issueNumber);
       const frames = streamFrames(s, issueNumber);
-      const task = projectTasks[s].find((t) => t.issueNumber === issueNumber);
+      const task = findTask(s, issueNumber);
       const settled = !task || isSettledStatus(task.derivedStatus);
       const encoder = new TextEncoder();
       let timer: ReturnType<typeof setInterval> | undefined;

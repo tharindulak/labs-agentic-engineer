@@ -41,7 +41,8 @@ const LinkIconButton = createLink(IconButton);
 // can take a minute) reads as "still working" rather than a stall. The clock
 // restarts whenever a new line arrives or the stream (re)connects, and stops
 // ticking (no wasted 1s re-renders) once there is nothing to wait on.
-function useSecondsSince(resetKey: string, active: boolean): number {
+// Exported for ValidationPage, which shares the same log anatomy.
+export function useSecondsSince(resetKey: string, active: boolean): number {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
     setSeconds(0);
@@ -56,7 +57,7 @@ function useSecondsSince(resetKey: string, active: boolean): number {
   return seconds;
 }
 
-const EXEC_ACTIVE = new Set(["queued", "running"]);
+export const EXEC_ACTIVE = new Set(["queued", "running"]);
 
 // The per-task console (#173): slim header (title, status chip, GitHub
 // icon-link) over the flat streaming log. get-task provides the initial

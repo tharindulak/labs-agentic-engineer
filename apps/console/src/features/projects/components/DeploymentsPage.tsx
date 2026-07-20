@@ -30,6 +30,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { ExternalLink } from "@wso2/oxygen-ui-icons-react";
+import { createLink } from "@tanstack/react-router";
 import {
   useComponentsDeployments,
   useProjectComponents,
@@ -40,6 +41,8 @@ import {
   type DeploymentCard,
 } from "../lib/deploymentRows";
 import { validationView } from "../lib/pipeline";
+
+const LinkChip = createLink(Chip);
 
 // Chip vocabulary for a card's state (#216): the label keeps the backend's
 // raw condition reason (it's the vocabulary operators see in OpenChoreo),
@@ -173,18 +176,23 @@ function BoardColumn({
   column,
   cards,
   emptyText,
+  projectName,
   version,
   validation,
+  validationIssue,
   validationUrl,
 }: {
   title: string;
   column: string;
   cards: DeploymentCard[];
   emptyText: string;
+  projectName: string;
   version?: string;
-  // The whole-project validation run state for this environment (dev only), with
-  // a link to its PR. null = nothing to show.
+  // The whole-project validation run state for this environment (dev only).
+  // null = nothing to show. With the issue number the chip opens the internal
+  // validation log page; the external PR/issue URL is only a fallback.
   validation?: ReturnType<typeof validationView>;
+  validationIssue?: number;
   validationUrl?: string;
 }) {
   // Capitalize the shared lowercase label for the chip ("validating" → "Validating").
@@ -220,7 +228,18 @@ function BoardColumn({
           />
         )}
         {validation &&
-          (validationUrl ? (
+          (validationIssue ? (
+            <LinkChip
+              label={validationLabel}
+              size="small"
+              color={validation.tone as "info" | "success" | "error"}
+              variant="outlined"
+              clickable
+              to="/projects/$projectName/deployments/validation/$issueNumber"
+              params={{ projectName, issueNumber: validationIssue }}
+              title="Open the validation log"
+            />
+          ) : validationUrl ? (
             <Chip
               label={validationLabel}
               size="small"
@@ -280,8 +299,16 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   const status = useProjectStatus(projectName);
   const devVersion = status.data?.deploy.version || undefined;
   // Whole-project validation runs against dev after components deploy; surface
-  // its coarse state (and a link to its PR) on the Development column header.
-  const devValidation = validationView(status.data?.deploy.validation ?? "");
+  // its coarse state on the Development column header. Completed = the report
+  // is ready: the chip jumps straight to the PR. The internal log view (routed
+  // via the issue number) is for watching a live run or diagnosing a failed
+  // one, so completed withholds the issue and falls through to the URL chip.
+  const devValidationStatus = status.data?.deploy.validation ?? "";
+  const devValidation = validationView(devValidationStatus);
+  const devValidationIssue =
+    devValidationStatus === "completed"
+      ? undefined
+      : status.data?.deploy.validationIssue || undefined;
   const devValidationUrl = status.data?.deploy.validationUrl || undefined;
 
   if (components.isPending || (componentNames.length > 0 && deployments.isPending)) {
@@ -341,8 +368,10 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
           column="development"
           cards={board.development}
           emptyText="Nothing in development yet."
+          projectName={projectName}
           {...(devVersion && { version: devVersion })}
           validation={devValidation}
+          {...(devValidationIssue && { validationIssue: devValidationIssue })}
           {...(devValidationUrl && { validationUrl: devValidationUrl })}
         />
         <BoardColumn
@@ -350,6 +379,7 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
           column="production"
           cards={board.production}
           emptyText="Nothing in production yet — dev is the only deploy target for now."
+          projectName={projectName}
         />
       </Stack>
     </>

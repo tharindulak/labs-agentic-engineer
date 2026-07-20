@@ -199,6 +199,17 @@ func ValidationFlowWorkflow(ctx workflow.Context, in ValidationFlowInput) (Valid
 	}
 	recorded = true
 
+	// ── TESTING ONLY ────────────────────────────────────────────────────────
+	// Uncomment to force the validation phase to fail as soon as it starts:
+	// the run row is already recorded, so the row is marked failed
+	// (deploy.validation → "validation failed") and the dev run fails with
+	// "validation run did not succeed: …" over a green tally — exercising the
+	// overview's validation-attribution carve-out without dispatching any
+	// lane runner. Affects NEW executions only; never commit this enabled.
+	//
+	// return fail("forced failure: validation fail-fast test hook")
+	// ────────────────────────────────────────────────────────────────────────
+
 	// 3. Gate: start coding (auto by default) — one gate for the whole phase.
 	if ok, d := gates.await(ctx, GateStartCoding); !ok {
 		return fail("start-coding gate rejected: " + d.Note)

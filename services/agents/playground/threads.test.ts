@@ -92,6 +92,6 @@ test("reconcile dry-run reports changes but writes nothing", () => {
 
 test("reconcile refuses a path that escapes the thread dir", () => {
   reset();
-  assert.throws(() => reconcile(NAME, {}, { "../escape.txt": "pwn" }, false), /escapes the thread directory/);
+  assert.throws(() => reconcile(NAME, {}, { "../escape.txt": "pwn" }, false), /escapes the project directory/);
   rmSync(threadDir(NAME), { recursive: true, force: true });
 });

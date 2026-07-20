@@ -100,6 +100,20 @@ the root cause of "the deployed endpoint didn't resolve".)
   failed coding run stays "Failed".
 - The planner excludes the validation class from the implementation graph; the
   funnel deps-gate holds it until every component deploys.
+- **Task LIST reads exclude the validation task** (`task/reads.go` `ListByTag`,
+  the read-model boundary): it is a phase of the run, not an implementation
+  task, so the console tasks page and the build's per-version task list never
+  show it. Its status rides `deploy.validation` (+ `validationIssue`,
+  `validationUrl`); `get-task` and `stream-task-log` still serve it by issue
+  number — that pair is what the console validation log page consumes.
+- **The overview attributes a validation-phase failure to validation, not the
+  build**: when the dev run failed but its tally is fully green and the
+  validation child row failed, the Build stage reports `succeeded` and the
+  failure rides `deploy.validation = failed`
+  (`project/status_stages.go` `validationAttributedFailure` — the green-tally
+  guard plus a recency guard (child recorded after the dev row) defeat stale
+  validation rows from same-tag rebuilds). Other failures (coding,
+  provisioning, canceled) keep the Build card as catch-all.
 
 ## Runner side (`runners/remote-worker`)
 
@@ -153,9 +167,16 @@ calls live in the skill markdown, not runner code.
 - **Test credentials:** mock `admin/admin`; real per-project user provisioning is
   pending.
 - **Results are surfaced via the PR only** (committed report + a summary issue
-  comment). There is deliberately **no platform report-ingest endpoint / read
-  model, no public `GET /projects/{p}/validation` status API, and no console
-  validation UI** yet.
+  comment). The console has a **validation log page**
+  (`/projects/{p}/deployments/validation/{issue}`): the live runner log via
+  `stream-task-log` — validation dispatches through the shared coding executor,
+  so the pod-log plumbing is the task one — plus jumps to the validation issue
+  and PR (`TaskView.prUrl`). The deployments board's chip is state-dependent:
+  **running/failed open the log page** (watch or diagnose); **completed links
+  straight to the validation PR** — the report is the deliverable, the log adds
+  nothing (the page stays reachable by URL). There is still deliberately **no
+  platform report-ingest endpoint / read model and no public
+  `GET /projects/{p}/validation` status API** beyond `deploy.validation`.
 - No scenario-lane (agentic-judgment) automation and no automated fix-task loop on
   failures. The workflow side is lane-ready (`ValidationFlowWorkflow` fans out
   `ValidationTaskWorkflow` children; a lane = an entry in its lane slice), but a

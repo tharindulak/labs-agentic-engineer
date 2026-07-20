@@ -12,6 +12,9 @@ export default tseslint.config(
       "**/*.gen.*",
       "**/node_modules/**",
       "**/.turbo/**",
+      // Playground project homes: generated app source, not repo code.
+      "playground/.projects/**",
+      "playground/.devtools/**",
     ],
   },
   js.configs.recommended,

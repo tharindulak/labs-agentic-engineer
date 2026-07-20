@@ -13,7 +13,8 @@
     "test": "turbo run test",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "gen": "turbo run gen"
+    "gen": "turbo run gen",
+    "play": "pnpm --filter @aep/playground play"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",

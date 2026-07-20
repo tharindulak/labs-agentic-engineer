@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildSpecGenerationInstruction } from "./promptStore";
+import { buildSpecGenerationInstruction } from "@aep/contracts/prompts";
 
 describe("buildSpecGenerationInstruction", () => {
   it("wraps a stored prompt in an explicit generate command", () => {

@@ -2,6 +2,7 @@
 # Go modules (no package.json) are skipped by pnpm and live in go.work instead.
 packages:
   - "apps/*"
+  - "playground"
   - "packages/*"
   - "packages/ui/*"
   - "services/*"

@@ -22,3 +22,8 @@ coverage
 .env.*
 plugin/node_modules
 local
+# Playground local-mode assets — never shipped in the production image
+# (docs/design/playground.md §13 step 6). oneshot.ts never loads them; this
+# keeps the bytes out too.
+plugin-local
+src/local.ts

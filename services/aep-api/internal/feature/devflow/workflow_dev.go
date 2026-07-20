@@ -194,7 +194,7 @@ func DevFlowWorkflow(ctx workflow.Context, in DevFlowInput) (DevFlowStatus, erro
 	// deployed, so there is nothing coherent to validate — fail fast, before
 	// asking for the validate gate (a doomed run never waits for approval).
 	if unmet := notSucceeded(status.Tasks); len(unmet) > 0 {
-		return fail(fmt.Sprintf("validating: %d task(s) did not succeed: %s", len(unmet), strings.Join(unmet, ", ")))
+		return fail(fmt.Sprintf("%d implementation task(s) did not succeed: %s", len(unmet), strings.Join(unmet, ", ")))
 	}
 	// 4b. Validate gate (human pause point, auto by default).
 	if ok, d := gates.await(ctx, GateValidate); !ok {

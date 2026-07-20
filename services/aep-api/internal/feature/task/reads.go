@@ -19,6 +19,7 @@ package task
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -50,9 +51,12 @@ type ExecutionView struct {
 // TaskView is the list-item shape (§9.1): live GitHub facts fused with the
 // latest Execution per kind into a derived status.
 type TaskView struct {
-	IssueNumber   int                      `json:"issueNumber"`
-	Title         string                   `json:"title"`
-	IssueURL      string                   `json:"issueUrl"`
+	IssueNumber int    `json:"issueNumber"`
+	Title       string `json:"title"`
+	IssueURL    string `json:"issueUrl"`
+	// PRURL links the task's pull request, recovered from the succeeded coding
+	// Execution's "pr#N" reason (no live PR query); empty before a PR opens.
+	PRURL         string                   `json:"prUrl,omitempty"`
 	ExecutorClass string                   `json:"executorClass,omitempty"`
 	Origin        string                   `json:"origin,omitempty"`
 	Component     string                   `json:"component,omitempty"`
@@ -95,8 +99,9 @@ func NewReads(issues IssueClient, repos RepoResolver, execs ExecutionReader, ver
 	return &Reads{issues: issues, repos: repos, execs: execs, versions: versions, design: design}
 }
 
-// List returns the project's Tasks filtered by state ("open" | "closed" |
-// "all"; default "open"). FE groups by derivedStatus client-side (§8).
+// List returns the project's implementation Tasks filtered by state ("open" |
+// "closed" | "all"; default "open"). FE groups by derivedStatus client-side
+// (§8). The aep:validation Task is excluded (see ListByTag).
 func (r *Reads) List(ctx context.Context, orgID, projectID, state string) ([]TaskView, error) {
 	return r.ListByTag(ctx, orgID, projectID, state, "")
 }
@@ -109,11 +114,21 @@ func (r *Reads) List(ctx context.Context, orgID, projectID, state string) ([]Tas
 // Same single marker-scoped fetch either way. An empty tag returns every Task
 // (== List). This is the read behind GET /tasks?tag=v3 and the build's
 // per-version task list.
+//
+// List reads return implementation Tasks ONLY: the project's aep:validation
+// Task is a phase of the dev run, not an implementation task — its state is
+// surfaced via /status deploy.validation (+ validationUrl), and it stays
+// reachable via Get by issue number. Excluding it here (the read-model
+// boundary) keeps every list consumer consistent: the console tasks page, the
+// build's per-version task list (whose tally already excludes it), and the
+// devflow's planned-task graph.
 func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag string) ([]TaskView, error) {
-	repoFullName, err := resolveRepoFullName(ctx, r.repos, orgID, projectID)
+	repo, owner, name, err := resolveProjectRepo(ctx, r.repos, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
+	repoFullName := owner + "/" + name
+	repoBase := strings.TrimSuffix(repo.RepoURL, ".git")
 	issues, err := r.issues.ListIssues(ctx, orgID, projectID, []string{taskmeta.LabelMarker})
 	if err != nil {
 		return nil, err
@@ -133,8 +148,12 @@ func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag stri
 		if !matchesState(issue.State, state) {
 			continue
 		}
-		view, ok := buildView(issue, latestSpecTag, execsByIssue[issue.Number])
+		view, ok := buildView(issue, latestSpecTag, repoBase, execsByIssue[issue.Number])
 		if !ok {
+			continue
+		}
+		// Phase, not implementation task (see the doc comment above).
+		if view.ExecutorClass == string(taskmeta.ClassValidation) {
 			continue
 		}
 		if tag != "" && view.Lineage.SpecTag != tag {
@@ -301,10 +320,12 @@ func codingNotStarted(v *TaskView) bool {
 // #164 follow-up). The gating overlay needs every sibling's derived status and
 // the project's provision gates, so the whole set is built before picking one.
 func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber int) (*TaskDetail, error) {
-	repoFullName, err := resolveRepoFullName(ctx, r.repos, orgID, projectID)
+	repo, owner, name, err := resolveProjectRepo(ctx, r.repos, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
+	repoFullName := owner + "/" + name
+	repoBase := strings.TrimSuffix(repo.RepoURL, ".git")
 	issues, err := r.issues.ListIssues(ctx, orgID, projectID, []string{taskmeta.LabelMarker})
 	if err != nil {
 		return nil, err
@@ -324,7 +345,7 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 
 	views := make([]TaskView, 0, len(issues))
 	for _, issue := range issues {
-		if view, ok := buildView(issue, latestSpecTag, execsByIssue[issue.Number]); ok {
+		if view, ok := buildView(issue, latestSpecTag, repoBase, execsByIssue[issue.Number]); ok {
 			views = append(views, view)
 		}
 	}
@@ -366,8 +387,9 @@ func containsIssue(issues []gitrepo.IssueInfo, issueNumber int) bool {
 
 // buildView fuses one live issue with its latest-per-kind executions into a
 // TaskView. ok is false when the issue is not a Task (no marker) — the caller
-// skips it.
-func buildView(issue gitrepo.IssueInfo, latestSpecTag string, execs map[string]*models.Execution) (TaskView, bool) {
+// skips it. repoBase is the repo's HTML URL (clone URL sans ".git"), the base
+// the PR link is built from.
+func buildView(issue gitrepo.IssueInfo, latestSpecTag, repoBase string, execs map[string]*models.Execution) (TaskView, bool) {
 	labels := taskmeta.ParseLabels(issue.Labels)
 	if !labels.IsTask {
 		return TaskView{}, false
@@ -411,6 +433,14 @@ func buildView(issue gitrepo.IssueInfo, latestSpecTag string, execs map[string]*
 		Hold:          labels.Hold,
 		Attention:     computeAttention(labels, block, blockErr, latestSpecTag),
 		Executions:    latestViews(execs),
+	}
+	// The PR link rides the succeeded coding row's "pr#N" reason (coding success
+	// == PR opened) — a running/failed row's reason is never trusted, mirroring
+	// the /status validationUrl recovery.
+	if c := execs[string(taskmeta.KindCoding)]; c != nil && c.Status == string(taskmeta.ExecSucceeded) {
+		if n := taskmeta.OpenPRNumber(c.Reason); n > 0 && repoBase != "" {
+			view.PRURL = fmt.Sprintf("%s/pull/%d", repoBase, n)
+		}
 	}
 	return view, true
 }

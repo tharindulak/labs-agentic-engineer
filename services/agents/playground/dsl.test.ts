@@ -24,8 +24,8 @@ import { join, dirname } from "node:path";
 import { compileDslArtifacts } from "./dsl.js";
 
 const DSL = `screen Login
-  rect "email input" 24,80 320x40
-  button "Sign In" 24,140 160x44
+  input "Email"
+  button "Sign In" primary
 `;
 
 function tempThread(): string {

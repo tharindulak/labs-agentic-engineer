@@ -1,0 +1,14 @@
+{
+  "name": "aep-local",
+  "owner": {
+    "name": "AEP"
+  },
+  "plugins": [
+    {
+      "name": "aep-local",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "AEP playground local-mode task execution skill (edit-in-place, no PR)."
+    }
+  ]
+}

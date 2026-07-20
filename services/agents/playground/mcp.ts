@@ -35,7 +35,7 @@
  *  - Neither var set → undefined, unconditionally (today's behavior).
  */
 
-import type { TurnRequest } from "../src/contracts/sse-events.js";
+import type { TurnRequest } from "@aep/agent-stream";
 
 export interface McpEnv {
   url?: string | undefined;

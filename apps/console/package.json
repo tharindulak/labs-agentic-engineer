@@ -20,6 +20,7 @@
   "dependencies": {
     "@aep/agent-stream": "workspace:*",
     "@aep/collab-doc": "workspace:*",
+    "@aep/contracts": "workspace:*",
     "@aep/design-projection": "workspace:*",
     "@aep/excalidraw-dsl": "workspace:*",
     "@aep/ui-cell-diagram-view": "workspace:*",

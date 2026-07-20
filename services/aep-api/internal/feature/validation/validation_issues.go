@@ -103,8 +103,9 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID, d
 		Origin:    taskmeta.OriginSpecPlan,
 		// One tag family post-build (plan.go): the spec tag `v<N>` is both the
 		// lineage stamp and the idempotency baseline. Stamp SpecTag too (mirrors
-		// coding Tasks) so the validation Task carries a version and shows in the
-		// build's version-scoped task list instead of being filtered out.
+		// coding Tasks) so the validation Task carries the version it validates.
+		// (It no longer appears in any task LIST — the list read model excludes
+		// the validation class — but the lineage stamp still versions the issue.)
 		SpecTag:   designTag,
 		DesignTag: designTag,
 	}

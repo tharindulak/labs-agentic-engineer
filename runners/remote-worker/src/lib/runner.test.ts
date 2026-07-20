@@ -18,7 +18,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildMcpOptions } from "./runner.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildMcpOptions, resolveBaseAgentConfig } from "./runner.js";
 
 const BASE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
 const MCP_TOOLS = [
@@ -66,4 +68,28 @@ test("buildMcpOptions: omits mcpServers and MCP tools when both are undefined", 
 
   assert.equal(result.mcpServers, undefined);
   assert.deepEqual(result.allowedTools, BASE_TOOLS);
+});
+
+// --- resolveBaseAgentConfig: the defaults are pinned byte-identical to the
+// pre-parameterization behavior (docs/design/playground.md §3) ---------------
+
+const SHIPPED_PLUGIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugin");
+
+test("resolveBaseAgentConfig: defaults pin today's plugin + preload exactly", () => {
+  const impl = resolveBaseAgentConfig(undefined, "implementation");
+  assert.equal(impl.pluginPath, SHIPPED_PLUGIN);
+  assert.deepEqual(impl.preload, ["aep:aep"]);
+
+  const val = resolveBaseAgentConfig(undefined, "validation");
+  assert.equal(val.pluginPath, SHIPPED_PLUGIN);
+  assert.deepEqual(val.preload, ["aep:aep", "aep:aep-validation"]);
+});
+
+test("resolveBaseAgentConfig: an explicit basePreload owns the FULL list (no validation append)", () => {
+  const local = resolveBaseAgentConfig(
+    { basePluginPath: "/x/plugin-local", basePreload: ["aep-local:aep-local"] },
+    "validation",
+  );
+  assert.equal(local.pluginPath, "/x/plugin-local");
+  assert.deepEqual(local.preload, ["aep-local:aep-local"]);
 });

@@ -46,8 +46,8 @@ import { groupChatItems, type ChatItem, type ToolMessage } from "../toolGrouping
 import {
   buildDesignGenerationInstruction,
   buildSpecGenerationInstruction,
-  readCreatePrompt,
-} from "../../projects/lib/promptStore";
+} from "@aep/contracts/prompts";
+import { readCreatePrompt } from "../../projects/lib/promptStore";
 
 export const AGENT_CHAT_PANEL_WIDTH = 380;
 

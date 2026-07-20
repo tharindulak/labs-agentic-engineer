@@ -193,6 +193,13 @@ func (s *projectService) populateStages(ctx context.Context, orgName, projectNam
 		row := runs[0]
 		status.Build.Version = row.Tag
 		status.Build.Status = buildStageStatus(row.Status)
+		// A validation-phase failure is not a BUILD failure: every coding task
+		// landed, and the failure already rides deploy.validation=failed below.
+		// Without this the overview says "build failed · N/N" while the tally
+		// and the validation chip contradict it.
+		if validationAttributedFailure(row, validationRun) {
+			status.Build.Status = buildSucceeded
+		}
 		status.Build.Tasks.Total = int64(row.TasksTotal)
 		status.Build.Tasks.Done = int64(row.TasksDone)
 		status.Build.Tasks.Failed = int64(row.TasksFailed)
@@ -224,6 +231,11 @@ func (s *projectService) populateStages(ctx context.Context, orgName, projectNam
 	// exists). Both derived from cheap DB reads above — no GitHub in the poll.
 	status.Deploy.Validation = apigen.DeployStageValidation(validationStageStatus(validationRun))
 	status.Deploy.ValidationURL = validationURL(status.RepoURL, validationRun, validationPR)
+	// The issue number lets the console open the internal validation log page
+	// (get-task / stream-task-log serve the validation task by issue number).
+	if validationRun != nil {
+		status.Deploy.ValidationIssue = int64(validationRun.IssueNumber)
+	}
 	return nil
 }
 
@@ -301,6 +313,28 @@ func buildStageStatus(rowStatus string) string {
 	default: // running
 		return buildRunning
 	}
+}
+
+// validationAttributedFailure reports whether the newest dev run's failure
+// belongs to its VALIDATION phase: the run failed, its validation child
+// failed, and the coding tally is fully green — validation only runs after
+// every planned task succeeded, so a green tally + failed child means the
+// build itself did not fail. Canceled runs (either row) are never attributed.
+//
+// Two guards defeat the stale-row rebuild hazard (a same-tag rebuild reuses
+// the dev workflow ID, so an OLD failed validation row can match
+// ValidationRunByParent while the fresh execution failed elsewhere):
+//   - the tally: a provisioning failure carries 0/0/0 and a coding failure
+//     TasksFailed > 0 — neither shape passes;
+//   - recency: the child must have been recorded AFTER this dev row (a rebuild
+//     inserts a new dev row; its own validation child, if any, is younger) —
+//     this covers the green-tally shape too, a rebuild failing between the
+//     quality bar and respawning validation.
+func validationAttributedFailure(row models.DevflowRun, validationRun *models.DevflowRun) bool {
+	return row.Status == models.WorkflowStatusFailed &&
+		validationRun != nil && validationRun.Status == models.WorkflowStatusFailed &&
+		validationRun.CreatedAt.After(row.CreatedAt) &&
+		row.TasksTotal > 0 && row.TasksFailed == 0 && row.TasksDone == row.TasksTotal
 }
 
 // bindingFailureReasons is the aggregate Ready condition's terminal-failure

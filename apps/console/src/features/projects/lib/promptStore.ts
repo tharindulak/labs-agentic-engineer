@@ -54,39 +54,7 @@ export function clearCreatePrompt(org: string, project: string): void {
   safeLocalStorage()?.removeItem(key(org, project));
 }
 
-/**
- * The instruction the "Generate spec" CTA sends into the room turn (#150): an
- * explicit generate command (not the raw idea, which the agent might treat as
- * a chat opener) wrapping the stored create prompt. Falls back to a generic
- * instruction when no prompt was stored (older project / other browser /
- * cleared storage) — the CTA still works and the agent can ask for detail.
- */
-export function buildSpecGenerationInstruction(prompt: string | null): string {
-  const base =
-    "Generate a complete requirements specification (requirements/requirements.md) for this project";
-  return prompt && prompt.trim()
-    ? `${base} based on the following idea:\n\n${prompt.trim()}`
-    : `${base}.`;
-}
-
-/**
- * The instruction the "Generate / Re-generate design" CTA sends into the room
- * turn (#159): derive the component design from the current requirements. No
- * user prompt — the agent designs FROM the requirements already in the repo;
- * the agent's system prompt carries the design-file structure and schema.
- *
- * The CTA also mints the acceptance oracle in the same turn: the new console
- * only ever runs `requirements-chat` turns (never `design-generate`), so the
- * server-side design-generate steering that would author
- * `validation-criteria.json` never fires. Asking for it here scopes the oracle
- * to exactly the Generate-design action rather than every chat turn. See
- * docs/design/validation.md ("The acceptance oracle").
- */
-export function buildDesignGenerationInstruction(): string {
-  return (
-    "Generate the complete component design for this project based on the " +
-    "current requirements. If a design already exists, regenerate it to match " +
-    "the current requirements. Then, as the final step, generate the validation " +
-    "criteria."
-  );
-}
+// The canned generation instructions these prompts seed
+// (buildSpecGenerationInstruction / buildDesignGenerationInstruction) moved to
+// the shared `@aep/contracts/prompts` module — one source for the console and
+// the root-level playground (docs/design/playground.md §9).

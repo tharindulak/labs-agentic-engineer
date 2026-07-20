@@ -1,0 +1,27 @@
+{
+  "name": "@aep/playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Root-level local-filesystem playground: runs the real engineering + coding agents against a plain project directory (docs/design/playground.md).",
+  "scripts": {
+    "play": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "dev": "echo \"@aep/playground: run via pnpm play\""
+  },
+  "dependencies": {
+    "@aep/agent-stream": "workspace:*",
+    "@aep/agents": "workspace:*",
+    "@aep/contracts": "workspace:*",
+    "@clack/prompts": "^1.6.0",
+    "ai": "^7.0.2",
+    "yaml": "^2.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0"
+  }
+}

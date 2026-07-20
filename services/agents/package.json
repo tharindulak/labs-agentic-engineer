@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Interactive spec agents (Vercel AI SDK). Seeded with the main file-mutation agent.",
+  "exports": {
+    "./server": "./src/server.ts",
+    "./store/*": "./src/store/*.ts",
+    "./shared/*": "./src/shared/*.ts",
+    "./conversation/*": "./src/conversation/*.ts",
+    "./evals-kit": "./evals/index.ts",
+    "./playground-kit": "./playground/index.ts"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

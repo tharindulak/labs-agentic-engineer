@@ -1513,8 +1513,10 @@ paths:
           description: Error
       security:
       - userJWT: []
-      summary: List a project's Tasks (live GitHub ⋈ executions → derived status), optionally scoped to
-        one spec/build version tag
+      summary: List a project's implementation Tasks (live GitHub ⋈ executions → derived status),
+        optionally scoped to one spec/build version tag. The aep:validation Task is excluded — it is
+        a phase of the run, surfaced via the project status's deploy.validation; get-task still
+        serves it by number.
       tags:
       - Tasks
   /projects/{projectName}/tasks/{issueNumber}:
@@ -2831,6 +2833,13 @@ components:
           - completed
           - failed
           type: string
+        validationIssue:
+          description: >-
+            Issue number of the project's validation task; absent when there is
+            no validation run. The console uses it to open the internal
+            validation log page (get-task / stream-task-log accept it).
+          format: int64
+          type: integer
         validationUrl:
           description: >-
             Link to the associated validation PR (the validation issue as a
@@ -3804,6 +3813,11 @@ components:
           type: string
         origin:
           type: string
+        prUrl:
+          description: >-
+            Link to the task's pull request, recovered from the succeeded coding
+            execution's "pr#N" reason; absent before a PR opens.
+          type: string
         rationale:
           type: string
         title:
@@ -3894,6 +3908,11 @@ components:
         operation:
           type: string
         origin:
+          type: string
+        prUrl:
+          description: >-
+            Link to the task's pull request, recovered from the succeeded coding
+            execution's "pr#N" reason; absent before a PR opens.
           type: string
         rationale:
           type: string

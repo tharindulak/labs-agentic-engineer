@@ -436,7 +436,10 @@ func TestDevFlowWorkflow_Validating_FailsBeforeGateWhenTaskFailed(t *testing.T) 
 	var res DevFlowStatus
 	require.NoError(t, env.GetWorkflowResult(&res))
 	require.Equal(t, DevPhaseFailed, res.Phase)
-	require.Contains(t, res.Error, "did not succeed")
+	// The reason names the tasks that failed, not the validating phase that
+	// refused to proceed — "validating: …" misattributed a coding failure.
+	require.Contains(t, res.Error, "1 implementation task(s) did not succeed: #1 (failed)")
+	require.NotContains(t, res.Error, "validating")
 }
 
 // No acceptance criteria → the orchestrator reports a skip; the dev run

@@ -33,11 +33,10 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { stringify as stringifyYaml } from "yaml";
 import type { WorkspaceRef } from "@aep/agent-stream";
-import { sha256Hex } from "../src/shared/hash.js";
 import { DiskMirror } from "./disk.js";
 import type { RepoSkill } from "./skills.js";
+import { filesSnapshotSha, renderSkillFiles, skillsSnapshotSha } from "./snapshot.js";
 
 export const EVAL_ORG = "eval-org";
 export const EVAL_PROJECT = "eval-proj";
@@ -49,55 +48,42 @@ export function evalConversationId(suffix: string): string {
   return `org_${EVAL_ORG}--proj_${EVAL_PROJECT}--${EVAL_USE_CASE}--${suffix}`;
 }
 
-/** Deterministic fake 40-hex "sha" for a content map (content-addressed dirs). */
-function fakeSha(payload: string): string {
-  return sha256Hex(payload).slice(0, 40);
-}
-
 /** One per-sample fixture mount; `cleanup()` removes the whole tree. */
 export class EvalWorkspace {
   readonly root: string;
-  private skillsSha: string | undefined;
 
   constructor() {
     this.root = mkdtempSync(join(tmpdir(), "aep-eval-ws-"));
   }
 
   /**
-   * Materialize the skill library once into the FLAT snapshot layout
+   * Materialize the skill library into the FLAT snapshot layout
    * (`skills/<name>/SKILL.md` — the shape reconcile writes to every
    * org-skills repo). Returns the snapshot "sha". Called lazily by
-   * `workspaceRef`.
+   * `workspaceRef`. Content-addressed per call — an EDITED library yields a
+   * new snapshot on the next turn (the playground's hot-reload loop), while
+   * an unchanged one reuses its existing dir via the `existsSync` dedupe.
    */
   materializeSkills(skills: readonly RepoSkill[]): string {
-    if (this.skillsSha !== undefined) return this.skillsSha;
-    const sha = fakeSha(JSON.stringify(skills.map((s) => [s.name, s.description, s.content, s.references ?? {}])));
+    const sha = skillsSnapshotSha(skills);
     const dir = join(this.root, "repos", EVAL_ORG, "_skills", "org-skills", "snapshots", sha);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-      const mirror = new DiskMirror(dir);
-      for (const skill of skills) {
-        const front = stringifyYaml({ name: skill.name, description: skill.description }).replace(/\n+$/, "");
-        mirror.write(`skills/${skill.name}/SKILL.md`, `---\n${front}\n---\n\n${skill.content}\n`);
-        for (const [refPath, body] of Object.entries(skill.references ?? {})) {
-          mirror.write(`skills/${skill.name}/${refPath}`, body);
-        }
-      }
-    }
-    this.skillsSha = sha;
+    this.mirror(dir, renderSkillFiles(skills));
     return sha;
   }
 
   /** Materialize one turn's `files` into a fake immutable `snapshots/<sha>/` dir. */
   materializeFiles(files: Record<string, string>): string {
-    const sha = fakeSha(JSON.stringify(Object.entries(files).sort(([a], [b]) => a.localeCompare(b))));
+    const sha = filesSnapshotSha(files);
     const dir = join(this.root, "repos", EVAL_ORG, EVAL_PROJECT, EVAL_REPO_SLUG, "snapshots", sha);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-      const mirror = new DiskMirror(dir);
-      for (const [path, content] of Object.entries(files)) mirror.write(path, content);
-    }
+    this.mirror(dir, files);
     return sha;
+  }
+
+  private mirror(dir: string, files: Record<string, string>): void {
+    if (existsSync(dir)) return;
+    mkdirSync(dir, { recursive: true });
+    const mirror = new DiskMirror(dir);
+    for (const [path, content] of Object.entries(files)) mirror.write(path, content);
   }
 
   /** Build the turn's `WorkspaceRef` (materializing files + skills as needed). */

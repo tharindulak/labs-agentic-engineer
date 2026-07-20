@@ -18,17 +18,19 @@
 
 /**
  * A thread is a folder under `chat_playground/` whose name doubles as the
- * conversation-id suffix (the playground namespaces it per §12). This module is
- * the only place that touches that tree: list threads, validate a name, read
- * the folder into the path→content map the playground materializes into a
- * workspace snapshot, and reconcile the agent's reconstructed snapshot back to
- * disk. Keys are POSIX-relative; dot-entries and binary files are skipped;
- * every write is sandboxed inside the thread dir (the model supplies the keys).
+ * conversation-id suffix (the playground namespaces it per §12). This module
+ * owns the thread NAMING + LISTING; the folder I/O itself (read into a
+ * path→content map, reconcile the agent's snapshot back to disk) is the
+ * path-parameterized `project-fs.ts` core, shared with the root-level
+ * playground.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readProjectFiles, reconcileDir, type FileChange } from "./project-fs.js";
+
+export type { ChangeKind, FileChange } from "./project-fs.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -66,47 +68,9 @@ export function listThreads(): ThreadInfo[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function walk(dir: string, rel: string, out: Record<string, string>): void {
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (e.name.startsWith(".")) continue; // skip dot-entries (.git, .DS_Store, …)
-    const abs = join(dir, e.name);
-    const key = rel ? `${rel}/${e.name}` : e.name; // POSIX-relative key
-    if (e.isDirectory()) {
-      walk(abs, key, out);
-      continue;
-    }
-    if (!e.isFile()) continue;
-    // Derived artifacts (compiled .excalidraw, projected *.gen.json) never
-    // enter the bundle: the agent must not see or edit them, and inlining
-    // generated JSON into every turn's prompt would be pure token waste.
-    if (e.name.endsWith(".excalidraw") || e.name.endsWith(".gen.json")) continue;
-    const buf = readFileSync(abs);
-    if (buf.includes(0)) continue; // a NUL byte → binary; the agent only edits text
-    out[key] = buf.toString("utf8");
-  }
-}
-
 /** Read the whole thread folder into the map a turn's workspace snapshot is built from. */
 export function readSnapshot(name: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const root = threadDir(name);
-  if (existsSync(root)) walk(root, "", out);
-  return out;
-}
-
-export type ChangeKind = "add" | "edit" | "remove";
-export interface FileChange {
-  kind: ChangeKind;
-  path: string;
-}
-
-/** Resolve a snapshot key under `root`, refusing anything that escapes it. */
-function resolveWithin(root: string, key: string): string {
-  const abs = resolve(root, key);
-  if (abs !== root && !abs.startsWith(root + sep)) {
-    throw new Error(`path "${key}" escapes the thread directory`);
-  }
-  return abs;
+  return readProjectFiles(threadDir(name));
 }
 
 /**
@@ -120,25 +84,5 @@ export function reconcile(
   after: Record<string, string>,
   dryRun: boolean,
 ): FileChange[] {
-  const root = resolve(threadDir(name));
-  const changes: FileChange[] = [];
-
-  for (const [path, content] of Object.entries(after)) {
-    if (!(path in before)) changes.push({ kind: "add", path });
-    else if (before[path] !== content) changes.push({ kind: "edit", path });
-    else continue; // unchanged
-    if (!dryRun) {
-      const abs = resolveWithin(root, path);
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, content, "utf8");
-    }
-  }
-
-  for (const path of Object.keys(before)) {
-    if (path in after) continue;
-    changes.push({ kind: "remove", path });
-    if (!dryRun) rmSync(resolveWithin(root, path), { force: true });
-  }
-
-  return changes;
+  return reconcileDir(threadDir(name), before, after, dryRun);
 }

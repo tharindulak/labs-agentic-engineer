@@ -16,6 +16,10 @@
 
 package genai
 
+// NOTE: the playground carries verbatim copies of the LIVE strings here
+// (useCaseGeneral entry + collabDepsSteer) in playground/src/engine/compose.ts;
+// its steer-parity test fails when they drift. Update both together.
+//
 // steeringByUseCase is the explicit action-steer appended to the instruction
 // so the model loads the right skill(s) from the catalog and produces the
 // right artifacts. Skills are NOT pushed inline anymore — the agents service
