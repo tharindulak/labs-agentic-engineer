@@ -19,6 +19,7 @@ package provisioning
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -85,7 +86,7 @@ func (w *WiringResolver) PostResolvedDeps(ctx context.Context, orgID, projectID 
 	if w.issues == nil || issueNumber == 0 {
 		return nil
 	}
-	block, contracts, err := w.resolveDependenciesYAML(ctx, orgID, projectID, component)
+	block, contracts, resourceNotes, err := w.resolveDependenciesYAML(ctx, orgID, projectID, component)
 	if err != nil {
 		return err
 	}
@@ -101,28 +102,40 @@ func (w *WiringResolver) PostResolvedDeps(ctx context.Context, orgID, projectID 
 			"the exact contract for each provider below. Do not guess at request/response shapes " +
 			"or endpoint paths:\n\n" + contracts
 	}
+	if resourceNotes != "" {
+		body += "\n\n---\n\n**Provisioned platform resources** — the underlying technology " +
+			"behind each resource above (the env-var bindings are already in the yaml block; " +
+			"this identifies what they connect to, e.g. for SDK-docs lookups). Never hardcode " +
+			"values, only read the env vars above:\n\n" + resourceNotes
+	}
 	return w.issues.CommentIssue(ctx, orgID, projectID, issueNumber, body)
 }
 
 // resolveDependenciesYAML resolves a component's consumer deps — cross-project
 // org-service endpoints, same-project component siblings, bound external-resource
 // outputs, and platform-resource outputs — into the workload.yaml dependencies
-// block, plus a human-readable "Consumed API contract" section (one per
-// org-service/same-project endpoint dep) instructing the coding agent to fetch
-// the provider's real contract instead of guessing at endpoints. Returns ""
+// block, plus two human-readable sections: a "Consumed API contract" section
+// (one per org-service/same-project endpoint dep, plus one per `external` dep
+// with a design-time-collected spec) instructing the coding agent to fetch or
+// read the provider's real contract instead of guessing at endpoints; and a
+// "Provisioned platform resources" section (one per platform-resource dep)
+// naming the resourceType + catalog description — the coding agent's only
+// handle to identify the underlying technology, since the OC WorkloadDescriptor
+// resources schema (workloadResourceDepYAML) has no room for either. Returns ""
 // for the yaml block when nothing resolves. orgID is the OC namespace
 // (orgHandle).
-func (w *WiringResolver) resolveDependenciesYAML(ctx context.Context, orgID, projectID, component string) (yamlBlock, contracts string, err error) {
+func (w *WiringResolver) resolveDependenciesYAML(ctx context.Context, orgID, projectID, component string) (yamlBlock, contracts, resourceNotes string, err error) {
 	comp, ok, err := w.findComponent(ctx, orgID, projectID, component)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if !ok {
-		return "", "", nil
+		return "", "", "", nil
 	}
 
 	var deps workloadDeps
 	var contractSections []string
+	var resourceSections []string
 
 	if w.endpoints != nil {
 		// org-service endpoints (cross-project, visibility namespace). Skip any
@@ -130,7 +143,7 @@ func (w *WiringResolver) resolveDependenciesYAML(ctx context.Context, orgID, pro
 		for _, name := range comp.OrgServiceDependsOn() {
 			target, ok, rerr := w.endpoints.ResolveNamespaceVisible(ctx, orgID, name)
 			if rerr != nil {
-				return "", "", fmt.Errorf("resolve org-service %q: %w", name, rerr)
+				return "", "", "", fmt.Errorf("resolve org-service %q: %w", name, rerr)
 			}
 			if !ok {
 				continue
@@ -151,7 +164,7 @@ func (w *WiringResolver) resolveDependenciesYAML(ctx context.Context, orgID, pro
 			ocComponent := projectID + "-" + depName
 			target, ok, rerr := w.endpoints.ResolveProjectEndpoint(ctx, orgID, projectID, ocComponent)
 			if rerr != nil {
-				return "", "", fmt.Errorf("resolve same-project component %q: %w", depName, rerr)
+				return "", "", "", fmt.Errorf("resolve same-project component %q: %w", depName, rerr)
 			}
 			if !ok {
 				continue
@@ -163,6 +176,18 @@ func (w *WiringResolver) resolveDependenciesYAML(ctx context.Context, orgID, pro
 				EnvBindings: map[string]string{"address": orgServiceURLEnv(depName)},
 			})
 			contractSections = append(contractSections, localComponentContractSection(depName))
+		}
+	}
+
+	// external deps with a design-time-collected spec (specPath set): tell the
+	// coding agent to implement the client against that EXACT stored contract.
+	// This is independent of the external resource's binding/provisioning
+	// state below — the spec is a static repo artifact from design save, not a
+	// runtime resolution, so it applies whether or not the connection is
+	// bound yet.
+	for _, d := range comp.Dependencies {
+		if d.Kind == spec.DependencyKindExternal && d.SpecPath != "" {
+			contractSections = append(contractSections, externalSpecContractSection(d.Name, d.SpecPath))
 		}
 	}
 
@@ -199,17 +224,20 @@ func (w *WiringResolver) resolveDependenciesYAML(ctx context.Context, orgID, pro
 				Ref:         dependencies.ExternalResourceName(projectID, depName),
 				EnvBindings: envBindings,
 			})
+			if dep, ok := findDependency(comp, depName, spec.DependencyKindPlatformResource); ok {
+				resourceSections = append(resourceSections, platformResourceIdentitySection(dep, envBindings))
+			}
 		}
 	}
 
 	if len(deps.Endpoints) == 0 && len(deps.Resources) == 0 {
-		return "", "", nil
+		return "", "", "", nil
 	}
 	out, err := yaml.Marshal(map[string]workloadDeps{"dependencies": deps})
 	if err != nil {
-		return "", "", fmt.Errorf("marshal dependencies yaml: %w", err)
+		return "", "", "", fmt.Errorf("marshal dependencies yaml: %w", err)
 	}
-	return string(out), strings.Join(contractSections, "\n\n"), nil
+	return string(out), strings.Join(contractSections, "\n\n"), strings.Join(resourceSections, "\n\n"), nil
 }
 
 // orgServiceContractSection renders the "Consumed API contract" guidance for
@@ -249,6 +277,56 @@ func localComponentContractSection(depName string) string {
 			"EXACT operations. Do NOT invent endpoints.",
 		depName, depName, depName,
 	)
+}
+
+// externalSpecContractSection renders the contract note for an `external`
+// dependency that has a `specPath` — which is EITHER a URL or a repo-relative
+// file path. It is the authoritative contract when present; the coding agent
+// fetches it (URL) or reads it (file) and researches the API's own docs for
+// anything the contract doesn't cover.
+func externalSpecContractSection(depName, specPath string) string {
+	return fmt.Sprintf(
+		"External API contract for `%s`: `%s` — if this is a URL, fetch it; if a path, "+
+			"it is a file in your checked-out repo. Use it as the source of truth for the "+
+			"API's operations, and research the provider's docs for anything it doesn't cover.",
+		depName, specPath,
+	)
+}
+
+// platformResourceIdentitySection renders the resourceType + catalog
+// description identification note for a provisioned platform-resource
+// dependency. The outputs→env mapping is already visible in the yaml block's
+// envBindings; this supplies the two facts the OC WorkloadDescriptor
+// resources schema (workloadResourceDepYAML) has no room for — resourceType
+// and the architect-recorded catalog description — which together are the
+// coding agent's ONLY handle to identify the underlying technology behind
+// the resource (needed for the SDK-docs lookup guardrail).
+func platformResourceIdentitySection(dep spec.Dependency, envBindings map[string]string) string {
+	desc := dep.Description
+	if desc == "" {
+		desc = "no catalog description recorded"
+	}
+	envs := make([]string, 0, len(envBindings))
+	for _, env := range envBindings {
+		envs = append(envs, env)
+	}
+	sort.Strings(envs)
+	return fmt.Sprintf(
+		"### Platform resource — %s\nResource type: `%s` — %s.\nOutputs → env: %s.",
+		dep.Name, dep.ResourceType, desc, strings.Join(envs, ", "),
+	)
+}
+
+// findDependency looks up the single dependency entry matching name+kind —
+// used where a caller already has the bare name (from platformDepNames) but
+// needs the full entry's kind-specific fields (ResourceType/Description).
+func findDependency(c spec.DesignComponent, name string, kind spec.DependencyKind) (spec.Dependency, bool) {
+	for _, d := range c.Dependencies {
+		if d.Kind == kind && d.Name == name {
+			return d, true
+		}
+	}
+	return spec.Dependency{}, false
 }
 
 func (w *WiringResolver) findComponent(ctx context.Context, orgID, projectID, component string) (spec.DesignComponent, bool, error) {

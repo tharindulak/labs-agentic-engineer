@@ -123,12 +123,45 @@ test("resolveSkillsFromClone: builds materializedName from kind + reads referenc
   const go = out.find((s) => s.materializedName === "org-go");
   assert.ok(go, "expected org-go");
   assert.equal(go!.kind, "org");
-  assert.deepEqual(go!.references, { "references/style.md": "# go style" });
+  assert.equal(go!.references["references/style.md"]?.toString("utf-8"), "# go style");
 
   const pay = out.find((s) => s.materializedName === "custom-payments");
   assert.ok(pay, "expected custom-payments");
   assert.equal(pay!.kind, "custom");
-  assert.deepEqual(pay!.references, {}); // no references dir
+  assert.deepEqual(pay!.references, {}); // no aux files
+});
+
+test("resolveSkillsFromClone: recursively reads the full skill structure as Buffers, skipping SKILL.md and dot-entries", async () => {
+  const clone = await tmpTree({
+    "skills/full/SKILL.md": skillMD("full", "org"),
+    "skills/full/references/a.md": "# ref a",
+    "skills/full/scripts/run.mjs": "console.log('hi');\n",
+    "skills/full/.gitkeep": "should be skipped",
+  });
+  // Write a nested dotdir file and a genuine binary asset the string-based
+  // tmpTree helper can't express.
+  await fs.promises.mkdir(path.join(clone, "skills/full/.hidden"), { recursive: true });
+  await fs.promises.writeFile(path.join(clone, "skills/full/.hidden/secret.md"), "nope");
+  await fs.promises.mkdir(path.join(clone, "skills/full/assets"), { recursive: true });
+  const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff]);
+  await fs.promises.writeFile(path.join(clone, "skills/full/assets/logo.png"), binary);
+
+  const out = await resolveSkillsFromClone(clone, ["full"]);
+  assert.equal(out.length, 1);
+  const refs = out[0].references;
+
+  assert.ok(refs["references/a.md"] instanceof Buffer);
+  assert.equal(refs["references/a.md"]!.toString("utf-8"), "# ref a");
+  assert.ok(refs["scripts/run.mjs"] instanceof Buffer);
+  assert.equal(refs["scripts/run.mjs"]!.toString("utf-8"), "console.log('hi');\n");
+  assert.ok(refs["assets/logo.png"] instanceof Buffer);
+  assert.ok(Buffer.compare(refs["assets/logo.png"]!, binary) === 0);
+
+  // SKILL.md itself and dot-entries must never appear among the aux files.
+  assert.equal(refs["SKILL.md"], undefined);
+  assert.equal(refs[".gitkeep"], undefined);
+  assert.equal(refs[".hidden/secret.md"], undefined);
+  assert.deepEqual(Object.keys(refs).sort(), ["assets/logo.png", "references/a.md", "scripts/run.mjs"]);
 });
 
 test("resolveSkillsFromClone: unmarked SKILL.md resolves as org kind", async () => {

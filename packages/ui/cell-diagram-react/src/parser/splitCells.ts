@@ -39,6 +39,19 @@ export interface SplitResult {
 
 const headerPattern = /^cell\s+(\S+)(?:\s+as\s+(?:"([^"]*)"|(\S+)))?\s*\{$/;
 
+export interface CellHeader {
+  id: string;
+  label?: string;
+}
+
+export function parseCellHeader(statement: string): CellHeader | null {
+  const header = headerPattern.exec(statement.trim());
+  if (!header) {
+    return null;
+  }
+  return { id: header[1], label: (header[2] || header[3]) || undefined };
+}
+
 export function splitCells(source: string): SplitResult {
   const rawLines = source.split(/\r?\n/);
   const hasBlocks = rawLines.some(
@@ -62,13 +75,13 @@ export function splitCells(source: string): SplitResult {
     const trimmed = rawLines[index].trim();
     if (trimmed.length === 0) { continue; }
 
-    const header = headerPattern.exec(trimmed);
+    const header = parseCellHeader(trimmed);
     if (header) {
       if (current) {
         diagnostics.push({ severity: "error", message: "Nested cells are not supported.", line, column: 1 });
         continue;
       }
-      current = { id: header[1], label: (header[2] || header[3]) || undefined, headerLine: line, lines: [] };
+      current = { id: header.id, label: header.label, headerLine: line, lines: [] };
       continue;
     }
 
@@ -92,11 +105,11 @@ export function splitCells(source: string): SplitResult {
   }
 
   if (current) {
+    diagnostics.push({ severity: "error", message: "Unbalanced braces: a cell block was not closed.", line: current.headerLine, column: 1 });
     // Auto-close the still-open block at EOF so a growing DSL prefix (streaming
     // a `design.cell`) still yields the in-progress cell. The diagnostic remains,
     // so non-tolerant compiles keep collapsing to `model: null` as before.
     cells.push(current);
-    diagnostics.push({ severity: "error", message: "Unbalanced braces: a cell block was not closed.", line: current.headerLine, column: 1 });
   }
 
   return { implicit: false, cells, topLevel, diagnostics };

@@ -46,18 +46,24 @@ function relativeTime(iso: string): string {
   return `${Math.round(hrs / 24)} d ago`;
 }
 
-// The overview's "agent activity" feed: a status-dotted timeline (dots joined
-// by a vertical rail) of what the platform's agents — and you — have done on
-// this project, sourced from the real activity feed (seeded read + SSE tail).
-// The Builds page owns the detail.
-export function AgentActivity({ projectName }: { projectName: string }) {
+// The overview shows only the newest few events — it's a glanceable summary,
+// not the history; the feed itself keeps everything.
+const OVERVIEW_EVENT_LIMIT = 6;
+
+// The overview's "recent activity" feed: a status-dotted timeline (dots joined
+// by a vertical rail) of what the platform's agents — and every collaborating
+// user — have done on this project, sourced from the real activity feed
+// (seeded read + SSE tail). The Builds page owns the detail.
+export function RecentActivity({ projectName }: { projectName: string }) {
   const { user } = useSession();
   const { events } = useActivityFeed(projectName);
-  const items = events.map((e) => activityLine(e, user.email));
+  const items = events
+    .slice(0, OVERVIEW_EVENT_LIMIT)
+    .map((e) => activityLine(e, user.email));
 
   return (
     <div>
-      <SectionTitle>Agent Activity</SectionTitle>
+      <SectionTitle>Recent activity</SectionTitle>
       {items.length === 0 ? (
         <EmptyState
           bordered

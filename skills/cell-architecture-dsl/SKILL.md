@@ -1,6 +1,6 @@
 ---
 name: cell-architecture-dsl
-description: Use when generating or editing a design — write specs/design/design.cell FIRST (before design.md and the component design.json files). It is the cell-based architecture diagram DSL that streams into the live architecture diagram. Covers the grammar, the AEP boundary semantics (where each dependency goes), and the single-addFile write protocol.
+description: Use when generating a design OR when ANY change alters the architecture — a component added, removed, or renamed; an edge or dependency changed; exposure changed; an external/SaaS dependency added or dropped. specs/design/design.cell moves FIRST, before design.md and the component design.json files. Covers the grammar, the AEP boundary semantics (where each dependency goes), and the write protocol that drives the live architecture diagram.
 metadata:
   aep:
     kind: platform
@@ -141,6 +141,25 @@ incremental `editFile`s, and you should not use them here. Emit the file in a
 readable order (title, then components, then boundary externals, then edges) so
 the diagram builds up sensibly as it streams.
 
-To regenerate an existing design.cell, `removeFile specs/design/design.cell`
-then `addFile` the new version (the fresh add re-streams the diagram); do not
-patch it with anchored edits.
+## Changing an existing architecture
+
+A change is ARCHITECTURAL when it adds, removes, or renames a component,
+changes who calls whom (an edge), changes a component's exposure, or adds or
+drops an org/external/SaaS dependency. For such a change design.cell moves
+FIRST and the rest of the design follows it:
+
+1. Update design.cell with targeted `editFile` edits — add or remove just the
+   affected lines (a component/external declaration, an edge). Each applied
+   edit lands in the live diagram IN PLACE, so the user sees exactly the
+   requested change without the diagram tearing down and rebuilding. Only
+   when the change replaces MOST of the diagram (a restructure) re-emit it
+   instead: `removeFile`, then ONE `addFile` with the complete new diagram
+   (the fresh add re-streams it line by line).
+2. Update `specs/design/design.md` (Components, Interactions) to match.
+3. Re-emit every affected `components/<name>/design.json` — same component
+   ids, and every design.cell edge touching a component appears in that
+   component's `dependencies` (and vice versa).
+
+Do not narrate this in chat — just make the writes. A change that touches no
+component, edge, exposure, or external dependency (copy edits, capability
+wording, data-model tweaks) does NOT touch design.cell.

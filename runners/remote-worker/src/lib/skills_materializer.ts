@@ -27,7 +27,9 @@
 //     skills/
 //       org-api-management/
 //         SKILL.md                                  # rewritten name: org-api-management
-//         references/<file>.md                      # optional
+//         references/<file>                         # optional, any file type
+//         scripts/<file>                             # optional, written 0o755 (executable)
+//         assets/<file>                              # optional, any other aux file — 0o644
 //       org-go/
 //         SKILL.md
 //       custom-payments-pci-handling/
@@ -53,7 +55,7 @@ export interface SkillResolution {
   materializedName: string; // e.g. "org-api-management" — kind-prefixed dir + `name:`
   kind: SkillKind; // frontmatter metadata.aep.kind (absent → "org")
   skillMd: string; // the SKILL.md body, verbatim
-  references: Record<string, string>; // references/<file>.md → content
+  references: Record<string, Buffer>; // relative path (excl. SKILL.md) → content, byte-faithful
 }
 
 export interface MaterializeResult {
@@ -92,11 +94,13 @@ export async function materializeSkills(
 
     if (sk.references && Object.keys(sk.references).length > 0) {
       for (const [refPath, refBody] of Object.entries(sk.references)) {
-        if (!refPath.startsWith("references/")) continue;
-        if (refPath.includes("..")) continue; // safety
+        // Path safety: reject any traversal segment or absolute path — a
+        // materialized file must stay under skillDir.
+        if (refPath.split("/").includes("..") || path.isAbsolute(refPath)) continue;
         const fullPath = path.join(skillDir, refPath);
+        const mode = refPath.startsWith("scripts/") ? 0o755 : 0o644;
         await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
-        await fs.promises.writeFile(fullPath, refBody, { mode: 0o644 });
+        await fs.promises.writeFile(fullPath, refBody, { mode });
       }
     }
 

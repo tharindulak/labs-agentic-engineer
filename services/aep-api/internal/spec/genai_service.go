@@ -225,14 +225,18 @@ type ServiceDeps struct {
 }
 
 // TurnActivityRecorder appends the spec_updated activity line (issue #239) for
-// a turn that committed. Primitives only, so spec need not import projects (the
-// app-root adapter maps these onto the activity service's input). Best-effort:
-// implementations never return an error — recording must not fail a turn.
+// a turn that authored spec changes. Primitives only, so spec need not import
+// projects (the app-root adapter maps these onto the activity service's input).
+// Best-effort: implementations never return an error — recording must not fail
+// a turn. The actor is always the agent (a turn is the agent working), so no
+// user identity is passed.
 type TurnActivityRecorder interface {
-	// RecordSpecUpdated appends the line for turnID. title is the turn's
-	// instruction subject; actorEmail/actorName identify the prompting user
-	// and are "" when the turn carries no author identity.
-	RecordSpecUpdated(ctx context.Context, orgID, projectID, turnID, title, actorEmail, actorName string)
+	// RecordSpecUpdated appends the agent-authored line for turnID. title is the
+	// turn's instruction subject. editedPaths are the collab-doc paths a room
+	// turn edited — they let the implementation suppress the committer's later
+	// flush of the same edits; a committed turn passes nil (its commit is its
+	// own, nothing flushes later).
+	RecordSpecUpdated(ctx context.Context, orgID, projectID, turnID, title string, editedPaths []string)
 }
 
 // Service is the typed entry point behind the turn/status/stream/rehydrate

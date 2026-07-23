@@ -26,7 +26,7 @@ import (
 // CollectSpec (dependency-management — the collect-dependency-spec route). The
 // route resolves the {component, dep} external target, validates + normalizes
 // the OpenAPI contract, and atomically commits the spec file + the design.json
-// specPath edit (which clears the external-needs-spec proceed-gate).
+// specPath edit (which records the dependency as having a stored contract).
 
 const validOpenAPI = `openapi: 3.0.3
 info:
@@ -80,7 +80,7 @@ func collectSvc(t *testing.T, depsJSON string, fc *fakeCommitter) *designService
 
 func TestCollectSpec_RejectsBadSource(t *testing.T) {
 	t.Parallel()
-	svc := collectSvc(t, `[{"kind":"external","name":"stripe","needsSpec":true}]`, &fakeCommitter{})
+	svc := collectSvc(t, `[{"kind":"external","name":"stripe","style":"rest-api"}]`, &fakeCommitter{})
 
 	if _, err := svc.CollectSpec(context.Background(), "acme", "web", "consumer", "stripe", nil, ""); !errors.Is(err, ErrInvalidSpec) {
 		t.Fatalf("neither source: want ErrInvalidSpec, got %v", err)
@@ -92,7 +92,7 @@ func TestCollectSpec_RejectsBadSource(t *testing.T) {
 
 func TestCollectSpec_UnknownTarget(t *testing.T) {
 	t.Parallel()
-	svc := collectSvc(t, `[{"kind":"external","name":"stripe","needsSpec":true}]`, &fakeCommitter{})
+	svc := collectSvc(t, `[{"kind":"external","name":"stripe","style":"rest-api"}]`, &fakeCommitter{})
 
 	if _, err := svc.CollectSpec(context.Background(), "acme", "web", "ghost", "stripe", []byte(validOpenAPI), ""); !errors.Is(err, ErrDependencyNotFound) {
 		t.Fatalf("unknown component: want ErrDependencyNotFound, got %v", err)
@@ -113,7 +113,7 @@ func TestCollectSpec_WrongKind(t *testing.T) {
 
 func TestCollectSpec_InvalidSpec(t *testing.T) {
 	t.Parallel()
-	svc := collectSvc(t, `[{"kind":"external","name":"stripe","needsSpec":true}]`, &fakeCommitter{})
+	svc := collectSvc(t, `[{"kind":"external","name":"stripe","style":"rest-api"}]`, &fakeCommitter{})
 
 	if _, err := svc.CollectSpec(context.Background(), "acme", "web", "consumer", "stripe", []byte("not: openapi"), ""); !errors.Is(err, ErrInvalidSpec) {
 		t.Fatalf("non-OpenAPI doc: want ErrInvalidSpec, got %v", err)
@@ -123,7 +123,7 @@ func TestCollectSpec_InvalidSpec(t *testing.T) {
 func TestCollectSpec_CommitsSpecAndDesignEdit(t *testing.T) {
 	t.Parallel()
 	fc := &fakeCommitter{}
-	svc := collectSvc(t, `[{"kind":"external","name":"stripe","needsSpec":true}]`, fc)
+	svc := collectSvc(t, `[{"kind":"external","name":"stripe","style":"rest-api"}]`, fc)
 
 	specPath, err := svc.CollectSpec(context.Background(), "acme", "web", "consumer", "stripe", []byte(validOpenAPI), "")
 	if err != nil {
@@ -162,7 +162,7 @@ func TestCollectSpec_CommitsSpecAndDesignEdit(t *testing.T) {
 	if designW.BaseSHA != "sha-design" {
 		t.Fatalf("design.json must CAS on its read sha, got %q", designW.BaseSHA)
 	}
-	// The specPath edit is what clears the needs-spec gate on the next read.
+	// The specPath edit is what records the dependency's stored contract.
 	if !strings.Contains(designW.Content, `"specPath": "dependencies/stripe.openapi.yaml"`) {
 		t.Fatalf("design.json did not record specPath:\n%s", designW.Content)
 	}
@@ -171,7 +171,7 @@ func TestCollectSpec_CommitsSpecAndDesignEdit(t *testing.T) {
 func TestCollectSpec_CommitConflict(t *testing.T) {
 	t.Parallel()
 	fc := &fakeCommitter{commitErr: ErrSpecCommitConflict}
-	svc := collectSvc(t, `[{"kind":"external","name":"stripe","needsSpec":true}]`, fc)
+	svc := collectSvc(t, `[{"kind":"external","name":"stripe","style":"rest-api"}]`, fc)
 
 	if _, err := svc.CollectSpec(context.Background(), "acme", "web", "consumer", "stripe", []byte(validOpenAPI), ""); !errors.Is(err, ErrSpecCommitConflict) {
 		t.Fatalf("stale design.json: want ErrSpecCommitConflict, got %v", err)
@@ -180,7 +180,7 @@ func TestCollectSpec_CommitConflict(t *testing.T) {
 
 func TestCollectSpec_NoCommitterWired(t *testing.T) {
 	t.Parallel()
-	svc := newService(readsFor(t, designFilesWithDeps(`[{"kind":"external","name":"stripe","needsSpec":true}]`)))
+	svc := newService(readsFor(t, designFilesWithDeps(`[{"kind":"external","name":"stripe","style":"rest-api"}]`)))
 	// fileCommitter left nil (degraded boot).
 
 	if _, err := svc.CollectSpec(context.Background(), "acme", "web", "consumer", "stripe", []byte(validOpenAPI), ""); err == nil {

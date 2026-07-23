@@ -91,6 +91,15 @@ type TurnRequest struct {
 	// FROM the doc, and applies ops to the doc — nothing is committed to git.
 	// Wire shape pinned by @aep/agent-stream's CollabConfig.
 	Collab *CollabBlock `json:"collab,omitempty"`
+	// WebSearch, when true, has the agents service register Anthropic's
+	// provider-executed web_search tool for this turn (external-dependency-
+	// discovery #252) — it lets the model verify a candidate external API/SDK
+	// actually exists before proposing a dependency for it. Unlike MCP, no
+	// BFF-minted credential is needed, so the caller sets this under the SAME
+	// gate as MCP (design-generate or any collab room-scoped turn) without
+	// depending on the MCP minter being wired. Anthropic-only on the agents
+	// side; false/omitted is byte-identical to a turn without it.
+	WebSearch bool `json:"webSearch,omitempty"`
 }
 
 // CollabBlock names the room and carries the prompting user's bearer,

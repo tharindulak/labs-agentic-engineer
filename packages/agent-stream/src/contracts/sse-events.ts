@@ -304,6 +304,17 @@ export interface TurnRequest {
    * the committed-truth snapshot turn (byte-identical to today).
    */
   collab?: CollabConfig;
+  /**
+   * Attach Anthropic's provider-executed `web_search` tool for this turn
+   * (external-dependency-discovery #252) — lets the model verify a candidate
+   * external API/SDK actually exists before proposing a `dependencies` entry
+   * for it. The caller (BFF) sets this true under the SAME condition as `mcp`
+   * (design-generate or any collab room-scoped turn), but unlike `mcp` it
+   * needs no BFF-minted credential. Registered only when true AND the turn's
+   * model is actually Anthropic; omitted/false, or a non-Anthropic model, →
+   * the tool map is byte-identical to a turn without it.
+   */
+  webSearch?: boolean;
 }
 
 /** The registrable tool sets a turn may request (`TurnRequest.toolset`). */

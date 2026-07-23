@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // mkSkillMD builds a minimal valid SKILL.md; kind == "" leaves the metadata
@@ -184,6 +185,7 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 		"skills/builtin/retired/SKILL.md":     mkSkillMD("retired", "", "no longer shipped"),
 		"skills/custom/mine/SKILL.md":         mkSkillMD("mine", "", "my custom skill"),
 		"skills/custom/mine/references/r.md":  "my ref",
+		"skills/custom/mine/scripts/s.sh":     "#!/bin/sh\necho mine\n",
 		"skills/custom/react-webapp/SKILL.md": mkSkillMD("react-webapp", "", "user shadow of an org skill"),
 	}, "test: legacy layout")
 	before := origin.HeadSHA(t)
@@ -237,6 +239,9 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 	if mine.References["references/r.md"] != "my ref" {
 		t.Fatalf("mine references lost: %v", mine.References)
 	}
+	if mine.References["scripts/s.sh"] != "#!/bin/sh\necho mine\n" {
+		t.Fatalf("mine scripts/s.sh lost: %v", mine.References)
+	}
 	if !strings.Contains(origin.FileAt(t, "main", "skills/mine/SKILL.md"), "kind: custom") {
 		t.Fatalf("migrated custom skill must be stamped")
 	}
@@ -271,5 +276,81 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 	}
 	if n2 != 0 {
 		t.Fatalf("second reconcile must be a no-op, changed %d", n2)
+	}
+}
+
+// ---- org-repo write/read paths carry the full skill structure -----------------
+
+// TestReconcile_CarriesStandardStructure: an embedded skill with scripts/,
+// assets/, and a nested extra file round-trips seed → org repo → catalog read
+// with all files intact, and a re-reconcile is a no-op (stable ContentSHA).
+func TestReconcile_CarriesStandardStructure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c := NewComponentStoreWithLibrary(t, fstest.MapFS{
+		"demo/SKILL.md":        {Data: []byte(mkSkillMD("demo", "platform", "demo"))},
+		"demo/scripts/run.mjs": {Data: []byte("console.log(1)\n")},
+		"demo/assets/tpl.ts":   {Data: []byte("export {}\n")},
+		"demo/extra/notes.txt": {Data: []byte("extra")},
+		"demo/TOPLEVEL.txt":    {Data: []byte("root-level aux file, no subdir\n")},
+	})
+	skills, err := c.Svc.List(ctx, "org1") // first read provisions + seeds
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byName := map[string]Skill{}
+	for _, sk := range skills {
+		byName[sk.Name] = sk
+	}
+	demo := byName["demo"]
+	for _, p := range []string{"scripts/run.mjs", "assets/tpl.ts", "extra/notes.txt", "TOPLEVEL.txt"} {
+		if demo.References[p] == "" {
+			t.Fatalf("catalog read lost %s: %v", p, skillKeysOf(byName))
+		}
+	}
+	// Files are physically in the org repo.
+	if got := c.host.origin("org1").FileAt(t, "main", "skills/demo/scripts/run.mjs"); got != "console.log(1)\n" {
+		t.Fatalf("org repo scripts file = %q", got)
+	}
+	// Re-reconcile: clean copy, no rewrite.
+	if n, err := c.Svc.Reconcile(ctx, "org1"); err != nil || n != 0 {
+		t.Fatalf("re-reconcile must be a no-op, wrote %d (err %v)", n, err)
+	}
+}
+
+// TestReconcile_FlatSkillNamedLikeLegacyKindDir: a flat skill literally named
+// "custom" — a legacyKindDirs key — must survive the catalog read intact,
+// SKILL.md and aux file both. Depth alone discriminates flat vs. legacy
+// layout, never the name; before this test's fix, skills/custom/SKILL.md
+// (depth 3) was routed into the legacy branch, which requires depth >= 4, and
+// the skill silently vanished from the catalog.
+func TestReconcile_FlatSkillNamedLikeLegacyKindDir(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c := NewComponentStoreWithLibrary(t, fstest.MapFS{
+		"custom/SKILL.md":        {Data: []byte(mkSkillMD("custom", "platform", "flat skill literally named custom"))},
+		"custom/scripts/run.mjs": {Data: []byte("console.log(1)\n")},
+	})
+	skills, err := c.Svc.List(ctx, "org1") // first read provisions + seeds
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	byName := map[string]Skill{}
+	for _, sk := range skills {
+		byName[sk.Name] = sk
+	}
+	custom, ok := byName["custom"]
+	if !ok {
+		t.Fatalf("flat skill named %q vanished from the catalog: %v", "custom", skillKeysOf(byName))
+	}
+	if !strings.Contains(custom.SkillMD, "flat skill literally named custom") {
+		t.Fatalf("custom SKILL.md body wrong: %q", custom.SkillMD)
+	}
+	if custom.References["scripts/run.mjs"] != "console.log(1)\n" {
+		t.Fatalf("custom aux file lost: %v", custom.References)
+	}
+	// Re-reconcile: clean copy, no rewrite.
+	if n, err := c.Svc.Reconcile(ctx, "org1"); err != nil || n != 0 {
+		t.Fatalf("re-reconcile must be a no-op, wrote %d (err %v)", n, err)
 	}
 }

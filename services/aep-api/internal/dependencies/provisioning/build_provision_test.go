@@ -40,10 +40,7 @@ func TestProvisionForBuild_ByKind(t *testing.T) {
 	reeval := &fakeReeval{}
 	ext := &fakeExtProv{}
 	plat := &fakePlatProv{}
-	catalog := &fakeCatalog{entries: map[string]*dependencies.ExternalResource{
-		"stripe": {Name: "stripe", ConfigKeys: []spec.ConfigKey{{Key: "api_key", Secret: true}, {Key: "region"}}},
-	}}
-	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, catalog, ext, plat, &fakeBindings{})
+	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, ext, plat, &fakeBindings{})
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
@@ -110,10 +107,7 @@ func TestProvisionForBuild_UsesMintedGateDespiteListRace(t *testing.T) {
 	reeval := &fakeReeval{}
 	ext := &fakeExtProv{}
 	plat := &fakePlatProv{}
-	catalog := &fakeCatalog{entries: map[string]*dependencies.ExternalResource{
-		"stripe": {Name: "stripe", ConfigKeys: []spec.ConfigKey{{Key: "api_key", Secret: true}, {Key: "region"}}},
-	}}
-	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, catalog, ext, plat, &fakeBindings{})
+	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, ext, plat, &fakeBindings{})
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
@@ -147,10 +141,7 @@ func TestProvisionForBuild_ExternalAuthorFailureContinues(t *testing.T) {
 	execs := &fakeExecStore{}
 	ext := &fakeExtProv{authorErr: fmt.Errorf("author boom")}
 	plat := &fakePlatProv{}
-	catalog := &fakeCatalog{entries: map[string]*dependencies.ExternalResource{
-		"stripe": {Name: "stripe", ConfigKeys: []spec.ConfigKey{{Key: "api_key", Secret: true}}},
-	}}
-	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, catalog, ext, plat, &fakeBindings{})
+	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, ext, plat, &fakeBindings{})
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
@@ -183,7 +174,7 @@ func TestProvisionForBuild_OrgServiceUnapprovedIsNoop(t *testing.T) {
 	ext := &fakeExtProv{}
 	plat := &fakePlatProv{}
 	svc := newTestService(issues, &fakeExecStore{}, &fakeReeval{},
-		fakeDesign{comps: []spec.DesignComponent{{Name: "web"}}}, &fakeCatalog{}, ext, plat, &fakeBindings{})
+		fakeDesign{comps: []spec.DesignComponent{{Name: "web"}}}, ext, plat, &fakeBindings{})
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", []BuildProvisionInput{
 		{Component: "web", Dependency: "inventory", Kind: "org-service", Approved: false},
@@ -264,14 +255,11 @@ func TestProvisionForBuild_SettlesReadyGateNotInInputs(t *testing.T) {
 	reeval := &fakeReeval{}
 	ext := &fakeExtProv{}
 	plat := &fakePlatProv{}
-	catalog := &fakeCatalog{entries: map[string]*dependencies.ExternalResource{
-		"stripe": {Name: "stripe", ConfigKeys: []spec.ConfigKey{{Key: "api_key", Secret: true}, {Key: "region"}}},
-	}}
 	// orders-db (platform-resource) is already Ready in OC but NOT in the drawer inputs.
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		dependencies.ExternalResourceBindingName("proj", "orders-db", "development"): readyBinding("host", "port"),
 	}}
-	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, catalog, ext, plat, bindings)
+	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, ext, plat, bindings)
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
@@ -310,11 +298,8 @@ func TestProvisionForBuild_SettlesReadyGateNotInInputs(t *testing.T) {
 func TestProvisionForBuild_SkipsNotReadyGateNotInInputs(t *testing.T) {
 	issues := newFakeIssues(nil)
 	execs := &fakeExecStore{}
-	catalog := &fakeCatalog{entries: map[string]*dependencies.ExternalResource{
-		"stripe": {Name: "stripe", ConfigKeys: []spec.ConfigKey{{Key: "api_key", Secret: true}}},
-	}}
 	// orders-db has NO binding (never provisioned) → Status reports not-ready.
-	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, catalog, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
+	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", []BuildProvisionInput{
 		{Component: "orders", Dependency: "stripe", Kind: "external-config",
@@ -341,7 +326,7 @@ func TestSettleReadyGate_NoOpenGate(t *testing.T) {
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		dependencies.ExternalResourceBindingName("proj", "orders-db", "development"): readyBinding(),
 	}}
-	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeCatalog{}, &fakeExtProv{}, &fakePlatProv{}, bindings)
+	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, bindings)
 
 	if err := svc.completeReadyGate(context.Background(), "acme", "proj", "orders-db", "orders"); err != nil {
 		t.Fatalf("no open gate must be a no-op, got %v", err)
@@ -366,7 +351,7 @@ func TestProvisionForBuild_EmptyInputsDoesNotMint(t *testing.T) {
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		dependencies.ExternalResourceBindingName("proj", "orders-db", "development"): readyBinding(),
 	}}
-	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeCatalog{}, &fakeExtProv{}, &fakePlatProv{}, bindings)
+	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, bindings)
 
 	fails, err := svc.ProvisionForBuild(context.Background(), "acme", "acme", "proj", "v3", nil)
 	if err != nil {

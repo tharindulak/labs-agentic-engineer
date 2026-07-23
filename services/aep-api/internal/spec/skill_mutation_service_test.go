@@ -101,13 +101,49 @@ func TestParseAndValidateSkillMD(t *testing.T) {
 		assertIssueCode(t, err, "FRONTMATTER_INVALID")
 	})
 
-	t.Run("bad reference path", func(t *testing.T) {
-		_, _, err := parseAndValidateSkillMD(validSkillMD, map[string]string{"scripts/run.sh": "echo hi"})
+	t.Run("any aux file path allowed, no extension filter", func(t *testing.T) {
+		// The mutation/import contract mirrors the loaders (repo_store.go
+		// isCatalogPath/parseBundleEntries): any aux file path is valid skill
+		// storage, not just references/<file>.md.
+		fm, _, err := parseAndValidateSkillMD(validSkillMD, map[string]string{
+			"scripts/run.sh":     "echo hi",
+			"assets/logo.png":    "\x89PNG\x0d\x0a",
+			"references/ex.md":   "still fine",
+			"nested/extra/a.txt": "any depth",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if fm.Name != "payments-pci-handling" {
+			t.Fatalf("name = %q", fm.Name)
+		}
+	})
+
+	t.Run("reference path must not be SKILL.md", func(t *testing.T) {
+		_, _, err := parseAndValidateSkillMD(validSkillMD, map[string]string{"SKILL.md": "shadow"})
 		assertIssueCode(t, err, "REFERENCE_PATH_INVALID")
+	})
+
+	t.Run("reference path must not be a dotfile", func(t *testing.T) {
+		_, _, err := parseAndValidateSkillMD(validSkillMD, map[string]string{"assets/.DS_Store": "junk"})
+		assertIssueCode(t, err, "REFERENCE_PATH_INVALID")
+		assertIssueMessageContains(t, err, "dotfile segment")
 	})
 
 	t.Run("reference traversal", func(t *testing.T) {
 		_, _, err := parseAndValidateSkillMD(validSkillMD, map[string]string{"references/../x.md": "x"})
+		assertIssueCode(t, err, "REFERENCE_PATH_INVALID")
+		assertIssueMessageContains(t, err, "path traversal or an empty segment")
+	})
+
+	t.Run("reference path must not contain an empty segment", func(t *testing.T) {
+		_, _, err := parseAndValidateSkillMD(validSkillMD, map[string]string{"a//b.md": "x"})
+		assertIssueCode(t, err, "REFERENCE_PATH_INVALID")
+		assertIssueMessageContains(t, err, "path traversal or an empty segment")
+	})
+
+	t.Run("reference path must not be absolute", func(t *testing.T) {
+		_, _, err := parseAndValidateSkillMD(validSkillMD, map[string]string{"/etc/passwd": "x"})
 		assertIssueCode(t, err, "REFERENCE_PATH_INVALID")
 	})
 
@@ -193,19 +229,47 @@ func TestExtractTarball(t *testing.T) {
 	})
 
 	t.Run("missing SKILL.md", func(t *testing.T) {
+		// README.md is now a legitimate aux file (any path, no extension
+		// filter) — the tarball is rejected for lacking SKILL.md, not for
+		// carrying README.md.
 		tgz := makeTarGz(t, map[string]string{"my-skill/README.md": "x"})
 		_, _, _, err := extractTarball(bytes.NewReader(tgz))
-		// README.md is a disallowed file, caught before the missing-SKILL check.
-		assertIssueCode(t, err, "DISALLOWED_FILE")
+		assertIssueCode(t, err, "SKILL_MD_MISSING")
 	})
 
-	t.Run("disallowed scripts dir", func(t *testing.T) {
+	t.Run("any aux file path allowed, no extension filter", func(t *testing.T) {
+		// Same relaxed contract as parseAndValidateSkillMD/the loaders: any
+		// non-SKILL.md, non-dotfile path is a legitimate aux file.
 		tgz := makeTarGz(t, map[string]string{
-			"my-skill/SKILL.md":     validSkillMD,
-			"my-skill/scripts/x.sh": "echo",
+			"my-skill/SKILL.md":        validSkillMD,
+			"my-skill/scripts/x.sh":    "echo",
+			"my-skill/assets/logo.png": "\x89PNG\x0d\x0a",
+			"my-skill/README.md":       "top-level, not under references/",
 		})
-		_, _, _, err := extractTarball(bytes.NewReader(tgz))
-		assertIssueCode(t, err, "DISALLOWED_FILE")
+		_, _, refs, err := extractTarball(bytes.NewReader(tgz))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, p := range []string{"scripts/x.sh", "assets/logo.png", "README.md"} {
+			if _, ok := refs[p]; !ok {
+				t.Fatalf("expected aux file %q to be captured: %v", p, refs)
+			}
+		}
+	})
+
+	t.Run("dotfiles are skipped, not errored", func(t *testing.T) {
+		tgz := makeTarGz(t, map[string]string{
+			"my-skill/SKILL.md":      validSkillMD,
+			"my-skill/.DS_Store":     "junk",
+			"my-skill/._AppleDouble": "junk",
+		})
+		_, _, refs, err := extractTarball(bytes.NewReader(tgz))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(refs) != 0 {
+			t.Fatalf("dotfiles must not be captured as references: %v", refs)
+		}
 	})
 
 	t.Run("multiple top dirs", func(t *testing.T) {
@@ -234,5 +298,16 @@ func assertIssueCode(t *testing.T, err error, code string) {
 	}
 	if verr.Issues[0].Code != code {
 		t.Fatalf("expected code %s, got %s (%s)", code, verr.Issues[0].Code, verr.Issues[0].Message)
+	}
+}
+
+func assertIssueMessageContains(t *testing.T, err error, substr string) {
+	t.Helper()
+	var verr *SkillValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("expected *SkillValidationError, got %T: %v", err, err)
+	}
+	if !strings.Contains(verr.Issues[0].Message, substr) {
+		t.Fatalf("expected message to contain %q, got %q", substr, verr.Issues[0].Message)
 	}
 }

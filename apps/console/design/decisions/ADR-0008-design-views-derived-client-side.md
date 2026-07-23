@@ -1,6 +1,6 @@
 # ADR-0008: Design-phase views are derived client-side on demand, read-only, never committed
 
-- **Status:** Accepted
+- **Status:** Accepted — cell-diagram source amended 2026-07-22 (see note below)
 - **Date:** 2026-07-09 (rich design view feature,
   [#149](https://github.com/wso2/labs-agentic-engineer/issues/149))
 - **Context:** the spec view rendered every design file as raw text (#80
@@ -19,11 +19,21 @@
 Design-phase views are **derived on the client, on demand, from the authored
 sources**, and rendered **read-only**:
 
-- The cell diagram is projected from the component `design.json` files via
-  `@aep/design-projection`; a wireframe is compiled from its `wireframes.dsl`
-  via `@aep/excalidraw-dsl`; the API Spec is parsed from `openapi.yaml`. All
+- The cell diagram renders the authored `specs/design/design.cell` DSL
+  directly; a wireframe is compiled from its `wireframes.dsl` via
+  `@aep/excalidraw-dsl`; the API Spec is parsed from `openapi.yaml`. All
   three run in the browser at render time over content already served by the
   Files API — **no new endpoints, no BE/agent derivation step.**
+
+> **Amendment (2026-07-22, [#209](https://github.com/wso2/labs-agentic-engineer/issues/209)):**
+> the cell diagram originally *projected* the component `design.json` files
+> into the cell DSL via `@aep/design-projection`. Since design.cell became an
+> authored, agent-maintained artifact (written first on every architectural
+> change), the projection fallback was removed: the diagram reads design.cell
+> itself — the live collab doc when connected, the committed blob otherwise.
+> The Architecture tab therefore requires design.cell to exist. The ADR's
+> principle is unchanged; only the cell diagram's authored source moved from
+> "design.json bundle, projected" to "design.cell, rendered as-is".
 - **Nothing derived is committed.** There are no `.excalidraw` /
   `*.gen.json` files in the repo; the `design.json` / `.dsl` / `openapi.yaml`
   sources remain the single source of truth.

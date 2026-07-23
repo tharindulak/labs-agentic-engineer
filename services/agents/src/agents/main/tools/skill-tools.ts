@@ -62,7 +62,10 @@ export const loadSkillReferenceInputSchema = z.object({
   name: z.string().describe("The skill whose reference to read, exactly as listed in the Skills catalog."),
   path: z
     .string()
-    .describe('A reference path exactly as listed by loadSkill, e.g. "references/schema.md".'),
+    .describe(
+      "A path exactly as listed by loadSkill — docs, scripts, or assets — " +
+        'e.g. "references/schema.md" or "scripts/run.mjs".',
+    ),
 });
 
 // --- Drift guard: Zod schema ⇄ sse-events wire type -------------------------
@@ -128,10 +131,20 @@ export function buildSkillTools(skills?: SkillSource): Record<string, Tool> {
         if (loaded === undefined || loaded.references.length === 0) {
           return { ok: false, name, path, error: `unknown skill: ${name}`, available: refSkillNames };
         }
-        const content = source.loadReference(name, path);
-        return content === undefined
-          ? { ok: false, name, path, error: `unknown reference: ${path}`, available: loaded.references }
-          : { ok: true, name, path, content };
+        const loadedRef = source.loadReference(name, path);
+        if (loadedRef === undefined) {
+          return { ok: false, name, path, error: `unknown reference: ${path}`, available: loaded.references };
+        }
+        if ("binary" in loadedRef) {
+          return {
+            ok: false,
+            name,
+            path,
+            error: `${path} is a binary file — it cannot be loaded into context`,
+            available: loaded.references,
+          };
+        }
+        return { ok: true, name, path, content: loadedRef.content };
       },
     });
   }

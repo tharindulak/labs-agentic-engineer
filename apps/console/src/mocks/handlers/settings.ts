@@ -160,6 +160,7 @@ function importSkill(name: string, source: string): ImportResult {
       description: `Imported from ${source}.`,
       skillMd: `---\nname: ${name}\ndescription: Imported from ${source}.\n---\n\nImported skill body.`,
       references: {},
+      binaryReferences: [],
       contentSha: nextContentSha(name),
       updatedAt: new Date().toISOString(),
     });
@@ -294,6 +295,7 @@ export const settingsHandlers = [
           description: `${t.name} (platform-shipped)`,
           skillMd: `---\nname: ${t.name}\ndescription: ${t.name} (platform-shipped)\n---\n\nPlatform-shipped skill body.`,
           references: {},
+          binaryReferences: [],
           contentSha: nextContentSha(t.name),
           updatedAt: new Date().toISOString(),
         });
@@ -340,6 +342,7 @@ export const settingsHandlers = [
       description: extractDescription(body.skillMd),
       skillMd: body.skillMd,
       references: body.references ?? {},
+      binaryReferences: [],
       contentSha: nextContentSha(body.name),
       updatedAt: new Date().toISOString(),
     };

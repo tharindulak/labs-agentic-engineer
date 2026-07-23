@@ -19,7 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
-import { configKeys, skillsKeys } from "./keys";
+import { configKeys, resourceKeys, skillsKeys } from "./keys";
 import { apiErrorMessage } from "../../../api/errors";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
@@ -272,6 +272,54 @@ export function useSyncSkills() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: skillsKeys.lists() });
       void queryClient.invalidateQueries({ queryKey: skillsKeys.updates() });
+    },
+  });
+}
+
+// --- Resources (org-settings "Resources" tabs: platform-provisioned types +
+// the external-resource catalog) ------------------------------------------
+
+export function usePlatformResourceTypes() {
+  return useQuery({
+    queryKey: resourceKeys.platformTypes,
+    queryFn: async () => {
+      const { data, error } = await client.GET("/dependencies/platform-resource-types");
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to load platform resource types"));
+      }
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useExternalResources() {
+  return useQuery({
+    queryKey: resourceKeys.external,
+    queryFn: async () => {
+      const { data, error } = await client.GET("/dependencies/external-resources");
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to load external resources"));
+      }
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useDeleteExternalResource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const { error } = await client.DELETE("/dependencies/external-resources/{name}", {
+        params: { path: { name } },
+      });
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to delete the external resource"));
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: resourceKeys.external });
     },
   });
 }

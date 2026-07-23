@@ -21,6 +21,8 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"sort"
+	"unicode/utf8"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
@@ -205,19 +207,41 @@ func (h *Handler) DeleteSkill(ctx context.Context, request gen.DeleteSkillReques
 // skillDetailBody projects a resolved Skill + the derived editable flag onto
 // the contract's SkillDetailBody (the full single-skill response).
 func skillDetailBody(sk *spec.Skill, editable bool) gen.SkillDetailBody {
+	refs, binary := splitBinaryReferences(sk.References)
 	return gen.SkillDetailBody{
-		OrgID:         sk.OrgID,
-		Name:          sk.Name,
-		Kind:          sk.Kind,
-		Description:   sk.Description,
-		SkillMd:       sk.SkillMD,
-		References:    sk.References,
-		ContentSha:    sk.ContentSHA,
-		License:       sk.License,
-		Compatibility: sk.Compatibility,
-		UpdatedAt:     sk.UpdatedAt,
-		Editable:      editable,
+		OrgID:            sk.OrgID,
+		Name:             sk.Name,
+		Kind:             sk.Kind,
+		Description:      sk.Description,
+		SkillMd:          sk.SkillMD,
+		References:       refs,
+		BinaryReferences: binary,
+		ContentSha:       sk.ContentSHA,
+		License:          sk.License,
+		Compatibility:    sk.Compatibility,
+		UpdatedAt:        sk.UpdatedAt,
+		Editable:         editable,
 	}
+}
+
+// splitBinaryReferences partitions a skill's aux-file map for the JSON
+// response boundary: encoding/json never errors on invalid UTF-8 — it
+// silently replaces bad bytes with U+FFFD — so a binary aux file (an image,
+// etc.) would come back mangled if inlined into `references` without the
+// encoder ever noticing. Non-UTF-8 entries are pulled out and listed by path
+// (sorted) in `binaryReferences` instead; their content is never inlined.
+func splitBinaryReferences(references map[string]string) (map[string]string, []string) {
+	refs := make(map[string]string, len(references))
+	binary := make([]string, 0)
+	for path, content := range references {
+		if utf8.ValidString(content) {
+			refs[path] = content
+			continue
+		}
+		binary = append(binary, path)
+	}
+	sort.Strings(binary)
+	return refs, binary
 }
 
 // skillEditable mirrors the skills feature's user-kind rule: only user-owned

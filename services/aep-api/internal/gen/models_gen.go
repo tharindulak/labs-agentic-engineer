@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
 
@@ -113,18 +114,24 @@ func (e DeployStageValidation) Valid() bool {
 
 // Defines values for PreflightItemKind.
 const (
-	PreflightItemKindExternalConfig   PreflightItemKind = "external-config"
-	PreflightItemKindExternalSpec     PreflightItemKind = "external-spec"
-	PreflightItemKindOrgService       PreflightItemKind = "org-service"
-	PreflightItemKindPlatformResource PreflightItemKind = "platform-resource"
+	PreflightItemKindExternalAmbiguous  PreflightItemKind = "external-ambiguous"
+	PreflightItemKindExternalConfig     PreflightItemKind = "external-config"
+	PreflightItemKindExternalSpec       PreflightItemKind = "external-spec"
+	PreflightItemKindExternalUnresolved PreflightItemKind = "external-unresolved"
+	PreflightItemKindOrgService         PreflightItemKind = "org-service"
+	PreflightItemKindPlatformResource   PreflightItemKind = "platform-resource"
 )
 
 // Valid indicates whether the value is a known member of the PreflightItemKind enum.
 func (e PreflightItemKind) Valid() bool {
 	switch e {
+	case PreflightItemKindExternalAmbiguous:
+		return true
 	case PreflightItemKindExternalConfig:
 		return true
 	case PreflightItemKindExternalSpec:
+		return true
+	case PreflightItemKindExternalUnresolved:
 		return true
 	case PreflightItemKindOrgService:
 		return true
@@ -455,6 +462,12 @@ type ComponentConfig struct {
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
+// ComponentDependencies One component's dependencies with read-time computed status/reason (list-design-dependencies) — the console's single dependency-status read model.
+type ComponentDependencies struct {
+	ComponentName string       `json:"componentName"`
+	Dependencies  []Dependency `json:"dependencies"`
+}
+
 // ComponentList defines model for ComponentList.
 type ComponentList struct {
 	Items []Component `json:"items"`
@@ -466,6 +479,9 @@ type ComponentOpenAPI struct {
 	ComponentType string `json:"componentType"`
 	Spec          string `json:"spec"`
 }
+
+// ConfigKey defines model for ConfigKey.
+type ConfigKey = contracts.ConfigKey
 
 // ConfigKeyDTO defines model for ConfigKeyDTO.
 type ConfigKeyDTO struct {
@@ -555,6 +571,12 @@ type DeleteOp struct {
 	BaseSha string `json:"baseSha,omitempty"`
 	Path    string `json:"path"`
 }
+
+// Dependency A component's unified, kind-discriminated dependency entry. status/reason are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them).
+type Dependency = contracts.Dependency
+
+// DependencyCandidate One option in an ambiguous external dependency's resolution set.
+type DependencyCandidate = contracts.DependencyCandidate
 
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
@@ -743,6 +765,7 @@ type OrganizationView struct {
 
 // PlatformResourceTypeDTO defines model for PlatformResourceTypeDTO.
 type PlatformResourceTypeDTO struct {
+	Consumers   []ConsumerDTO          `json:"consumers,omitempty"`
 	Description string                 `json:"description,omitempty"`
 	Name        string                 `json:"name"`
 	Outputs     []string               `json:"outputs,omitempty"`
@@ -920,17 +943,24 @@ type SaveValuesBody struct {
 
 // SkillDetailBody defines model for SkillDetailBody.
 type SkillDetailBody struct {
-	Compatibility string            `json:"compatibility,omitempty"`
-	ContentSha    string            `json:"contentSha"`
-	Description   string            `json:"description"`
-	Editable      bool              `json:"editable"`
-	Kind          string            `json:"kind"`
-	License       string            `json:"license,omitempty"`
-	Name          string            `json:"name"`
-	OrgID         string            `json:"orgId"`
-	References    map[string]string `json:"references"`
-	SkillMd       string            `json:"skillMd"`
-	UpdatedAt     time.Time         `json:"updatedAt"`
+	// BinaryReferences Sorted paths of aux files whose content is NOT valid UTF-8 (e.g.
+	// images, other binaries). Their bytes are never inlined into
+	// `references` — encoding/json silently replaces invalid UTF-8 with
+	// U+FFFD rather than erroring, so inlining would corrupt the file
+	// content without any visible failure. The console renders these
+	// entries name-only.
+	BinaryReferences []string          `json:"binaryReferences"`
+	Compatibility    string            `json:"compatibility,omitempty"`
+	ContentSha       string            `json:"contentSha"`
+	Description      string            `json:"description"`
+	Editable         bool              `json:"editable"`
+	Kind             string            `json:"kind"`
+	License          string            `json:"license,omitempty"`
+	Name             string            `json:"name"`
+	OrgID            string            `json:"orgId"`
+	References       map[string]string `json:"references"`
+	SkillMd          string            `json:"skillMd"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
 }
 
 // SkillSummary defines model for SkillSummary.

@@ -965,6 +965,11 @@ func TestCollabTurn_RoomScopedDispatchNoCommit(t *testing.T) {
 	if !strings.Contains(sent.req.Instruction, "list_org_endpoints") {
 		t.Errorf("collab instruction missing the dependency-discovery steer: %q", sent.req.Instruction)
 	}
+	// external-dependency-discovery: a collab room-scoped turn also carries
+	// WebSearch:true, the same gate as MCP.
+	if !sent.req.WebSearch {
+		t.Error("collab turn dispatched without WebSearch:true")
+	}
 }
 
 // TestMCPGate_AttachAndLeak pins mcpForTurn's widened gate: a collab turn with
@@ -1031,6 +1036,67 @@ func TestMCPGate_AttachAndLeak(t *testing.T) {
 		}
 		if sent.req.MCP.Token != testMCPToken {
 			t.Errorf("MCP token = %q, want %q", sent.req.MCP.Token, testMCPToken)
+		}
+	})
+}
+
+// TestWebSearchGate_AttachAndLeak pins the WebSearch flag's gate (external-
+// dependency-discovery): it fires on the SAME condition as mcpForTurn
+// (design-generate or any collab room-scoped turn), but — unlike MCP —
+// WITHOUT needing the MCP token-minter/base-URL wired, since Anthropic's
+// web_search provider tool needs no BFF-minted credential. None of these
+// subtests call withMCP(), proving that independence.
+func TestWebSearchGate_AttachAndLeak(t *testing.T) {
+	t.Run("collab turn, MCP unwired → WebSearch still attaches", func(t *testing.T) {
+		r := newGenaiRig(t, map[string]string{"specs/requirements/requirements.md": "# Reqs\n"})
+		r.fake.parts = []string{textPart("editing the shared doc")}
+		m := manifestPart(nil, nil)
+		r.fake.manifest = &m
+
+		body, _ := json.Marshal(map[string]any{
+			"useCase":     "requirements-chat",
+			"instruction": "edit the doc live",
+			"collab":      true,
+		})
+		rec := r.h.AsOrg(testOrg).Post(turnsPath(convUUID), string(body))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("POST collab turn: code %d (%s)", rec.Code, rec.Body.String())
+		}
+		var out struct {
+			TurnID string `json:"turnId"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		r.waitTerminal(t, out.TurnID)
+		if sent := r.fake.sentTurn(t, 0); !sent.req.WebSearch {
+			t.Error("collab turn dispatched without WebSearch:true, even with MCP deps unwired")
+		}
+	})
+
+	t.Run("non-collab requirements-chat → no WebSearch", func(t *testing.T) {
+		r := newGenaiRig(t, map[string]string{"specs/requirements/requirements.md": "# Reqs\n"})
+		r.fake.parts = []string{textPart("chatting")}
+		m := manifestPart(nil, nil)
+		r.fake.manifest = &m
+
+		turnID := r.startTurn(t, convUUID, "requirements-chat", "just chat")
+		r.waitTerminal(t, turnID)
+		sent := r.fake.sentTurn(t, 0)
+		if sent.req.WebSearch {
+			t.Error("plain requirements-chat turn leaked WebSearch:true")
+		}
+	})
+
+	t.Run("design-generate → WebSearch attaches", func(t *testing.T) {
+		r := newGenaiRig(t, map[string]string{"specs/requirements/requirements.md": "# Reqs\n"})
+		r.fake.parts = []string{textPart("designing")}
+		m := manifestPart(nil, nil)
+		r.fake.manifest = &m
+
+		turnID := r.startTurn(t, convUUID, "design-generate", "design it")
+		r.waitTerminal(t, turnID)
+		sent := r.fake.sentTurn(t, 0)
+		if !sent.req.WebSearch {
+			t.Error("design-generate turn dispatched without WebSearch:true")
 		}
 	})
 }

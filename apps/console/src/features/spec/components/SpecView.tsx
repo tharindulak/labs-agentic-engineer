@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Avatar,
@@ -43,15 +43,21 @@ import {
   useProjectStatus,
   useProjectTags,
 } from "../../projects/api/queries";
-import { useSpecFileContent, useSpecFiles } from "../api/queries";
+import { useDesignDependencies, useSpecFileContent, useSpecFiles } from "../api/queries";
 import { useProjectUsage } from "../../usage/api/queries";
 import { totalTokens } from "../../usage/lib/format";
 import { UsageChip } from "../../usage/components/UsageChip";
 import { toSpecEntry } from "../api/mapping";
+import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { CollabTextArea } from "../collab/CollabTextArea";
 import { SpecMdEditor } from "../collab/SpecMdEditor";
 import { useYTextString } from "../collab/useYTextString";
+import { useTurnEndFlush } from "../collab/useTurnEndFlush";
+import { chatKeyFor, subscribeTurnEnd } from "../../agent-chat/chatStore";
+import { useResolveDependencyViaChat } from "../../agent-chat/useResolveDependencyViaChat";
+import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
+import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
 import { AddArtifactDialog } from "./AddArtifactDialog";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
 import { SpecFileList } from "./SpecFileList";
@@ -59,9 +65,10 @@ import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
 import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
+import type { DependencyStatusInfo } from "@aep/ui-design-view";
 import { ValidationView } from "@aep/ui-validation-view";
 import type { SpecSelection } from "../api/designTree";
-import { DESIGN_CELL_PATH } from "../api/designTree";
+import { DESIGN_CELL_PATH, componentOf } from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
@@ -76,10 +83,26 @@ export function SpecView({ projectName }: { projectName: string }) {
   const status = useProjectStatus(projectName);
   const tags = useProjectTags(projectName);
   const spec = useSpecFiles(projectName);
+  // #252 Task 9: every component's read-time dependency status, for the
+  // Architecture/design.json cards below (keyed off specKeys.dependencies —
+  // the same key Task 5's turn-end freshness invalidation targets).
+  const dependencies = useDesignDependencies(projectName);
   const { user, orgHandle } = useSession();
   // Rooms are org-scoped (`spec-<org>-<project>`); without an org claim fall
   // back to the collab mock BFF's default org so mock mode keeps working.
   const collab = useCollabSpec(projectName, user, orgHandle ?? "acme");
+  // Chat-path turn-end flush (#252 Task 5): the chat panel's chatKey uses a
+  // DIFFERENT fallback ("default", matching AppLayout/AgentChatPanel) than
+  // the collab room's org scoping above ("acme") — these are unrelated
+  // conventions and must not be conflated, or this subscribes to a chat key
+  // nothing is listening on.
+  useTurnEndFlush(chatKeyFor(orgHandle ?? "default", projectName), projectName, collab);
+  // "Resolve in chat" (#252 Task 9 seam, Task 5's plumbing): SAME "default"
+  // org fallback as the chatKey above — not the collab room's "acme" one.
+  const resolveDependencyViaChat = useResolveDependencyViaChat(
+    orgHandle ?? "default",
+    projectName,
+  );
   // Cost visibility (#245): the header's draft-cycle spend chip — spec/design
   // turn usage since the last published tag, mirroring the version chips.
   const usageQ = useProjectUsage(projectName);
@@ -98,6 +121,37 @@ export function SpecView({ projectName }: { projectName: string }) {
   const [buildError, setBuildError] = useState<string | null>(null);
   const [dependencyDrawerOpen, setDependencyDrawerOpen] = useState(false);
   const [preflightItems, setPreflightItems] = useState<PreflightItem[]>([]);
+
+  // #252 Task 10: keep an OPEN drawer fresh after "Resolve via chat" ends a
+  // turn. useTurnEndFlush (above) already invalidates the preflight query's
+  // cache entry on turn-end, but useBuildPreflight is a manual `enabled:
+  // false` query (its only observer), so that invalidation alone never
+  // triggers a background refetch — TanStack only auto-refetches invalidated
+  // queries that have at least one ENABLED observer. Explicitly flushing the
+  // room (idempotent alongside useTurnEndFlush's own flush) then refetching
+  // here is what actually lands the resolved item's disappearance in the
+  // still-open drawer's `items`, rather than only on the NEXT Build click.
+  // collab/preflight are read via refs (mirroring useTurnEndFlush.ts's own
+  // collabRef) rather than closed over directly: both are fresh objects most
+  // renders, and the effect must fire on `dependencyDrawerOpen`/chat-key
+  // identity only, not on every such reference change.
+  const collabRef = useRef(collab);
+  collabRef.current = collab;
+  const preflightRef = useRef(preflight);
+  preflightRef.current = preflight;
+  useEffect(() => {
+    if (!dependencyDrawerOpen) return;
+    const chatKey = chatKeyFor(orgHandle ?? "default", projectName);
+    return subscribeTurnEnd(chatKey, () => {
+      void collabRef.current
+        .flush()
+        .catch(() => undefined)
+        .then(() => preflightRef.current.refetch())
+        .then(({ data }) => {
+          if (data) setPreflightItems(data.items ?? []);
+        });
+    });
+  }, [dependencyDrawerOpen, orgHandle, projectName]);
 
   // Collapse the sidebar while focused on the spec, expand when leaving.
   useEffect(() => {
@@ -140,6 +194,20 @@ export function SpecView({ projectName }: { projectName: string }) {
     if (generate === "design") setSelection({ kind: "cell-diagram" });
   }, [generate]);
 
+  // An architectural chat change updates design.cell (targeted editFile
+  // patches, or a removeFile + streamed addFile for a restructure). Navigate
+  // to the Architecture tab once per change burst — even over a manual
+  // selection — so the user watches the change land; they can still click
+  // away mid-turn without being yanked back.
+  const designCellLive = useYTextString(collab.getFileText(DESIGN_CELL_PATH));
+  const cellChangeCount = useDesignCellChangeCount(
+    designCellLive,
+    agentInRoom && collab.status === "connected",
+  );
+  useEffect(() => {
+    if (cellChangeCount > 0) setSelection({ kind: "cell-diagram" });
+  }, [cellChangeCount]);
+
   // Default selection: while a design turn is actively producing design.cell,
   // default to Architecture (covers a reload mid-turn); otherwise the first
   // requirements file (the seeded PRD). A manual click sets `selection` and
@@ -161,6 +229,99 @@ export function SpecView({ projectName }: { projectName: string }) {
     effectiveSelection.kind === "file"
       ? (files.find((f) => f.path === effectiveSelection.path) ?? null)
       : null;
+
+  // #252 Task 9: dependency-status cards only apply to the component
+  // design.json view. componentOf() pulls the component name straight from
+  // its `specs/design/components/<name>/design.json` path — the same name
+  // ComponentDependencies.componentName carries (the design's own `name`
+  // field, which the coding agent always sets equal to its directory).
+  const selectedComponentName = selectedFile
+    ? componentOf(selectedFile.path)
+    : null;
+  const componentDependencies = useMemo(
+    () =>
+      dependencies.data?.find((c) => c.componentName === selectedComponentName)
+        ?.dependencies ?? [],
+    [dependencies.data, selectedComponentName],
+  );
+  // Keyed by dependency name for DesignView's optional dependencyStatus prop
+  // — status/reason are the ONLY fields this map carries. candidates/config
+  // are already in the raw design.json DesignView parses itself; see
+  // DesignViewProps.dependencyStatus's comment for why status/reason can't
+  // join them.
+  const dependencyStatus = useMemo<Record<string, DependencyStatusInfo>>(
+    () =>
+      Object.fromEntries(
+        componentDependencies.map((d) => [
+          d.name,
+          { status: d.status, reason: d.reason },
+        ]),
+      ),
+    [componentDependencies],
+  );
+  // #252 Task 15: cross-component "Used by" for the selected component's own
+  // cards — computed across EVERY component's dependencies (dependencies.data
+  // spans the whole project; componentDependencies above is only the
+  // selected one), keyed by the selected component's own dependency names.
+  // See dependencyUsedBy.ts's file header for why this is the annotation the
+  // per-component design.json view gets, rather than the drawer's literal
+  // one-card-per-shared-dependency merge (a single DesignView only ever
+  // renders one component at a time, so there is nothing to merge here).
+  const dependencyUsedBy = useMemo<Record<string, string[]>>(
+    () =>
+      selectedComponentName
+        ? computeDependencyUsedBy(dependencies.data ?? [], selectedComponentName)
+        : {},
+    [dependencies.data, selectedComponentName],
+  );
+  // Fires Task 5's seeded chat message with the dependency's FULL endpoint
+  // entry (status/reason/candidates/config included) — never the
+  // locally parsed one, which deliberately drops status/reason. `intent`
+  // (#252 Task 17) is "resolve" from the design-view card's chat button on a
+  // non-resolved dependency, or "reconsider" from its hamburger's "Discuss in
+  // chat & modify" on an already-resolved one.
+  const handleResolveDependency = (
+    dependencyName: string,
+    intent: DependencyResolutionIntent,
+  ) => {
+    if (!selectedComponentName) return;
+    const dep = componentDependencies.find((d) => d.name === dependencyName);
+    if (!dep) return;
+    resolveDependencyViaChat(selectedComponentName, dep, intent);
+  };
+
+  // #252 Task 10: the build dependency drawer's "Resolve via chat" — same
+  // seeded-message flow as handleResolveDependency above, but keyed off a
+  // PreflightItem (component/dependency name) rather than the currently
+  // selected component's design.json, since the drawer's items can span
+  // ANY of the project's service components, not just the one selected in
+  // the file tree. `intent` (#252 Task 17) is "resolve" from a blocker/
+  // external-spec panel's chat button, or "reconsider" from an
+  // external-config/platform-resource/org-service panel's hamburger.
+  //
+  // #252 Task 15: also closes the drawer, for BOTH intents. The drawer is a
+  // MUI overlay Drawer (unlike the side-by-side chat panel AppLayout mounts —
+  // see its own comment above `chatOpen`), so left open it covers the chat
+  // panel the seeded message just opened and the user can't see what they're
+  // supposed to respond to. Closing only happens here, on the explicit click —
+  // NOT on turn-end (the useEffect above deliberately leaves the drawer open
+  // and just refreshes its items; re-opening mid-resolution is out of scope,
+  // matching Task 10's "do not auto-reopen" decision). The design-view
+  // "Resolve in chat" cards (handleResolveDependency above) have no
+  // equivalent occlusion: they render in the main content pane, which the
+  // chat panel opens BESIDE (Collapse in AppLayout), never over.
+  const handleResolveDrawerDependency = (
+    item: PreflightItem,
+    intent: DependencyResolutionIntent,
+  ) => {
+    const dep = (
+      dependencies.data?.find((c) => c.componentName === item.component)
+        ?.dependencies ?? []
+    ).find((d) => d.name === item.dependency);
+    if (!dep) return;
+    resolveDependencyViaChat(item.component, dep, intent);
+    setDependencyDrawerOpen(false);
+  };
 
   // Collab supplies live content when connected; the REST read (lazy, per
   // selected file) is only the solo fallback, so it stays disabled while a
@@ -616,7 +777,12 @@ export function SpecView({ projectName }: { projectName: string }) {
                     ) : isValidationCriteriaFile ? (
                       <ValidationView criteria={structuredLive} />
                     ) : (
-                      <DesignView design={structuredLive} />
+                      <DesignView
+                        design={structuredLive}
+                        dependencyStatus={dependencyStatus}
+                        dependencyUsedBy={dependencyUsedBy}
+                        onResolveDependency={handleResolveDependency}
+                      />
                     )
                   ) : content.data ? (
                     isOpenApiFile ? (
@@ -633,6 +799,9 @@ export function SpecView({ projectName }: { projectName: string }) {
                       <DesignView
                         key={content.data.sha}
                         design={content.data.content}
+                        dependencyStatus={dependencyStatus}
+                        dependencyUsedBy={dependencyUsedBy}
+                        onResolveDependency={handleResolveDependency}
                       />
                     )
                   ) : agentBusy ? (
@@ -755,6 +924,7 @@ export function SpecView({ projectName }: { projectName: string }) {
         submitting={dependencyDrawerOpen && buildPhase === "building"}
         onClose={() => setDependencyDrawerOpen(false)}
         onContinue={(inputs) => void onContinueBuild(inputs)}
+        onResolveDependency={handleResolveDrawerDependency}
       />
     </PageContent>
   );

@@ -16,8 +16,9 @@
 
 package dependencies
 
-// Consumer-side ports. dependencies/resources has an EMPTY arch-allowlist row
-// (internal/arch/arch_test.go) — it imports NO other feature package. Every
+// Consumer-side ports. The dependencies package has a tightly scoped
+// arch-allowlist row (internal/arch/arch_test.go) for its external-resource
+// slice — it imports NO other feature package for this concern. Every
 // collaborator is expressed as a narrow interface here and wired concretely in
 // the composition root.
 
@@ -26,13 +27,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
-
-// externalResourceLookup is the slice of the org-level external-resource
-// catalog this package reads. *repositories.ExternalResourceRepository
-// satisfies it. Returns (nil, nil) when the name is not registered.
-type externalResourceLookup interface {
-	Get(ctx context.Context, orgID, name string) (*ExternalResource, error)
-}
 
 // SecretWriter is the slice of the SM-API writer the provisioner needs.
 // Satisfied by *orgcreds.SMAPIWriter.
@@ -53,15 +47,19 @@ type SecretWriter interface {
 // GitHub-native aep:provision funnel; the completion port it uses there is
 // "close the provision issue + Funnel.Reevaluate", not a component_tasks
 // projector. The org-level external-resource catalog (list/delete + the
-// consumer scan for the in-use delete guard) also lives there now
-// (provisioning.ExternalResourceCatalog + the design-scan consumers), reading
-// *repositories.ExternalResourceRepository directly.
+// consumer scan for the in-use delete guard) also lives there now: the
+// provisioning ExternalRTCatalog port, backed by resources.ExternalResourceCatalog
+// over the OpenChoreo client (org-namespaced ResourceTypes), plus the design-scan
+// consumers. The old external_resources DB table + its repository were removed.
 
-// DesignReader is the slice of the design store the resource provisioner reads:
-// the project's authored design components, whose platform-resource entries
-// carry the ClusterResourceType to provision. It deliberately returns ONLY
-// models-typed data — NOT artifacts.DesignFile — so this package keeps its
-// empty arch-allowlist row (no dependencies/resources → artifacts feature
+// DesignReader is the slice of the design store the resource provisioner
+// reads: the project's authored design components, whose platform-resource
+// entries carry the ClusterResourceType to provision and whose external
+// entries carry the config[] schema (with Secret flags) ResolveRunnerSecrets
+// classifies by — the same schema the build path reads, so neither path
+// consults the org catalog for secret classification. It deliberately returns
+// ONLY models-typed data — NOT artifacts.DesignFile — so this package keeps
+// its empty arch-allowlist row (no dependencies/resources → artifacts feature
 // edge). The composition root adapts artifacts.ArtifactStore.ReadDesign with
 // a one-line wrapper returning design.Components ((nil, nil) design ⇒ nil
 // components — "no design yet").

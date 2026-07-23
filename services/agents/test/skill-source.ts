@@ -23,15 +23,17 @@
  * always read skills through `SnapshotSkillSource` (§12).
  */
 
-import type { LoadedSkillBody, SkillCatalogEntry, SkillSource } from "../src/agents/main/skill-source.js";
+import type { LoadedReference, LoadedSkillBody, SkillCatalogEntry, SkillSource } from "../src/agents/main/skill-source.js";
 
-/** One in-test skill: a resolved SKILL.md (body + optional reference files). */
+/** One in-test skill: a resolved SKILL.md (body + optional aux files). */
 export interface TestSkill {
   name: string;
   description: string;
   content: string;
-  /** `references/<file>.md` → body (the third disclosure level). */
+  /** aux path (e.g. `references/<file>.md`, `scripts/run.mjs`) → body (the third disclosure level). */
   references?: Record<string, string>;
+  /** aux paths that resolve to a binary marker instead of text (for `loadSkillReference` binary-guard tests). */
+  binaryReferences?: readonly string[];
 }
 
 /** Wrap test skills into a `SkillSource` (same semantics as the snapshot source). */
@@ -47,8 +49,13 @@ export function testSkillSource(skills: readonly TestSkill[]): SkillSource {
     load: (name): LoadedSkillBody | undefined => {
       const skill = byName.get(name);
       if (skill === undefined) return undefined;
-      return { content: skill.content, references: Object.keys(skill.references ?? {}) };
+      return { content: skill.content, references: Object.keys(skill.references ?? {}).sort() };
     },
-    loadReference: (name, path) => byName.get(name)?.references?.[path],
+    loadReference: (name, path): LoadedReference => {
+      const skill = byName.get(name);
+      if (skill?.binaryReferences?.includes(path)) return { binary: true };
+      const content = skill?.references?.[path];
+      return content === undefined ? undefined : { content };
+    },
   };
 }

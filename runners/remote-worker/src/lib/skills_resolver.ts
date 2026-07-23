@@ -166,22 +166,36 @@ async function cloneSkillsRepo(repoURL: string, pat: string, destDir: string): P
   });
 }
 
-// readReferences returns references/<file>.md → content for a skill dir (empty
-// when the skill ships no references). Keys match the materializer's contract.
-async function readReferences(skillDir: string): Promise<Record<string, string>> {
-  const refs: Record<string, string> = {};
-  const refDir = path.join(skillDir, "references");
-  let entries: fs.Dirent[];
-  try {
-    entries = await fs.promises.readdir(refDir, { withFileTypes: true });
-  } catch {
-    return refs; // no references/ dir
-  }
-  for (const e of entries) {
-    if (!e.isFile() || !e.name.endsWith(".md")) continue;
-    refs[`references/${e.name}`] = await fs.promises.readFile(path.join(refDir, e.name), "utf-8");
-  }
+// readReferences recursively walks the full skill dir (any depth) and returns
+// every aux file — everything except SKILL.md itself and dot-entries (dotfiles
+// / dot-dirs, e.g. .git, .DS_Store) — keyed by its path relative to skillDir,
+// read as a Buffer so binary assets (images, wasm, …) survive byte-faithfully.
+// Keys match the materializer's contract (e.g. "references/style.md",
+// "scripts/run.mjs", "assets/logo.png").
+async function readReferences(skillDir: string): Promise<Record<string, Buffer>> {
+  const refs: Record<string, Buffer> = {};
+  await walk(skillDir, "");
   return refs;
+
+  async function walk(dir: string, relPrefix: string): Promise<void> {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return; // dir vanished / unreadable — nothing to add
+    }
+    for (const e of entries) {
+      if (e.name.startsWith(".")) continue; // skip dotfiles/dot-dirs
+      const rel = relPrefix ? `${relPrefix}/${e.name}` : e.name;
+      if (relPrefix === "" && e.name === "SKILL.md") continue; // handled separately
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        await walk(full, rel);
+      } else if (e.isFile()) {
+        refs[rel] = await fs.promises.readFile(full);
+      }
+    }
+  }
 }
 
 // resolveKind mirrors the BFF's frontmatterKind: trimmed metadata.aep.kind when

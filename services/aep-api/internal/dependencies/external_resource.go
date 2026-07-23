@@ -17,41 +17,23 @@
 package dependencies
 
 import (
-	"time"
-
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// ConfigKeySlice is a slice of ConfigKey persisted as a single JSONB column.
+// ConfigKeySlice is a slice of spec.ConfigKey.
 type ConfigKeySlice []spec.ConfigKey
 
-// ExternalResource is an org-level registered external dependency — the
-// reusable "definition" layer: name + description + the config key schema +
-// the OpenChoreo ResourceType the wiring maps to. One row per (OrgID, Name).
-//
-// Values + wiring are NOT stored here — they live per-project in the OC Resource
-// model (Resource + per-env ResourceReleaseBinding). The registry is the catalog
-// the architect reads to reuse an external resource's shape across projects, and
-// the source of which ResourceType the provisioner authors against.
+// ExternalResource is the in-memory definition of an external dependency —
+// name + description + config-key schema — that the provisioner authors an
+// OpenChoreo ResourceType from. It is built at request time from the project's
+// committed design (design.json); AEP no longer persists external-resource
+// definitions in its own database. The authored, org-namespaced ResourceType
+// is the durable org-level registry (read back via
+// openchoreo.ExternalDefinitionFromRT).
 type ExternalResource struct {
-	ID          string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	OrgID       string `gorm:"uniqueIndex:uq_external_resource_org_name;not null" json:"-"`
-	Name        string `gorm:"uniqueIndex:uq_external_resource_org_name;not null" json:"name"`
-	Description string `gorm:"type:text" json:"description,omitempty"`
-
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 	// ConfigKeys is the resource's key schema (which env-var keys, which are
 	// secret). This alone drives the OC ResourceType (no separate auth descriptor).
-	ConfigKeys ConfigKeySlice `gorm:"type:jsonb;serializer:json" json:"config"`
-
-	// ResourceTypeName is the OC ResourceType this resource's wiring uses.
-	// Defaults to Name; a config-schema change bumps a numeric suffix
-	// (salesforce → salesforce-2) because ResourceTypes are effectively immutable.
-	ResourceTypeName string `gorm:"not null" json:"resourceTypeName"`
-
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ConfigKeys ConfigKeySlice `json:"config"`
 }
-
-// TableName pins the table name (GORM's default pluralization would also yield
-// "external_resources", but the explicit name keeps it stable).
-func (ExternalResource) TableName() string { return "external_resources" }

@@ -28,4 +28,10 @@ export const specKeys = {
   // never refetch (#113 decision 4).
   file: (projectName: string, path: string, sha: string) =>
     [...projectKeys.detail(projectName), "spec", "file", path, sha] as const,
+  // GET /projects/{p}/design/dependencies (Task 2's single dependency-status
+  // read model). Task 9 builds the consuming query hook; this key lets Task
+  // 5's turn-end freshness wiring (dependencyFreshness.ts) invalidate the
+  // same cache entry Task 9 will read from.
+  dependencies: (projectName: string) =>
+    [...projectKeys.detail(projectName), "design", "dependencies"] as const,
 };

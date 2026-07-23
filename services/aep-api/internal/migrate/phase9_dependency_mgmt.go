@@ -28,13 +28,13 @@ import (
 // management feature (typed dependency graph: component / org-service /
 // external / platform-resource):
 //
-//  1. CREATE TABLE external_resources — the org-level catalog of registered
-//     external dependencies (dependencies.ExternalResource): name + description +
-//     config key schema + the OC ResourceType the wiring maps to. One row per
-//     (org_id, name).
-//  2. CREATE TABLE access_requests — the cross-project access-request
+//  1. CREATE TABLE access_requests — the cross-project access-request
 //     tracking rows (dependencies.AccessRequest, P3.5): a consumer asking a
 //     provider project to publish an org service cross-project.
+//
+// (An earlier step created an external_resources table for the org-level
+// external-dependency catalog; that table was removed — external-resource
+// definitions now live in the authored OpenChoreo ResourceTypes, not AEP's DB.)
 //
 // The upstream PR #85 third step — an ALTER TABLE component_tasks adding the
 // typed-task-graph columns (type + three JSONB depends_on_* lists + two
@@ -50,36 +50,9 @@ import (
 // rule (see phase3_tech_lead.go / phase6_api_platform_idp.go). Every step is
 // existence-guarded, so the migration is idempotent.
 func RunPhase9DependencyMgmt(ctx context.Context, db *gorm.DB) error {
-	if err := runPhase9ExternalResourcesTable(ctx, db); err != nil {
-		return err
-	}
 	if err := runPhase9AccessRequestsTable(ctx, db); err != nil {
 		return err
 	}
-	return nil
-}
-
-// runPhase9ExternalResourcesTable creates external_resources (dependencies.ExternalResource).
-func runPhase9ExternalResourcesTable(ctx context.Context, db *gorm.DB) error {
-	if hasTable(db, "external_resources") {
-		return nil
-	}
-	if err := db.WithContext(ctx).Exec(`
-		CREATE TABLE external_resources (
-			id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-			org_id             TEXT NOT NULL,
-			name               TEXT NOT NULL,
-			description        TEXT,
-			config_keys        JSONB,
-			resource_type_name TEXT NOT NULL,
-			created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-			updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-			CONSTRAINT uq_external_resource_org_name UNIQUE (org_id, name)
-		)
-	`).Error; err != nil {
-		return fmt.Errorf("phase9_dependency_mgmt: create external_resources: %w", err)
-	}
-	slog.Info("phase9_dependency_mgmt migration: created table", "table", "external_resources")
 	return nil
 }
 

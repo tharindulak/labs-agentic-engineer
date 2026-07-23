@@ -26,21 +26,25 @@ import {
   useInternalNode,
   useReactFlow,
   useViewport,
+  applyNodeChanges,
   type Edge,
   type EdgeProps,
   type InternalNode,
   type Node,
+  type NodeChange,
   type NodeProps,
   getBezierPath,
   getSmoothStepPath
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "./diagram.css";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProjectModel } from "../domain/cellModel";
 import { FitScreenIcon, ZoomInIcon, ZoomOutIcon } from "../ui/ControlIcons";
 // TODO: re-enable when the PNG/SVG image export feature is complete.
 // import { exportPng, exportSvg } from "./exportImage";
+import { applyCustomLayout, captureCustomPosition, type CustomLayout } from "./customLayout";
+import { classifyDiagramMotion, type DiagramMotionSnapshot } from "./diagramMotion";
 import { getFloatingAnchors, shapeForNodeType, type NodeRect } from "./floatingGeometry";
 import { toReactFlow } from "./flowLayout";
 import { connectionIdsForNode, edgeConnectionId, highlightedNodeIdsForConnections } from "./highlightModel";
@@ -134,13 +138,26 @@ function GatewayNode({ data }: NodeProps) {
   );
 }
 
-function EdgeLabel({ label, x, y }: { label: EdgeProps["label"]; x: number; y: number }) {
+function EdgeLabel({
+  label,
+  x,
+  y,
+  entering = false
+}: {
+  label: EdgeProps["label"];
+  x: number;
+  y: number;
+  entering?: boolean;
+}) {
   if (!label) {
     return null;
   }
   return (
     <EdgeLabelRenderer>
-      <div className="edge-label" style={{ transform: `translate(-50%, -50%) translate(${x}px,${y}px)` }}>
+      <div
+        className={entering ? "edge-label edge-label--entering" : "edge-label"}
+        style={{ transform: `translate(-50%, -50%) translate(${x}px,${y}px)` }}
+      >
         {label}
       </div>
     </EdgeLabelRenderer>
@@ -150,10 +167,16 @@ function EdgeLabel({ label, x, y }: { label: EdgeProps["label"]; x: number; y: n
 function makePathEdge(computePath: (props: EdgeProps) => [string, number, number, ...unknown[]]) {
   return function PathEdge(props: EdgeProps) {
     const [edgePath, labelX, labelY] = computePath(props);
+    const isEntering = props.data?.motionStatus === "entering";
     return (
       <>
-        <path className="react-flow__edge-path" d={edgePath} markerEnd={props.markerEnd} />
-        <EdgeLabel label={props.label} x={labelX} y={labelY} />
+        <path
+          className="react-flow__edge-path"
+          d={edgePath}
+          markerEnd={props.markerEnd}
+          pathLength={isEntering ? 1 : undefined}
+        />
+        <EdgeLabel label={props.label} x={labelX} y={labelY} entering={isEntering} />
       </>
     );
   };
@@ -211,11 +234,17 @@ function FloatingEdge(props: EdgeProps) {
     targetY: ty,
     targetPosition: positions.target
   });
+  const isEntering = props.data?.motionStatus === "entering";
 
   return (
     <>
-      <path className="react-flow__edge-path" d={edgePath} markerEnd={props.markerEnd} />
-      <EdgeLabel label={props.label} x={labelX} y={labelY} />
+      <path
+        className="react-flow__edge-path"
+        d={edgePath}
+        markerEnd={props.markerEnd}
+        pathLength={isEntering ? 1 : undefined}
+      />
+      <EdgeLabel label={props.label} x={labelX} y={labelY} entering={isEntering} />
     </>
   );
 }
@@ -245,6 +274,7 @@ export interface DiagramCanvasInsets {
 const DEFAULT_INSETS: DiagramCanvasInsets = { left: 0, right: 0 };
 const FIT_VIEW_VERTICAL_PADDING: `${number}px` = "112px";
 const FIT_VIEW_LEFT_PADDING = 112;
+const MOTION_SETTLE_MS = 420;
 
 interface FitPadding {
   top: `${number}px`;
@@ -289,23 +319,40 @@ function FitViewController({
   return null;
 }
 
+// AEP divergence from upstream: the "Auto arrange" button is dropped (a moved
+// component is a transient viewing aid here — the layout resets whenever the
+// DSL changes, so a manual reset control isn't worth the chrome), and the
+// remaining controls carry `title` tooltips.
 function ZoomControls({ insets }: { insets: DiagramCanvasInsets }) {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
 
   return (
     <div className="zoom-controls">
-      <button type="button" className="zoom-controls__button" aria-label="Zoom out" onClick={() => zoomOut()}>
+      <button
+        type="button"
+        className="zoom-controls__button"
+        aria-label="Zoom out"
+        title="Zoom out"
+        onClick={() => zoomOut()}
+      >
         <ZoomOutIcon size={16} />
       </button>
       <span className="zoom-controls__level">{Math.round(zoom * 100)}%</span>
-      <button type="button" className="zoom-controls__button" aria-label="Zoom in" onClick={() => zoomIn()}>
+      <button
+        type="button"
+        className="zoom-controls__button"
+        aria-label="Zoom in"
+        title="Zoom in"
+        onClick={() => zoomIn()}
+      >
         <ZoomInIcon size={16} />
       </button>
       <button
         type="button"
         className="zoom-controls__button zoom-controls__button--fit"
         aria-label="Fit diagram to view"
+        title="Fit diagram to view"
         onClick={() => fitView({ padding: buildFitPadding(insets), duration: 200 })}
       >
         <FitScreenIcon size={16} />
@@ -338,17 +385,54 @@ function ZoomControls({ insets }: { insets: DiagramCanvasInsets }) {
 //   );
 // }
 
-interface DiagramCanvasProps {
+/** Color theme applied to the rendered diagram. */
+export type DiagramTheme = "light" | "dark";
+
+export interface DiagramCanvasProps {
   model: ProjectModel | null;
   insets?: DiagramCanvasInsets;
   fitKey?: string;
+  motionContextKey?: string;
+  source?: string;
+  customLayout?: CustomLayout | null;
+  onCustomLayoutChange?: (layout: CustomLayout) => void;
+  canvasMessage?: CanvasMessage | null;
+  /** Light or dark color theme. Defaults to `"light"`. */
+  theme?: DiagramTheme;
 }
 
-export function DiagramCanvas({ model, insets = DEFAULT_INSETS, fitKey }: DiagramCanvasProps) {
+export interface CanvasMessage {
+  id: number;
+  tone: "warning" | "info";
+  text: string;
+}
+
+export function DiagramCanvas({
+  model,
+  insets = DEFAULT_INSETS,
+  fitKey,
+  motionContextKey = "default",
+  source = "",
+  customLayout = null,
+  onCustomLayoutChange,
+  canvasMessage = null,
+  theme = "light"
+}: DiagramCanvasProps) {
   const [activeConnectionIds, setActiveConnectionIds] = useState<string[]>([]);
+  const [, setMotionVersion] = useState(0);
+  const previousMotionSnapshot = useRef<DiagramMotionSnapshot | null>(null);
   const flow = useMemo<ReturnType<typeof toReactFlow>>(
     () => (model ? toReactFlow(model) : { nodes: [], edges: [], cellSize: { width: 0, height: 0 } }),
     [model]
+  );
+  const positionedNodes = useMemo(() => applyCustomLayout(flow.nodes, customLayout), [customLayout, flow.nodes]);
+  const [dragNodes, setDragNodes] = useState<Node[] | null>(null);
+  const liveNodes = dragNodes ?? positionedNodes;
+  const motion = classifyDiagramMotion(
+    previousMotionSnapshot.current,
+    positionedNodes,
+    flow.edges,
+    motionContextKey
   );
   const activeConnectionIdSet = useMemo(() => new Set(activeConnectionIds), [activeConnectionIds]);
   const highlightedNodeIds = useMemo(() => {
@@ -368,22 +452,34 @@ export function DiagramCanvas({ model, insets = DEFAULT_INSETS, fitKey }: Diagra
   const isFocusView = activeConnectionIdSet.size > 0;
   const nodes = useMemo<Node[]>(
     () =>
-      flow.nodes.map((node) => ({
+      liveNodes.map((node) => ({
         ...node,
-        className: isFocusView
-          ? highlightedNodeIds.has(node.id)
-            ? "connection-highlight-node"
-            : "connection-dimmed-node"
-          : node.className
+        className: [
+          node.className,
+          motion.enteringNodeIds.has(node.id) ? "diagram-node--entering" : "",
+          motion.movingNodeIds.has(node.id) ? "diagram-node--position-animated" : "",
+          isFocusView
+            ? highlightedNodeIds.has(node.id)
+              ? "connection-highlight-node"
+              : "connection-dimmed-node"
+            : ""
+        ]
+          .filter(Boolean)
+          .join(" ")
       })),
-    [flow.nodes, highlightedNodeIds, isFocusView]
+    [highlightedNodeIds, isFocusView, liveNodes, motion.enteringNodeIds, motion.movingNodeIds]
   );
   const edges = useMemo<Edge[]>(
     () =>
       flow.edges.map((edge) => ({
         ...edge,
+        data: {
+          ...edge.data,
+          motionStatus: motion.enteringEdgeIds.has(edge.id) ? "entering" : "idle"
+        },
         className: [
           edge.className,
+          motion.enteringEdgeIds.has(edge.id) ? "diagram-edge--entering" : "",
           isFocusView
             ? activeConnectionIdSet.has(edgeConnectionId(edge))
               ? "connection-highlight-edge"
@@ -393,8 +489,21 @@ export function DiagramCanvas({ model, insets = DEFAULT_INSETS, fitKey }: Diagra
           .filter(Boolean)
           .join(" ")
       })),
-    [activeConnectionIdSet, flow.edges, isFocusView]
+    [activeConnectionIdSet, flow.edges, isFocusView, motion.enteringEdgeIds]
   );
+
+  useEffect(() => {
+    previousMotionSnapshot.current = motion.snapshot;
+  }, [flow.edges, motion.snapshot, motionContextKey, positionedNodes]);
+
+  useEffect(() => {
+    if (motion.enteringNodeIds.size === 0 && motion.enteringEdgeIds.size === 0) {
+      return;
+    }
+
+    const settleTimer = window.setTimeout(() => setMotionVersion((current) => current + 1), MOTION_SETTLE_MS);
+    return () => window.clearTimeout(settleTimer);
+  }, [motion.enteringEdgeIds, motion.enteringNodeIds]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -407,16 +516,41 @@ export function DiagramCanvas({ model, insets = DEFAULT_INSETS, fitKey }: Diagra
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [setActiveConnections]);
 
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const positionChanges = changes.filter((change) => change.type === "position");
+      if (positionChanges.length === 0) {
+        return;
+      }
+      setDragNodes((current) => applyNodeChanges(positionChanges, current ?? positionedNodes));
+    },
+    [positionedNodes]
+  );
+
+  const handleNodeDragStop = useCallback(
+    (_event: MouseEvent | TouchEvent, node: Node) => {
+      const nextLayout = captureCustomPosition(customLayout, source, node, flow.nodes);
+      if (!nextLayout) {
+        setDragNodes(null);
+        return;
+      }
+      setDragNodes(null);
+      onCustomLayoutChange?.(nextLayout);
+    },
+    [customLayout, flow.nodes, onCustomLayoutChange, source]
+  );
+
   if (!model) {
     return (
-      <div className="empty-canvas">
+      <div className="cell-diagram-root empty-canvas" data-cd-theme={theme}>
         <span>Fix the DSL errors to render the diagram.</span>
       </div>
     );
   }
 
   return (
-    <ReactFlowProvider>
+    <div className="cell-diagram-root" data-cd-theme={theme}>
+      <ReactFlowProvider key={motionContextKey}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -424,24 +558,35 @@ export function DiagramCanvas({ model, insets = DEFAULT_INSETS, fitKey }: Diagra
         edgeTypes={edgeTypes}
         minZoom={0.25}
         maxZoom={1.35}
-        nodesDraggable={false}
+        nodesDraggable
         nodesConnectable={false}
         elementsSelectable
         proOptions={{ hideAttribution: true }}
+        onNodesChange={handleNodesChange}
+        onNodeDragStop={handleNodeDragStop}
         onNodeClick={(_, node) => setActiveConnections(getConnectionIdsForNode(node.id))}
         onPaneClick={() => setActiveConnections([])}
       >
         <FitViewController insets={insets} model={model} fitKey={fitKey} />
-        <Background color="#cbd5e1" gap={22} />
+        <Background color={theme === "dark" ? "#334155" : "#cbd5e1"} gap={22} />
         <ZoomControls insets={insets} />
         {/* TODO: re-enable when the PNG/SVG image export feature is complete.
         <ExportControls filename={model.title?.trim() || "cell-diagram"} /> */}
-        <div className="focus-hint" data-focus-mode={isFocusView ? "active" : "idle"}>
-          {isFocusView
-            ? "Focus view: click outside or press Esc to return to the full diagram."
-            : "Click a component to focus its connections."}
+        <div
+          key={canvasMessage?.id ?? "focus-hint"}
+          className="canvas-notification"
+          data-mode={canvasMessage ? "message" : "hint"}
+          data-tone={canvasMessage?.tone ?? "neutral"}
+          data-focus-mode={isFocusView ? "active" : "idle"}
+          role={canvasMessage ? "status" : undefined}
+        >
+          {canvasMessage?.text ??
+            (isFocusView
+              ? "Focus view: click outside or press Esc to return to the full diagram."
+              : "Click a component to focus its connections.")}
         </div>
       </ReactFlow>
-    </ReactFlowProvider>
+      </ReactFlowProvider>
+    </div>
   );
 }

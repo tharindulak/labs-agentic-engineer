@@ -104,7 +104,7 @@ type captureSpecUpdated struct {
 	commits []string
 }
 
-func (c *captureSpecUpdated) RecordSpecUpdated(_ context.Context, _, _, commitSHA string) {
+func (c *captureSpecUpdated) RecordSpecUpdated(_ context.Context, _, _, commitSHA string, _ []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.commits = append(c.commits, commitSHA)

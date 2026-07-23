@@ -36,7 +36,7 @@ import { StatusChip } from "../../../components/StatusChip";
 import { useAllTasks } from "../../tasks/api/queries";
 import { useProject, useProjectComponents, useProjectStatus } from "../api/queries";
 import { phaseChip } from "../lib/phaseChip";
-import { AgentActivity } from "./AgentActivity";
+import { RecentActivity } from "./RecentActivity";
 import { ComponentsList } from "./ComponentsList";
 import { OverviewPipeline } from "./OverviewPipeline";
 
@@ -153,7 +153,7 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
             done) beside the component cards (what they're building). */}
         <Grid container spacing={4}>
           <Grid size={{ xs: 12, md: 6 }}>
-            <AgentActivity projectName={projectName} />
+            <RecentActivity projectName={projectName} />
           </Grid>
           <Grid size={{ xs: 12, md: 6 }}>
             <SectionTitle>Components</SectionTitle>

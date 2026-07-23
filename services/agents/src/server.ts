@@ -134,6 +134,7 @@ export function createApp(deps: CreateAppDeps): Express {
       toolset?: unknown;
       mcp?: unknown;
       collab?: unknown;
+      webSearch?: unknown;
     };
 
     // Pre-stream validation → HTTP status (no SSE headers sent yet).
@@ -296,6 +297,7 @@ export function createApp(deps: CreateAppDeps): Express {
         skillSource,
         ...(toolset ? { toolset } : {}),
         ...(mcp ? { mcp } : {}),
+        webSearch: body.webSearch === true,
         ...(roomPeer ? { collabPeer: roomPeer } : {}),
         model,
         store: deps.store,

@@ -59,7 +59,8 @@ func TestWiring_PostsResolvedDependencies(t *testing.T) {
 			{Kind: spec.DependencyKindOrgService, Name: "employee-api"},
 			{Kind: spec.DependencyKindComponent, Name: "orders"},
 			{Kind: spec.DependencyKindExternal, Name: "stripe"},
-			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db"},
+			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg",
+				Description: "Managed PostgreSQL via CloudNativePG"},
 		},
 	}
 	eps := &fakeEndpoints{
@@ -129,10 +130,95 @@ func TestWiring_PostsResolvedDependencies(t *testing.T) {
 			t.Errorf("wiring comment missing local consumed-contract text %q:\n%s", want, body)
 		}
 	}
-	// External/platform-resource deps are untouched by this feature — no
-	// contract section is rendered for them.
+	// external/platform-resource deps get no "Consumed API contract" section —
+	// that heading is reserved for org-service/same-project endpoint deps
+	// (and, separately, external deps with a stored spec — see
+	// TestWiring_ExternalDepWithSpecGetsContractLine). stripe here has no
+	// specPath, so it renders nothing at all.
 	if strings.Contains(body, "Consumed API contract — stripe") || strings.Contains(body, "Consumed API contract — orders-db") {
 		t.Errorf("unexpected consumed-contract section for a non-endpoint dep:\n%s", body)
+	}
+	// Platform-resource dep: resourceType + catalog description + outputs→env
+	// mapping — the coding agent's only handle to identify the underlying
+	// technology (Task 12's SDK-docs lookup).
+	for _, want := range []string{
+		"**Provisioned platform resources**",
+		"### Platform resource — orders-db",
+		"Resource type: `postgres-cnpg` — Managed PostgreSQL via CloudNativePG.",
+		"Outputs → env: ORDERS_DB_HOST, ORDERS_DB_PORT.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("wiring comment missing platform-resource identity text %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestWiring_ExternalDepWithSpecGetsContractLine covers Task 11: an `external`
+// dependency whose OpenAPI spec was collected and committed at design time
+// (specPath set) must get an exact "Consumed API contract" line pointing the
+// coding agent at that stored spec — independent of whether the connection's
+// resource binding is ready yet (the spec is a static repo artifact, not a
+// runtime resolution).
+func TestWiring_ExternalDepWithSpecGetsContractLine(t *testing.T) {
+	comp := spec.DesignComponent{
+		Name: "web",
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe", Style: spec.DependencyStyleRestAPI,
+				SpecPath: "dependencies/stripe.openapi.yaml"},
+			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db"}, // ensures block is non-empty
+		},
+	}
+	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
+		"proj-orders-db-development": readyBinding("host"),
+	}}
+	issues := newFakeIssues(nil)
+	w := NewWiringResolver(fakeDesign{comps: []spec.DesignComponent{comp}}, &fakeEndpoints{}, bindings, issues)
+
+	if err := w.PostResolvedDeps(context.Background(), "org", "proj", 7, "web"); err != nil {
+		t.Fatalf("PostResolvedDeps: %v", err)
+	}
+	posted := issues.comments[7]
+	if len(posted) != 1 {
+		t.Fatalf("want one wiring comment, got %d", len(posted))
+	}
+	body := posted[0]
+	// specPath is a repo file path here → the contract line names the dep + its
+	// specPath and marks it the source of truth (relaxed wording — the coding
+	// agent researches beyond it).
+	if !strings.Contains(body, "External API contract for `stripe`: `dependencies/stripe.openapi.yaml`") ||
+		!strings.Contains(body, "source of truth") {
+		t.Errorf("wiring comment missing the external contract line:\ngot body:\n%s", body)
+	}
+	// The relaxed wording must NOT carry the old hard restriction.
+	if strings.Contains(body, "do not invent endpoints") {
+		t.Errorf("external contract line should be relaxed (no 'do not invent endpoints'):\n%s", body)
+	}
+}
+
+// TestWiring_ExternalDepWithoutSpecGetsNoContractLine: an `external` dep with
+// no specPath (unresolved, or an `sdk`-style dep that never has one) gets no
+// "Consumed API contract" line — the platform never invents a stored spec
+// that doesn't exist.
+func TestWiring_ExternalDepWithoutSpecGetsNoContractLine(t *testing.T) {
+	comp := spec.DesignComponent{
+		Name: "web",
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe"},
+			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db"}, // ensures block is non-empty
+		},
+	}
+	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
+		"proj-orders-db-development": readyBinding("host"),
+	}}
+	issues := newFakeIssues(nil)
+	w := NewWiringResolver(fakeDesign{comps: []spec.DesignComponent{comp}}, &fakeEndpoints{}, bindings, issues)
+
+	if err := w.PostResolvedDeps(context.Background(), "org", "proj", 9, "web"); err != nil {
+		t.Fatalf("PostResolvedDeps: %v", err)
+	}
+	body := issues.comments[9][0]
+	if strings.Contains(body, "Consumed API contract") {
+		t.Errorf("no specPath must render no consumed-contract line:\n%s", body)
 	}
 }
 

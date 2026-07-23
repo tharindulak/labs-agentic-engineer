@@ -19,7 +19,7 @@
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AgentActivity } from "./AgentActivity";
+import { RecentActivity } from "./RecentActivity";
 
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({ user: { email: "me@x.com", name: "Me" } }),
@@ -30,10 +30,20 @@ vi.mock("../../activity/hooks/useActivityFeed", () => ({
   useActivityFeed: () => ({ events: mockEvents, isPending: false, isError: false }),
 }));
 
-describe("AgentActivity", () => {
+function specEvent(id: number) {
+  return {
+    id: String(id),
+    type: "spec_updated",
+    actorKind: "agent",
+    actorName: `Agent ${id}`,
+    occurredAt: new Date().toISOString(),
+  };
+}
+
+describe("RecentActivity", () => {
   it("shows the empty state with no events", () => {
     mockEvents = [];
-    render(<AgentActivity projectName="p" />);
+    render(<RecentActivity projectName="p" />);
     expect(screen.getByText("No activity yet")).toBeInTheDocument();
   });
 
@@ -49,7 +59,15 @@ describe("AgentActivity", () => {
         occurredAt: new Date().toISOString(),
       },
     ];
-    render(<AgentActivity projectName="p" />);
+    render(<RecentActivity projectName="p" />);
     expect(screen.getByText(/deployed #10 Catalog/)).toBeInTheDocument();
+  });
+
+  it("caps the overview at the newest six events", () => {
+    mockEvents = Array.from({ length: 10 }, (_, i) => specEvent(i + 1));
+    render(<RecentActivity projectName="p" />);
+    expect(screen.getByText("Agent 1")).toBeInTheDocument();
+    expect(screen.getByText("Agent 6")).toBeInTheDocument();
+    expect(screen.queryByText("Agent 7")).not.toBeInTheDocument();
   });
 });

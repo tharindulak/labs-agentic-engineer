@@ -17,11 +17,16 @@
  */
 
 export { DesignView } from "./DesignView.js";
-export type { DesignViewProps } from "./DesignView.js";
+export type {
+  DependencyResolutionIntent,
+  DesignViewProps,
+  DependencyStatusInfo,
+} from "./DesignView.js";
 export { parseComponentDesign } from "./parse.js";
 export type {
   ComponentDesign,
   Dependency,
+  DependencyCandidate,
   DependencyKind,
   DesignConfigEntry,
   DesignEndpoint,

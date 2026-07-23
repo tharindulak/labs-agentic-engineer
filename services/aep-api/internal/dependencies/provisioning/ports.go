@@ -81,16 +81,19 @@ type RepoLocator interface {
 	ByFullName(ctx context.Context, fullName string) (orgID, projectID string, err error)
 }
 
-// ExternalResourceCatalog is the org-level external-resource registry the
-// provisioning surface reads and prunes: Get (its config schema drives the
-// plain/secret split at value collection), List, and the guarded Delete.
-// Consumers are NOT read from the DB (upstream's component_tasks table is gone) —
-// they are scanned from committed design artifacts (ProjectLister + DesignReader).
-// *repositories.ExternalResourceRepository satisfies it; Get returns (nil, nil)
-// when the name is not registered.
-type ExternalResourceCatalog interface {
-	Get(ctx context.Context, orgID, name string) (*dependencies.ExternalResource, error)
-	List(ctx context.Context, orgID string) ([]dependencies.ExternalResource, error)
+// ExternalRTCatalog is the org-namespaced OpenChoreo ResourceType-backed
+// external-resource registry the org-settings list+delete surface
+// (ListExternalResources / DeleteExternalResource) reads: List reconstructs
+// each provisioned external's definition off its authored RT (deduped to the
+// newest schema-version RT per name); Delete removes every RT registered under
+// a logical name (more than one schema-version RT can carry the same name —
+// see openchoreo.ExternalResourceRTName). *dependencies.ExternalResourceCatalog
+// satisfies it. The provision/value-collection paths build their RT-authoring
+// definition straight off the project's committed design (build_provision.go /
+// value_service.go), never a DB catalog — the external_resources table is
+// gone.
+type ExternalRTCatalog interface {
+	List(ctx context.Context, orgID string) ([]openchoreo.ExternalResourceDefinition, error)
 	Delete(ctx context.Context, orgID, name string) error
 }
 

@@ -125,7 +125,9 @@ type ApplyResult struct {
 // user's identity from ctx and appends via the projects activity service (spec
 // must not import projects).
 type SpecUpdatedRecorder interface {
-	RecordSpecUpdated(ctx context.Context, orgID, projectName, commitSHA string)
+	// paths are the files the commit touched (writes + deletes) — they let the
+	// implementation tell an agent-authored collab flush from a manual edit.
+	RecordSpecUpdated(ctx context.Context, orgID, projectName, commitSHA string, paths []string)
 }
 
 // Conflict is one failed baseSha precondition (the 409 body carries a list).

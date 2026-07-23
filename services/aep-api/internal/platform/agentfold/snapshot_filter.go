@@ -25,18 +25,45 @@ package agentfold
 
 import (
 	"bytes"
+	"path"
 	"strings"
 )
 
+// The two OpenAPI contract shapes admitted into a turn snapshot alongside the
+// agent-authored sources below: the produced contract
+// (specs/design/components/<c>/openapi.yaml) and a consumed contract
+// (specs/design/components/<c>/dependencies/<dep>.openapi.yaml). A
+// resolution/collab turn must be able to read back a spec it (or a prior turn)
+// just stored, so these two are admitted even though snapshots otherwise drop
+// *.yaml (e.g. workload.yaml stays excluded). Mirrors the TS side's
+// `[^/]*`-anchored regexes — path.Match's `*` matches within one path segment
+// only, never crossing a `/`.
+const (
+	producedSpecPattern = "specs/design/components/*/openapi.yaml"
+	consumedSpecPattern = "specs/design/components/*/dependencies/*.openapi.yaml"
+)
+
+func isAdmittedSpecPath(p string) bool {
+	if ok, _ := path.Match(producedSpecPattern, p); ok {
+		return true
+	}
+	ok, _ := path.Match(consumedSpecPattern, p)
+	return ok
+}
+
 // KeepInTurnSnapshot mirrors keepInTurnSnapshot: keep agent-authored sources
-// (*.md, *.dsl, *.cell, a design.json or validation-criteria.json basename) and
-// drop everything else. *.cell is the project-level cell-diagram DSL
-// (design.cell). validation-criteria.json is kept so a design regeneration can
-// see the existing acceptance oracle and reuse its criterion ids (keeping
-// committed e2e specs, which are keyed by criterion id, mapped) instead of
-// renumbering.
+// (*.md, *.dsl, *.cell, a design.json or validation-criteria.json basename,
+// the two OpenAPI contract shapes above) and drop everything else. *.cell is
+// the project-level cell-diagram DSL (design.cell). validation-criteria.json
+// is kept so a design regeneration can see the existing acceptance oracle and
+// reuse its criterion ids (keeping committed e2e specs, which are keyed by
+// criterion id, mapped) instead of renumbering. Arbitrary *.yaml (e.g.
+// workload.yaml) stays excluded — only the two exact shapes are admitted.
 func KeepInTurnSnapshot(path string) bool {
 	if strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".dsl") || strings.HasSuffix(path, ".cell") {
+		return true
+	}
+	if isAdmittedSpecPath(path) {
 		return true
 	}
 	base := path

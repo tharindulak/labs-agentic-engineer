@@ -31,11 +31,13 @@ import (
 // Skill is the resolved skill value type, owned by the spec domain (skills
 // live under specs/). Cross-domain consumers reference it as spec.Skill.
 type Skill struct {
-	OrgID         string            `json:"orgId"`
-	Name          string            `json:"name"`
-	Kind          string            `json:"kind"` // platform | org | custom | imported
-	Description   string            `json:"description"`
-	SkillMD       string            `json:"skillMd"`
+	OrgID       string `json:"orgId"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"` // platform | org | custom | imported
+	Description string `json:"description"`
+	SkillMD     string `json:"skillMd"`
+	// References holds all auxiliary files relative to the skill dir —
+	// scripts/, references/, assets/, and any extras; values are raw bytes.
 	References    map[string]string `json:"references"`
 	ContentSHA    string            `json:"contentSha"`
 	License       string            `json:"license,omitempty"`

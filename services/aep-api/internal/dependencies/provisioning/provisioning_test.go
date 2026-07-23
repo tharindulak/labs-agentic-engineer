@@ -152,10 +152,13 @@ type fakeReeval struct{ calls int }
 
 func (f *fakeReeval) Reevaluate(context.Context) error { f.calls++; return nil }
 
-type fakeDesign struct{ comps []spec.DesignComponent }
+type fakeDesign struct {
+	comps []spec.DesignComponent
+	err   error
+}
 
 func (f fakeDesign) ReadDesignComponents(context.Context, string, string) ([]spec.DesignComponent, error) {
-	return f.comps, nil
+	return f.comps, f.err
 }
 
 type fakeRepos struct{}
@@ -165,22 +168,26 @@ func (fakeRepos) ByFullName(context.Context, string) (string, string, error) {
 	return "acme", "warehouse", nil
 }
 
-type fakeCatalog struct {
-	entries map[string]*dependencies.ExternalResource
+// fakeRTCatalog fakes ExternalRTCatalog — the OC-RT-backed org-settings
+// list+delete surface (Task 5) — with RT fixtures in place of DB rows.
+type fakeRTCatalog struct {
+	defs    []openchoreo.ExternalResourceDefinition
 	deleted []string
+	listErr error
+	delErr  error
 }
 
-func (f *fakeCatalog) Get(_ context.Context, _, name string) (*dependencies.ExternalResource, error) {
-	return f.entries[name], nil
-}
-func (f *fakeCatalog) List(_ context.Context, _ string) ([]dependencies.ExternalResource, error) {
-	out := make([]dependencies.ExternalResource, 0, len(f.entries))
-	for _, e := range f.entries {
-		out = append(out, *e)
+func (f *fakeRTCatalog) List(_ context.Context, _ string) ([]openchoreo.ExternalResourceDefinition, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
 	}
-	return out, nil
+	return f.defs, nil
 }
-func (f *fakeCatalog) Delete(_ context.Context, _, name string) error {
+
+func (f *fakeRTCatalog) Delete(_ context.Context, _, name string) error {
+	if f.delErr != nil {
+		return f.delErr
+	}
 	f.deleted = append(f.deleted, name)
 	return nil
 }
@@ -191,17 +198,25 @@ type fakeExtProv struct {
 	result        *dependencies.ProvisionResult
 	err           error
 	deprovisioned []string
+	// lastER is the *dependencies.ExternalResource the last Provision call received —
+	// lets a test assert the RT-authoring definition was built from the design
+	// (name/description/config schema) rather than fetched from the catalog.
+	lastER *dependencies.ExternalResource
 
 	// AuthorWithSecretRef spies (the build path's no-SM-write author half).
 	authorRefCalls int
 	authorByEnv    map[string]dependencies.PreparedEnvValues
 	authorResult   *dependencies.ProvisionResult
 	authorErr      error
+	// authorLastER is the *dependencies.ExternalResource the last AuthorWithSecretRef
+	// call received — same purpose as lastER, for the build author path.
+	authorLastER *dependencies.ExternalResource
 }
 
-func (f *fakeExtProv) Provision(_ context.Context, _, _, _ string, _ *dependencies.ExternalResource, byEnv map[string]dependencies.EnvValues) (*dependencies.ProvisionResult, error) {
+func (f *fakeExtProv) Provision(_ context.Context, _, _, _ string, er *dependencies.ExternalResource, byEnv map[string]dependencies.EnvValues) (*dependencies.ProvisionResult, error) {
 	f.calls++
 	f.byEnv = byEnv
+	f.lastER = er
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -210,9 +225,10 @@ func (f *fakeExtProv) Provision(_ context.Context, _, _, _ string, _ *dependenci
 	}
 	return &dependencies.ProvisionResult{ResourceName: "o-ext", BindingByEnv: map[string]string{"development": "o-ext-development"}}, nil
 }
-func (f *fakeExtProv) AuthorWithSecretRef(_ context.Context, _, _ string, _ *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error) {
+func (f *fakeExtProv) AuthorWithSecretRef(_ context.Context, _, _ string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error) {
 	f.authorRefCalls++
 	f.authorByEnv = byEnv
+	f.authorLastER = er
 	if f.authorErr != nil {
 		return nil, f.authorErr
 	}
@@ -391,14 +407,13 @@ func designWithDeps() []spec.DesignComponent {
 	}}
 }
 
-func newTestService(issues *fakeIssues, execs *fakeExecStore, reeval Reevaluator, design DesignReader, catalog *fakeCatalog, ext *fakeExtProv, plat *fakePlatProv, bindings *fakeBindings) *Service {
+func newTestService(issues *fakeIssues, execs *fakeExecStore, reeval Reevaluator, design DesignReader, ext *fakeExtProv, plat *fakePlatProv, bindings *fakeBindings) *Service {
 	return NewService(Deps{
 		Issues:   issues,
 		Execs:    execs,
 		Reeval:   reeval,
 		Design:   design,
 		Repos:    fakeRepos{},
-		Catalog:  catalog,
 		ExtProv:  ext,
 		PlatProv: plat,
 		Bindings: bindings,
@@ -409,7 +424,7 @@ func newTestService(issues *fakeIssues, execs *fakeExecStore, reeval Reevaluator
 
 func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 	issues := newFakeIssues(nil)
-	svc := newTestService(issues, &fakeExecStore{}, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeCatalog{}, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
+	svc := newTestService(issues, &fakeExecStore{}, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
 
 	gateByDep, err := svc.EnsureProvisionIssues(context.Background(), "org", "proj", "v1-1")
 	if err != nil {
@@ -467,10 +482,10 @@ func TestSaveValues_ProvisionsAndClosesGate(t *testing.T) {
 	execs := &fakeExecStore{}
 	reeval := &fakeReeval{}
 	ext := &fakeExtProv{}
-	catalog := &fakeCatalog{entries: map[string]*dependencies.ExternalResource{
-		"stripe": {Name: "stripe", ConfigKeys: []spec.ConfigKey{{Key: "api_key", Secret: true}, {Key: "region"}}},
-	}}
-	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, catalog, ext, &fakePlatProv{}, &fakeBindings{})
+	// Secret-vs-plain classification comes from the project's committed design
+	// (dep.Config), never a catalog: SaveValues reads the design to split
+	// api_key → secret, region → plain (see designWithDeps).
+	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, ext, &fakePlatProv{}, &fakeBindings{})
 
 	err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe", map[string]map[string]string{
 		"development": {"api_key": "sk_live_x", "region": "us"},
@@ -513,7 +528,7 @@ func TestProvision_PlatformIsAsync_LeftRunning(t *testing.T) {
 	execs := &fakeExecStore{}
 	reeval := &fakeReeval{}
 	plat := &fakePlatProv{}
-	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, &fakeCatalog{}, &fakeExtProv{}, plat, &fakeBindings{})
+	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, plat, &fakeBindings{})
 
 	if err := svc.Provision(context.Background(), "org", "proj", "orders-db", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
@@ -549,7 +564,7 @@ func TestResourceWatcher_ReadyClosesGateAndReleases(t *testing.T) {
 	reeval := &fakeReeval{}
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{}}
 	plat := &fakePlatProv{}
-	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, &fakeCatalog{}, &fakeExtProv{}, plat, bindings)
+	svc := newTestService(issues, execs, reeval, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, plat, bindings)
 
 	// Provision (async) → running row pinned to the binding.
 	if err := svc.Provision(context.Background(), "org", "proj", "orders-db", nil, nil); err != nil {
@@ -589,7 +604,7 @@ func TestResourceWatcher_StaleFails(t *testing.T) {
 	issues := newFakeIssues([]sourcecontrol.IssueInfo{gate})
 	execs := &fakeExecStore{}
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{"o-orders-db-development": {}}}
-	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeCatalog{}, &fakeExtProv{}, &fakePlatProv{}, bindings)
+	svc := newTestService(issues, execs, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, bindings)
 	if err := svc.Provision(context.Background(), "org", "proj", "orders-db", nil, nil); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
@@ -608,7 +623,7 @@ func TestStatus_MasksOutputsToNames(t *testing.T) {
 	bindings := &fakeBindings{byName: map[string]*openchoreo.ResourceReleaseBinding{
 		"proj-orders-db-development": readyBinding("host", "port"),
 	}}
-	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, &fakeReeval{}, fakeDesign{}, &fakeCatalog{}, &fakeExtProv{}, &fakePlatProv{}, bindings)
+	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, &fakeReeval{}, fakeDesign{}, &fakeExtProv{}, &fakePlatProv{}, bindings)
 	st, err := svc.Status(context.Background(), "org", "proj", "orders-db", "")
 	if err != nil {
 		t.Fatalf("Status: %v", err)
@@ -624,27 +639,57 @@ func TestStatus_MasksOutputsToNames(t *testing.T) {
 func TestDeleteExternalResource_InUse409(t *testing.T) {
 	// Consumers are scanned from committed designs (component_tasks is gone):
 	// project "proj" component "orders" declares external dep "stripe".
-	catalog := &fakeCatalog{}
+	rtCatalog := &fakeRTCatalog{}
 	svc := NewService(Deps{
-		Issues:   newFakeIssues(nil),
-		Execs:    &fakeExecStore{},
-		Design:   fakeDesign{comps: designWithDeps()},
-		Repos:    fakeRepos{},
-		Catalog:  catalog,
-		Projects: fakeProjects{refs: []ProjectRef{{OrgID: "org", ProjectID: "proj"}}},
+		Issues:    newFakeIssues(nil),
+		Execs:     &fakeExecStore{},
+		Design:    fakeDesign{comps: designWithDeps()},
+		Repos:     fakeRepos{},
+		RTCatalog: rtCatalog,
+		Projects:  fakeProjects{refs: []ProjectRef{{OrgID: "org", ProjectID: "proj"}}},
 	})
 	if err := svc.DeleteExternalResource(context.Background(), "org", "stripe"); err != ErrExternalResourceInUse {
 		t.Fatalf("in-use delete must return ErrExternalResourceInUse, got %v", err)
 	}
-	if len(catalog.deleted) != 0 {
-		t.Fatalf("an in-use resource must not be deleted")
+	if len(rtCatalog.deleted) != 0 {
+		t.Fatalf("an in-use resource must not delete any ResourceType, got %v", rtCatalog.deleted)
 	}
-	// No consumers → delete proceeds.
+	// No consumers → delete proceeds — the OC ResourceType delete is called.
 	if err := svc.DeleteExternalResource(context.Background(), "org", "unused"); err != nil {
 		t.Fatalf("delete of unused resource: %v", err)
 	}
-	if len(catalog.deleted) != 1 || catalog.deleted[0] != "unused" {
-		t.Fatalf("unused resource must be deleted, got %v", catalog.deleted)
+	if len(rtCatalog.deleted) != 1 || rtCatalog.deleted[0] != "unused" {
+		t.Fatalf("unused resource's ResourceType must be deleted, got %v", rtCatalog.deleted)
+	}
+}
+
+// ListExternalResources sources each entry's name/description/config schema
+// from the RT catalog (Task 5's ExternalRTCatalog — RT reconstruction, see
+// resources.ExternalResourceCatalog.List) and merges consumers from the SAME
+// design-sweep DeleteExternalResource's in-use guard uses.
+func TestListExternalResources_FromRT(t *testing.T) {
+	rtCatalog := &fakeRTCatalog{defs: []openchoreo.ExternalResourceDefinition{
+		{Name: "stripe", Description: "payments", Config: []openchoreo.ExternalResourceConfigKey{
+			{Key: "api_key", Secret: true}, {Key: "region"},
+		}},
+	}}
+	svc := NewService(Deps{
+		Design:    fakeDesign{comps: designWithDeps()},
+		RTCatalog: rtCatalog,
+		Projects:  fakeProjects{refs: []ProjectRef{{OrgID: "org", ProjectID: "proj"}}},
+	})
+	views, err := svc.ListExternalResources(context.Background(), "org")
+	if err != nil {
+		t.Fatalf("ListExternalResources: %v", err)
+	}
+	if len(views) != 1 || views[0].Name != "stripe" || views[0].Description != "payments" {
+		t.Fatalf("views = %+v, want the RT-sourced stripe entry", views)
+	}
+	if len(views[0].Config) != 2 || views[0].Config[0].Key != "api_key" || !views[0].Config[0].Secret {
+		t.Errorf("config schema = %+v, want the RT-reconstructed schema", views[0].Config)
+	}
+	if len(views[0].Consumers) != 1 || views[0].Consumers[0].ProjectID != "proj" || views[0].Consumers[0].ComponentName != "orders" {
+		t.Errorf("consumers = %+v, want the design-scanned orders consumer", views[0].Consumers)
 	}
 }
 
@@ -786,7 +831,7 @@ func TestDeprovisionProject_TearsDownResources(t *testing.T) {
 
 func TestSaveValues_WrongKind400(t *testing.T) {
 	// stripe is external; asking to provision it as a platform resource is wrong-kind.
-	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeCatalog{}, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
+	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, &fakeReeval{}, fakeDesign{comps: designWithDeps()}, &fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
 	err := svc.Provision(context.Background(), "org", "proj", "stripe", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), dependencies.ErrDepWrongKind.Error()) {
 		t.Fatalf("provisioning an external dep as a resource must be wrong-kind, got %v", err)
@@ -823,4 +868,87 @@ func contains(ss []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestSaveValues_DesignReadErrorFails: a design-read failure must fail the
+// call, NOT fall through to classifying every submitted value as plain for
+// lack of a schema (which would leak a secret into a ConfigMap). The external
+// provisioner must never be called.
+func TestSaveValues_DesignReadErrorFails(t *testing.T) {
+	ext := &fakeExtProv{}
+	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, &fakeReeval{},
+		fakeDesign{err: fmt.Errorf("boom")}, ext, &fakePlatProv{}, &fakeBindings{})
+
+	err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
+		map[string]map[string]string{"development": {"api_key": "sk_live_x"}})
+	if err == nil {
+		t.Fatal("SaveValues must return an error when the design cannot be read")
+	}
+	if ext.calls != 0 {
+		t.Fatalf("external provisioner must NOT be called on a design-read failure, got %d", ext.calls)
+	}
+}
+
+// TestSaveValues_UnionSecretAcrossComponents: when two components declare the
+// same external dependency and only ONE marks a key secret, the value must be
+// classified secret (secret wins across the union) — regardless of which
+// component the design scan lists first. The component that declares api_key
+// PLAIN is listed FIRST here, so a first-component-wins classification would
+// leak the value into the plain map.
+func TestSaveValues_UnionSecretAcrossComponents(t *testing.T) {
+	gate := provisionGateIssue(10, "stripe", taskmeta.GateConfigCollection)
+	ext := &fakeExtProv{}
+	comps := []spec.DesignComponent{
+		{Name: "webhook-worker", Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe", Config: []spec.ConfigKey{{Key: "api_key"}}}, // plain, first
+		}},
+		{Name: "checkout", Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe", Config: []spec.ConfigKey{{Key: "api_key", Secret: true}}}, // secret
+		}},
+	}
+	svc := newTestService(newFakeIssues([]sourcecontrol.IssueInfo{gate}), &fakeExecStore{}, &fakeReeval{},
+		fakeDesign{comps: comps}, ext, &fakePlatProv{}, &fakeBindings{})
+
+	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
+		map[string]map[string]string{"development": {"api_key": "sk_live_x"}}); err != nil {
+		t.Fatalf("SaveValues: %v", err)
+	}
+	if ext.calls != 1 {
+		t.Fatalf("external provisioner must be called once, got %d", ext.calls)
+	}
+	ev := ext.byEnv["development"]
+	if ev.Secret["api_key"] != "sk_live_x" {
+		t.Fatalf("api_key must be classified SECRET via the union (secret wins); got secret=%v plain=%v", ev.Secret, ev.Plain)
+	}
+	if _, leaked := ev.Plain["api_key"]; leaked {
+		t.Fatal("api_key leaked into the plain map despite being secret in one component")
+	}
+}
+
+// TestSaveValues_AuthorsDefinitionFromDesign proves the RT-authoring definition
+// (name + description + config schema) is built off the DESIGN, not the
+// external_resources table: with an EMPTY catalog (the old code returned
+// ErrNotRegistered here), SaveValues still succeeds and the external
+// provisioner receives a design-sourced ExternalResource.
+func TestSaveValues_AuthorsDefinitionFromDesign(t *testing.T) {
+	gate := provisionGateIssue(10, "stripe", taskmeta.GateConfigCollection)
+	ext := &fakeExtProv{}
+	svc := newTestService(newFakeIssues([]sourcecontrol.IssueInfo{gate}), &fakeExecStore{}, &fakeReeval{},
+		fakeDesign{comps: designWithDeps()}, ext, &fakePlatProv{}, &fakeBindings{}) // empty catalog
+
+	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
+		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err != nil {
+		t.Fatalf("SaveValues must author from the design even with an empty catalog: %v", err)
+	}
+	if ext.lastER == nil || ext.lastER.Name != "stripe" {
+		t.Fatalf("Provision must receive a design-built ExternalResource, got %+v", ext.lastER)
+	}
+	// Config schema comes from the design union: api_key secret, region plain.
+	secret := map[string]bool{}
+	for _, k := range ext.lastER.ConfigKeys {
+		secret[k.Key] = k.Secret
+	}
+	if !secret["api_key"] || secret["region"] {
+		t.Fatalf("authored config must reflect the design schema; got %v", secret)
+	}
 }

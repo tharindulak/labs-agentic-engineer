@@ -44,7 +44,7 @@ type Service struct {
 	reeval    Reevaluator
 	design    DesignReader
 	repos     RepoLocator
-	catalog   ExternalResourceCatalog
+	rtCatalog ExternalRTCatalog
 	extProv   ExternalProvisioner
 	platProv  PlatformProvisioner
 	bindings  BindingReader
@@ -89,7 +89,7 @@ type Deps struct {
 	Reeval    Reevaluator
 	Design    DesignReader
 	Repos     RepoLocator
-	Catalog   ExternalResourceCatalog
+	RTCatalog ExternalRTCatalog
 	ExtProv   ExternalProvisioner
 	PlatProv  PlatformProvisioner
 	Bindings  BindingReader
@@ -106,7 +106,7 @@ func NewService(d Deps) *Service {
 		reeval:    d.Reeval,
 		design:    d.Design,
 		repos:     d.Repos,
-		catalog:   d.Catalog,
+		rtCatalog: d.RTCatalog,
 		extProv:   d.ExtProv,
 		platProv:  d.PlatProv,
 		bindings:  d.Bindings,
@@ -127,6 +127,17 @@ func (s *Service) findDepInProject(ctx context.Context, orgID, projectID, depNam
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: read design: %w", err)
 	}
+	return matchDependency(comps, depName, kind)
+}
+
+// matchDependency scans already-read design components for the first
+// dependency matching (depName, kind) case-insensitively — the pure half of
+// findDepInProject, split out so a caller that also needs the full comps
+// slice for other purposes (SaveValues computes the UNION config schema
+// across every component) can read the design ONCE and reuse it, instead of
+// paying for a second design read. Returns ErrDepNotFound when no dependency
+// of that name exists and ErrDepWrongKind when it exists as another kind.
+func matchDependency(comps []spec.DesignComponent, depName, kind string) (*spec.Dependency, error) {
 	var wrongKind bool
 	for i := range comps {
 		for j := range comps[i].Dependencies {

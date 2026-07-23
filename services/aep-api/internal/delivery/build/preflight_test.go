@@ -48,8 +48,8 @@ func (f fakeStatus) Ready(context.Context, string, string, string) (bool, error)
 }
 
 // kindsByDep groups the emitted items' kinds by the dependency name they were
-// raised for, so a test can assert "stripe produced exactly {external-spec,
-// external-config}" without caring about item order.
+// raised for, so a test can assert "stripe produced exactly {external-config}"
+// without caring about item order.
 func kindsByDep(items []PreflightItem) map[string][]string {
 	out := make(map[string][]string, len(items))
 	for _, it := range items {
@@ -63,7 +63,7 @@ func kindsByDep(items []PreflightItem) map[string][]string {
 func TestPreflight_ItemsPerKind(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindExternal, Name: "stripe", NeedsSpec: true,
+			{Kind: spec.DependencyKindExternal, Name: "stripe",
 				Config: []spec.ConfigKey{{Key: "STRIPE_KEY", Secret: true}, {Key: "STRIPE_ORG", Secret: false}}},
 			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg", Parameters: map[string]any{"instances": 1}},
 			{Kind: spec.DependencyKindOrgService, Name: "billing", Status: spec.DependencyStatusUnresolved},
@@ -74,7 +74,7 @@ func TestPreflight_ItemsPerKind(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, pf.NeedsInput)
 	kinds := kindsByDep(pf.Items)
-	require.ElementsMatch(t, []string{"external-spec", "external-config"}, kinds["stripe"])
+	require.Equal(t, []string{"external-config"}, kinds["stripe"])
 	require.Equal(t, []string{"platform-resource"}, kinds["orders-db"])
 	require.Equal(t, []string{"org-service"}, kinds["billing"])
 	_, present := kinds["audit"]
@@ -149,49 +149,73 @@ func TestPreflight_ComponentKindDependency_NeverEmits(t *testing.T) {
 
 // A dependency already Ready (provisioned or in-flight) is not re-asked: the
 // external-config and platform-resource items disappear once Status reports
-// ready, but external-spec still fires independently (it gates the spec, not
-// provisioning).
+// ready. (external-spec is not currently emitted at all — see the doc comment
+// on Preflight; it was NeedsSpec-driven, and that field was dropped.)
 func TestPreflight_ReadyDependency_SkipsConfigAndResourceItems(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindExternal, Name: "stripe", NeedsSpec: true},
+			{Kind: spec.DependencyKindExternal, Name: "stripe"},
 			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg"},
 		}}}
 	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: readyStatus{}})
 	pf, err := svc.Preflight(context.Background(), "acme", "shop")
 	require.NoError(t, err)
-	kinds := kindsByDep(pf.Items)
-	require.Equal(t, []string{"external-spec"}, kinds["stripe"])
-	_, present := kinds["orders-db"]
-	require.False(t, present)
-}
-
-// external-spec is skipped once the design already carries a SpecPath or
-// SpecUrl — the spec has already been supplied.
-func TestPreflight_ExternalSpecAlreadySupplied_SkipsSpecItem(t *testing.T) {
-	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
-		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindExternal, Name: "stripe", NeedsSpec: true, SpecPath: "dependencies/stripe.openapi.yaml"},
-		}}}
-	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: readyStatus{}})
-	pf, err := svc.Preflight(context.Background(), "acme", "shop")
-	require.NoError(t, err)
 	require.False(t, pf.NeedsInput)
 	require.Empty(t, pf.Items)
 }
 
-// Non-service components (e.g. web-application) carry no provisionable
-// dependencies through the drawer.
-func TestPreflight_NonServiceComponent_Skipped(t *testing.T) {
+// Non-service components (e.g. web-application) flow through the SAME
+// itemsFor logic as service components (#252 Task 14 — lifting the
+// ComponentType != service guard: Task 9 already surfaces a web-app
+// dependency's status chips and the coding-agent wiring already emits
+// consumed-spec instructions for it, so the drawer/gate must not silently skip
+// it). An unresolved external dependency on a web-application raises the same
+// blocker item a service component's would.
+func TestPreflight_WebApplicationComponent_UnresolvedExternal_EmitsBlockerItem(t *testing.T) {
 	comps := []spec.DesignComponent{{Name: "web", ComponentType: spec.ComponentTypeWebApplication,
 		Dependencies: []spec.Dependency{
-			{Kind: spec.DependencyKindExternal, Name: "stripe", NeedsSpec: true},
+			{Kind: spec.DependencyKindExternal, Name: "stripe",
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
 		}}}
 	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
 	pf, err := svc.Preflight(context.Background(), "acme", "shop")
 	require.NoError(t, err)
-	require.False(t, pf.NeedsInput)
-	require.Empty(t, pf.Items)
+	require.True(t, pf.NeedsInput)
+	require.Len(t, pf.Items, 1)
+	item := pf.Items[0]
+	require.Equal(t, "web", item.Component)
+	require.Equal(t, "stripe", item.Dependency)
+	require.Equal(t, "external-unresolved", item.Kind)
+}
+
+// A web-application component exercises the SAME per-kind branches as a
+// service component (external-config, platform-resource, org-service
+// unresolved-vs-resolved, and the never-emitted component kind) —
+// mirroring TestPreflight_ItemsPerKind exactly, but on a web-application, to
+// prove itemsFor's kind switch (not the caller's loop) is what decides
+// emission, so lifting the ComponentType guard cannot mis-gate any kind.
+func TestPreflight_WebApplicationComponent_AllDependencyKinds_BehaveSameAsService(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "web", ComponentType: spec.ComponentTypeWebApplication,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe",
+				Config: []spec.ConfigKey{{Key: "STRIPE_KEY", Secret: true}, {Key: "STRIPE_ORG", Secret: false}}},
+			{Kind: spec.DependencyKindPlatformResource, Name: "web-cache", ResourceType: "redis", Parameters: map[string]any{"size": "small"}},
+			{Kind: spec.DependencyKindOrgService, Name: "billing", Status: spec.DependencyStatusUnresolved},
+			{Kind: spec.DependencyKindOrgService, Name: "audit", Status: spec.DependencyStatusResolved},
+			{Kind: spec.DependencyKindComponent, Name: "catalog"},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.True(t, pf.NeedsInput)
+	kinds := kindsByDep(pf.Items)
+	require.Equal(t, []string{"external-config"}, kinds["stripe"])
+	require.Equal(t, []string{"platform-resource"}, kinds["web-cache"])
+	require.Equal(t, []string{"org-service"}, kinds["billing"])
+	_, auditPresent := kinds["audit"]
+	require.False(t, auditPresent, "resolved org-service dependency must not surface")
+	_, catalogPresent := kinds["catalog"]
+	require.False(t, catalogPresent, "sibling component dependency must never surface")
 }
 
 // readyStatus reports every dependency as already ready — the "nothing left
@@ -199,3 +223,83 @@ func TestPreflight_NonServiceComponent_Skipped(t *testing.T) {
 type readyStatus struct{}
 
 func (readyStatus) Ready(context.Context, string, string, string) (bool, error) { return true, nil }
+
+// ----- #252 Task 10: the restored external proceed gate -----------------------
+//
+// externalItems now reads the dependency's ALREADY-COMPUTED Status/Reason
+// (spec.ComputeDependencyStatus's output, per dependencyBlocker) rather than
+// re-deriving anything — exactly mirroring how orgServiceItems already reads
+// d.Status above. These fixtures set Status/Reason directly, the same
+// convention TestPreflight_ItemsPerKind and TestPreflight_OrgServiceBlockedAndAmbiguous_AlsoEmit
+// already use for org-service.
+
+// An ambiguous external dependency (2+ candidates) raises "external-ambiguous"
+// — never the config item, and Ready is never consulted (nothing meaningful to
+// collect until the dependency itself resolves).
+func TestPreflight_ExternalAmbiguous_EmitsBlockerItem(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "salesforce", Status: spec.DependencyStatusAmbiguous},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.Len(t, pf.Items, 1)
+	item := pf.Items[0]
+	require.Equal(t, "external-ambiguous", item.Kind)
+	require.Equal(t, "salesforce", item.Dependency)
+	require.NotEmpty(t, item.Description)
+}
+
+// An unresolved external dependency with reason=needs-input raises
+// "external-unresolved".
+func TestPreflight_ExternalNeedsInput_EmitsUnresolvedBlockerItem(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "weather-api",
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.Len(t, pf.Items, 1)
+	item := pf.Items[0]
+	require.Equal(t, "external-unresolved", item.Kind)
+	require.Equal(t, "weather-api", item.Dependency)
+	require.NotEmpty(t, item.Description)
+}
+
+// An unresolved external dependency with reason=needs-spec raises the
+// pre-existing "external-spec" kind — reborn, not reinvented.
+func TestPreflight_ExternalNeedsSpec_EmitsSpecBlockerItem(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "partner-api",
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsSpec},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.Len(t, pf.Items, 1)
+	item := pf.Items[0]
+	require.Equal(t, "external-spec", item.Kind)
+	require.Equal(t, "partner-api", item.Dependency)
+	require.NotEmpty(t, item.Description)
+}
+
+// A resolved external dependency (or one with no Status computed at all —
+// the resolver-never-wired fail-open case) falls through to the unchanged
+// external-config path: config collection is a provisioning-readiness
+// concern, untouched by this task.
+func TestPreflight_ExternalResolved_FallsThroughToConfigItem(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe", Status: spec.DependencyStatusResolved,
+				Config: []spec.ConfigKey{{Key: "STRIPE_KEY", Secret: true}}},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.Len(t, pf.Items, 1)
+	require.Equal(t, "external-config", pf.Items[0].Kind)
+}

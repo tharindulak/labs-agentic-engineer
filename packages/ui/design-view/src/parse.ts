@@ -24,8 +24,15 @@
  * componentAgentInstructions) are ignored, and a malformed file degrades to a
  * ParseError the view shows as an alert instead of throwing.
  *
- * Dependency resolution `status`/`reason` are deliberately NOT modelled — they
- * are computed server-side and never present in the raw file.
+ * A dependency's `style`/`package`/`candidates` ARE parsed here — they are
+ * authored/derived intent, persisted in the raw file exactly like
+ * `specPath`/`config` (packages/contracts/schemas/component-design.schema.json).
+ * `status`/`reason` are the ONE exception: deliberately NOT modelled, because
+ * they are read-time computed server-side (models.ComputeDependencyStatus,
+ * #252 Task 2's `GET /projects/{p}/design/dependencies`) and never written to
+ * this file — recomputing them from the fields above would drift from that
+ * single resolution authority. DesignView's optional `dependencyStatus` prop
+ * is the only source for them (see DesignView.tsx).
  */
 
 export type DependencyKind =
@@ -39,14 +46,28 @@ export interface DesignConfigEntry {
   secret?: boolean;
 }
 
+/** One option in an ambiguous external dependency's resolution set (2+ when present). */
+export interface DependencyCandidate {
+  name: string;
+  /** "rest-api" | "sdk"; kept as a raw string so an unknown style still renders. */
+  style?: string;
+  description?: string;
+  package?: string;
+}
+
 export interface Dependency {
   /** The declared kind; kept as a raw string so an unknown kind still renders. */
   kind: DependencyKind | string;
   name: string;
   description?: string;
-  needsSpec?: boolean;
+  /** external only: "rest-api" | "sdk", kept as a raw string. */
+  style?: string;
+  /** external (sdk style) only: ecosystem-prefixed package identifier. */
+  package?: string;
+  /** external only: stored contract location — a URL or a repo-relative path. */
   specPath?: string;
-  specUrl?: string;
+  /** external only: 2+ identified-but-not-pinned options (the "ambiguous" state). */
+  candidates?: DependencyCandidate[];
   config?: DesignConfigEntry[];
   resourceType?: string;
   parameters?: Record<string, unknown>;
@@ -106,6 +127,25 @@ function parseConfig(v: unknown): DesignConfigEntry[] {
   return out;
 }
 
+function parseCandidates(v: unknown): DependencyCandidate[] {
+  if (!Array.isArray(v)) return [];
+  const out: DependencyCandidate[] = [];
+  for (const item of v) {
+    if (!isObject(item)) continue;
+    const name = str(item.name);
+    if (!name) continue;
+    const candidate: DependencyCandidate = { name };
+    const style = optStr(item.style);
+    if (style) candidate.style = style;
+    const description = optStr(item.description);
+    if (description) candidate.description = description;
+    const pkg = optStr(item.package);
+    if (pkg) candidate.package = pkg;
+    out.push(candidate);
+  }
+  return out;
+}
+
 function parseDependencies(v: unknown): Dependency[] {
   if (!Array.isArray(v)) return [];
   const out: Dependency[] = [];
@@ -116,12 +156,14 @@ function parseDependencies(v: unknown): Dependency[] {
     const dep: Dependency = { kind: str(item.kind) || "unknown", name };
     const description = optStr(item.description);
     if (description) dep.description = description;
-    const needsSpec = optBool(item.needsSpec);
-    if (needsSpec !== undefined) dep.needsSpec = needsSpec;
+    const style = optStr(item.style);
+    if (style) dep.style = style;
+    const pkg = optStr(item.package);
+    if (pkg) dep.package = pkg;
     const specPath = optStr(item.specPath);
     if (specPath) dep.specPath = specPath;
-    const specUrl = optStr(item.specUrl);
-    if (specUrl) dep.specUrl = specUrl;
+    const candidates = parseCandidates(item.candidates);
+    if (candidates.length) dep.candidates = candidates;
     const resourceType = optStr(item.resourceType);
     if (resourceType) dep.resourceType = resourceType;
     const config = parseConfig(item.config);

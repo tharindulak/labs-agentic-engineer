@@ -119,8 +119,13 @@ func (s *SkillImportService) Import(ctx context.Context, orgID, actor string, r 
 }
 
 // extractTarball decodes a gzip+tar stream into (topDir, SKILL.md body,
-// references map). Enforces: a single top-level directory; only SKILL.md +
-// references/<file>.md; no symlinks/hardlinks/.. paths/AppleDouble entries.
+// references map). Enforces: a single top-level directory; no
+// symlinks/hardlinks/.. paths. Beyond SKILL.md itself, every other entry is
+// captured as an aux file at any depth with no extension filter — the same
+// contract the loaders apply (repo_store.go's isCatalogPath/
+// parseBundleEntries) — except dotfile segments (AppleDouble, .DS_Store,
+// stray dotfiles), which are silently skipped rather than captured, mirroring
+// hasDotSegment's skip rule for on-disk/catalog reads.
 func extractTarball(r io.Reader) (topDir, skillMD string, refs map[string]string, err error) {
 	gz, gerr := gzip.NewReader(r)
 	if gerr != nil {
@@ -161,13 +166,16 @@ func extractTarball(r io.Reader) (topDir, skillMD string, refs map[string]string
 			return "", "", nil, validationErr("UNSAFE_ENTRY",
 				fmt.Sprintf("path traversal in %q", hdr.Name), "")
 		}
-		// AppleDouble / macOS metadata.
-		base := path.Base(clean)
-		if strings.HasPrefix(base, "._") || clean == "__MACOSX" || strings.HasPrefix(clean, "__MACOSX/") || base == ".DS_Store" {
+
+		segments := strings.Split(clean, "/")
+		// Dotfile segments (AppleDouble "._*", "__MACOSX/._*", ".DS_Store, any
+		// stray dotfile at any depth) are skipped entirely — never captured as
+		// an aux file, never counted toward topDir/SKILL.md — mirroring
+		// hasDotSegment's skip rule for the on-disk library / catalog reads.
+		if hasDotSegment(segments) {
 			continue
 		}
 
-		segments := strings.Split(clean, "/")
 		if topDir == "" {
 			topDir = segments[0]
 		} else if segments[0] != topDir {
@@ -180,23 +188,21 @@ func extractTarball(r io.Reader) (topDir, skillMD string, refs map[string]string
 		}
 
 		rel := strings.Join(segments[1:], "/") // path inside the top dir
-		switch {
-		case rel == "SKILL.md":
+		if rel == "SKILL.md" {
 			b, rerr := limited.readAll(tr)
 			if rerr != nil {
 				return "", "", nil, rerr
 			}
 			skillMD = string(b)
-		case strings.HasPrefix(rel, "references/") && strings.HasSuffix(rel, ".md"):
-			b, rerr := limited.readAll(tr)
-			if rerr != nil {
-				return "", "", nil, rerr
-			}
-			refs[rel] = string(b)
-		default:
-			return "", "", nil, validationErr("DISALLOWED_FILE",
-				fmt.Sprintf("only SKILL.md and references/<file>.md are allowed (found %q)", rel), "")
+			continue
 		}
+		// Any other path is a legitimate aux file, any depth, no extension
+		// filter — same contract as validateSkillRefPath/the loaders.
+		b, rerr := limited.readAll(tr)
+		if rerr != nil {
+			return "", "", nil, rerr
+		}
+		refs[rel] = string(b)
 	}
 
 	if topDir == "" {

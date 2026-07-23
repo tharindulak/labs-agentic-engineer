@@ -73,9 +73,10 @@ type ProvisionFailure struct {
 // author failure is appended to the returned failures and the batch CONTINUES —
 // the workflow decides what to do with them (it fails the run). orgID is the OC
 // namespace + issues org; ocOrgID is the SM-API org id (reserved for the org
-// path; the external author half needs no SM write). The external deps must
-// already be registered in the catalog (the app-root adapter calls
-// design.RegisterExternalResources before this — Task 5).
+// path; the external author half needs no SM write). The external RT-authoring
+// definition (name + description + config schema) is built straight off the
+// project's committed design (authorExternalWithRef) — the external dep need
+// not be separately registered anywhere.
 func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, projectID, tag string, inputs []BuildProvisionInput) ([]ProvisionFailure, error) {
 	// Mint gates only when the drawer carried inputs. A not-ready dependency is
 	// always surfaced in the build drawer, so a build with no inputs needs no new
@@ -223,15 +224,23 @@ func (s *Service) completeReadyGate(ctx context.Context, orgID, projectID, depNa
 // re-written to SM-API.
 func (s *Service) authorExternalWithRef(ctx context.Context, orgID, ocOrgID, projectID string, in BuildProvisionInput, gateNumber int) error {
 	_ = ocOrgID // the author half needs no SM-API write; kept for symmetry with SaveValues.
-	if _, err := s.findDepInProject(ctx, orgID, projectID, in.Dependency, spec.DependencyKindExternal); err != nil {
+	// Read the design ONCE (mirrors SaveValues): validate the dep exists as an
+	// external dependency, then build the RT-authoring definition straight off
+	// it — name + the matched dependency's Description + the UNION config
+	// schema across every declaring component — never the external_resources
+	// table (that reader is gone).
+	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
+	if err != nil {
+		return fmt.Errorf("provisioning: read design: %w", err)
+	}
+	dep, err := matchDependency(comps, in.Dependency, spec.DependencyKindExternal)
+	if err != nil {
 		return err
 	}
-	er, err := s.catalog.Get(ctx, orgID, in.Dependency)
-	if err != nil {
-		return fmt.Errorf("provisioning: get external resource %q: %w", in.Dependency, err)
-	}
-	if er == nil {
-		return dependencies.ErrNotRegistered
+	er := &dependencies.ExternalResource{
+		Name:        in.Dependency,
+		Description: dep.Description,
+		ConfigKeys:  spec.UnionExternalConfigFor(comps, in.Dependency),
 	}
 	byEnv := preparedEnvValues(in)
 

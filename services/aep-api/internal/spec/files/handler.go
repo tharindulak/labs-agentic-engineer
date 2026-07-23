@@ -93,7 +93,7 @@ func (h *Handler) ApplyFiles(ctx context.Context, request gen.ApplyFilesRequestO
 	// A byte-identical apply makes no commit — nothing happened, so nothing
 	// reaches the feed.
 	if h.activity != nil && res.Changed {
-		h.activity.RecordSpecUpdated(ctx, org, request.ProjectName, res.CommitSHA)
+		h.activity.RecordSpecUpdated(ctx, org, request.ProjectName, res.CommitSHA, appliedPaths(*request.Body, res))
 	}
 	return gen.ApplyFiles200JSONResponse(applyResultToWire(res)), nil
 }
@@ -110,6 +110,20 @@ func applyConflictsToWire(conflicts []spec.Conflict) gen.ApplyFiles409JSONRespon
 		})
 	}
 	return gen.ApplyFiles409JSONResponse(out)
+}
+
+// appliedPaths lists what the commit touched: the written files from the
+// result (authoritative — the service drops byte-identical writes) plus the
+// requested deletes.
+func appliedPaths(body gen.ApplyRequest, res *spec.ApplyResult) []string {
+	paths := make([]string, 0, len(res.Files)+len(body.Deletes))
+	for _, f := range res.Files {
+		paths = append(paths, f.Path)
+	}
+	for _, d := range body.Deletes {
+		paths = append(paths, d.Path)
+	}
+	return paths
 }
 
 // applyRequestFromWire converts the generated body into the service's shape.

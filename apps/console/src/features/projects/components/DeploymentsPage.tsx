@@ -300,16 +300,13 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   const status = useProjectStatus(projectName);
   const devVersion = status.data?.deploy.version || undefined;
   // Whole-project validation runs against dev after components deploy; surface
-  // its coarse state on the Development column header. Completed = the report
-  // is ready: the chip jumps straight to the PR. The internal log view (routed
-  // via the issue number) is for watching a live run or diagnosing a failed
-  // one, so completed withholds the issue and falls through to the URL chip.
-  const devValidationStatus = status.data?.deploy.validation ?? "";
-  const devValidation = validationView(devValidationStatus);
-  const devValidationIssue =
-    devValidationStatus === "completed"
-      ? undefined
-      : status.data?.deploy.validationIssue || undefined;
+  // its coarse state on the Development column header. The chip always opens the
+  // internal validation log page (via the issue number) — live progress while it
+  // runs, the historical runner log once it finished; the page itself links out
+  // to the issue and PR. The external URL is only the fallback when the status
+  // payload carries no issue number.
+  const devValidation = validationView(status.data?.deploy.validation ?? "");
+  const devValidationIssue = status.data?.deploy.validationIssue || undefined;
   const devValidationUrl = status.data?.deploy.validationUrl || undefined;
 
   // Unconditional, like Builds (Task 5): the back link and project status

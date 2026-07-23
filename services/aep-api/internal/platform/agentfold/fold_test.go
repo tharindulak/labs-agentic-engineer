@@ -368,13 +368,18 @@ func TestSnapshotFilter(t *testing.T) {
 		!KeepInTurnSnapshot("a.dsl") ||
 		!KeepInTurnSnapshot("specs/design/design.cell") ||
 		!KeepInTurnSnapshot("specs/design/components/x/design.json") ||
-		!KeepInTurnSnapshot("specs/validation/validation-criteria.json") {
+		!KeepInTurnSnapshot("specs/validation/validation-criteria.json") ||
+		!KeepInTurnSnapshot("specs/design/components/x/openapi.yaml") ||
+		!KeepInTurnSnapshot("specs/design/components/x/dependencies/stripe.openapi.yaml") {
 		t.Fatal("keep-filter rejects agent-authored sources")
 	}
-	if KeepInTurnSnapshot("specs/design/components/x/openapi.yaml") ||
-		KeepInTurnSnapshot("design.json.bak") ||
-		KeepInTurnSnapshot("x.gen.json") {
-		t.Fatal("keep-filter admits derived artifacts")
+	if KeepInTurnSnapshot("design.json.bak") ||
+		KeepInTurnSnapshot("x.gen.json") ||
+		KeepInTurnSnapshot("specs/design/components/x/workload.yaml") ||
+		KeepInTurnSnapshot("workload.yaml") ||
+		KeepInTurnSnapshot("specs/design/components/x/openapi.yml") ||
+		KeepInTurnSnapshot("specs/design/components/x/dependencies/nested/stripe.openapi.yaml") {
+		t.Fatal("keep-filter admits derived artifacts or arbitrary yaml")
 	}
 	if InTurnSnapshot(".hidden/notes.md", nil) || InTurnSnapshot("a/.git/x.md", nil) {
 		t.Fatal("dot segments must drop")
@@ -384,8 +389,13 @@ func TestSnapshotFilter(t *testing.T) {
 	}
 	got := FilterTurnSnapshot(map[string]string{
 		"keep.md": "x", ".drop.md": "y", "code.go": "z", "d/design.json": "j",
+		"specs/design/components/x/openapi.yaml":                     "spec",
+		"specs/design/components/x/dependencies/stripe.openapi.yaml": "dep",
+		"specs/design/components/x/workload.yaml":                    "drop",
 	})
-	if len(got) != 2 || got["keep.md"] != "x" || got["d/design.json"] != "j" {
+	if len(got) != 4 || got["keep.md"] != "x" || got["d/design.json"] != "j" ||
+		got["specs/design/components/x/openapi.yaml"] != "spec" ||
+		got["specs/design/components/x/dependencies/stripe.openapi.yaml"] != "dep" {
 		t.Fatalf("filter: %v", got)
 	}
 }

@@ -29,7 +29,7 @@
  */
 
 import { wrapLanguageModel, type LanguageModel, type LanguageModelMiddleware } from "ai";
-import { createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
+import { anthropic, createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
 import { devToolsMiddleware } from "@ai-sdk/devtools";
 import type { ProviderOptions } from "../agents/main/run-turn.js";
 import { config } from "./config.js";
@@ -125,4 +125,35 @@ export function modelProviderOptions(): ProviderOptions {
   return {
     anthropic: { effort: config.reasoningEffort } satisfies AnthropicLanguageModelOptions,
   };
+}
+
+/**
+ * True iff `model` is served by the Anthropic provider (`provider` starts with
+ * "anthropic") — gates the provider-executed `web_search` tool (external-
+ * dependency-discovery #252), which is Anthropic-specific: injecting it
+ * against another provider would error, so a mismatch degrades silently to no
+ * web_search tool instead. `createModel` is Anthropic-only today, so this is
+ * always true in production; the check keeps the call site correct if a
+ * second provider is ever added.
+ */
+export function isAnthropicModel(model: LanguageModel): boolean {
+  return (
+    typeof model === "object" &&
+    model !== null &&
+    "provider" in model &&
+    typeof (model as { provider?: unknown }).provider === "string" &&
+    (model as { provider: string }).provider.startsWith("anthropic")
+  );
+}
+
+/**
+ * Anthropic's provider-executed `web_search` tool (external-dependency-
+ * discovery #252): gives the turn's model direct access to real-time web
+ * content so it can verify a candidate external API/SDK actually exists
+ * before proposing a `dependencies` entry for it, instead of inventing one.
+ * `maxUses` bounds the per-turn search budget. Anthropic-only — call only
+ * behind `isAnthropicModel`.
+ */
+export function webSearchTool(): ReturnType<typeof anthropic.tools.webSearch_20250305> {
+  return anthropic.tools.webSearch_20250305({ maxUses: 4 });
 }

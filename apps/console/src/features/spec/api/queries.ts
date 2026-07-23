@@ -24,6 +24,7 @@ import { toSpecEntries } from "./mapping";
 import { apiErrorMessage } from "../../../api/errors";
 
 type FileContent = components["schemas"]["FileContent"];
+type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 
 function toError(error: unknown, fallback: string): Error {
   return new Error(apiErrorMessage(error, fallback));
@@ -53,9 +54,42 @@ export function useSpecFiles(projectName: string) {
 }
 
 /**
- * Fetch one spec file's content. Shared by the lazy selection hook below and
- * the derived-view hooks (useDerivedCellDiagram, useDerivedWireframe), which
- * fetch several files at once outside of a single "selected file" context.
+ * Read-time dependency status for every component in the current design
+ * (#252 Task 2's `GET /projects/{p}/design/dependencies` — the console's
+ * single dependency-status read model). Keyed off `specKeys.dependencies` —
+ * the EXACT key Task 5's turn-end freshness wiring
+ * (`dependencyFreshness.ts`/`useTurnEndFlush`) invalidates after a "Resolve
+ * via chat" turn commits, so a different key here would silently break that
+ * refresh.
+ *
+ * Degrades to `[]` on a missing design or a fetch error, same rationale as
+ * `useProjectTags` above: this is a supplementary read (status chips on the
+ * dependency cards) layered over the Spec view's real content, which already
+ * ships its own error states — a failed read here just means the cards
+ * render without a status chip rather than blocking the whole view. `staleTime:
+ * Infinity` keeps it from refetching on remount/refocus; freshness is driven
+ * entirely by the explicit turn-end invalidation, not polling.
+ */
+export function useDesignDependencies(projectName: string) {
+  return useQuery({
+    queryKey: specKeys.dependencies(projectName),
+    queryFn: async (): Promise<ComponentDependencies[]> => {
+      const { data, error } = await client.GET(
+        "/projects/{projectName}/design/dependencies",
+        { params: { path: { projectName } } },
+      );
+      if (error || data === undefined) return [];
+      return data ?? [];
+    },
+    staleTime: Infinity,
+  });
+}
+
+/**
+ * Fetch one spec file's content. Shared by the lazy selection hook below, the
+ * derived wireframe hook (useDerivedWireframe), and the cell-diagram panel's
+ * solo/offline design.cell read — reads outside a single "selected file"
+ * context.
  */
 export async function fetchSpecFileContent(
   projectName: string,

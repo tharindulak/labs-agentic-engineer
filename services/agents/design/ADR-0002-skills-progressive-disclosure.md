@@ -73,5 +73,8 @@ drift-guarded against them, as with the file tools.
 - Selection is two-tier: the caller decides the *available* set; the agent decides
   what to actually read. Negative/selection behavior ("loaded the right one, ignored
   the rest") is observable in the `loadSkill` call stream and testable in evals.
-- `references/*.md` are out of scope: the agent has no file-read tool, so `loadSkill`
-  serves the `SKILL.md` body only. A later reference-loading tool can extend this.
+- A third disclosure level, `loadSkillReference`, reads one named aux file (any path under
+  `scripts/`/`references/`/`assets/`/extras that `loadSkill` listed for that skill) on demand — registered
+  only when some skill in the payload actually carries references, so a references-free library keeps this
+  ADR's exact tool set. It serves UTF-8 text only; a miss (unknown skill or path) returns the addressable
+  set so the model self-corrects in one round-trip, matching `loadSkill`'s and `editFile`'s convention.

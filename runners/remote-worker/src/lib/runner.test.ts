@@ -22,7 +22,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMcpOptions, resolveBaseAgentConfig } from "./runner.js";
 
-const BASE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
+// D9 secure search (Task 12) — WebSearch joins the base tool set (gated by
+// the PreToolUse DLP hook wired in runClaudeQuery; see websearch_dlp.ts).
+// WebFetch joins it too (see webfetch_guard.ts's PreToolUse SSRF + secret
+// guard, wired the same way) — fail-closed, so this is safe to enable.
+const BASE_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"];
 const MCP_TOOLS = [
   "mcp__aep__list_org_component_endpoints",
   "mcp__aep__get_remote_git_file_contents",
@@ -68,6 +72,13 @@ test("buildMcpOptions: omits mcpServers and MCP tools when both are undefined", 
 
   assert.equal(result.mcpServers, undefined);
   assert.deepEqual(result.allowedTools, BASE_TOOLS);
+});
+
+test("buildMcpOptions: allowedTools includes both WebSearch and WebFetch (D9)", () => {
+  const result = buildMcpOptions(undefined, undefined);
+
+  assert.ok(result.allowedTools.includes("WebSearch"));
+  assert.ok(result.allowedTools.includes("WebFetch"));
 });
 
 // --- resolveBaseAgentConfig: the defaults are pinned byte-identical to the

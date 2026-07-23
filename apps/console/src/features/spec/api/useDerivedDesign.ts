@@ -16,62 +16,10 @@
  * under the License.
  */
 
-import { useMemo } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
-import { deriveCellDsl } from "../derive/deriveCellDiagram";
+import { useQuery } from "@tanstack/react-query";
 import { deriveWireframeScene } from "../derive/deriveWireframe";
 import { fetchSpecFileContent } from "./queries";
 import { specKeys } from "./keys";
-import type { SpecFileEntry } from "./mapping";
-
-/**
- * The COMMITTED component design.json entries (drives both the fetch set and
- * the memo key). Only files with a real git blob sha are included: a collab-only
- * file the agent is still writing carries `sha === ""` (SpecView seeds live doc
- * paths that way) and does NOT exist in git yet, so REST-fetching it would 404
- * on a loop. During live design those are shown via the streaming `design.cell`
- * instead; the derived model kicks in once the design.json files commit.
- */
-function designJsonEntries(files: SpecFileEntry[]): SpecFileEntry[] {
-  return files
-    .filter((f) => f.group === "designs" && f.path.endsWith("/design.json") && f.sha !== "")
-    .sort((a, b) => a.path.localeCompare(b.path));
-}
-
-export function useDerivedCellDiagram(
-  projectName: string,
-  files: SpecFileEntry[],
-): { dsl: string | null; isPending: boolean; isError: boolean } {
-  const entries = useMemo(() => designJsonEntries(files), [files]);
-
-  const results = useQueries({
-    queries: entries.map((f) => ({
-      queryKey: specKeys.file(projectName, f.path, f.sha),
-      staleTime: Infinity,
-      queryFn: () => fetchSpecFileContent(projectName, f),
-    })),
-  });
-
-  const isPending = results.some((r) => r.isPending);
-  const isError = results.some((r) => r.isError);
-  const dataKey = results.map((r) => r.data?.sha).join(",");
-
-  const dsl = useMemo(() => {
-    if (isPending || isError) return null;
-    // f.path is already the full repo path (specs/design/components/<c>/design.json)
-    // deriveCellDsl expects — mapping.ts's SpecFileEntry.path scheme, no
-    // conversion needed (the old unprefixed room-key scheme is retired).
-    const byRepoPath: Record<string, string> = {};
-    entries.forEach((f, i) => {
-      const content = results[i]?.data?.content;
-      if (typeof content === "string") byRepoPath[f.path] = content;
-    });
-    return deriveCellDsl(projectName, byRepoPath);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, isPending, isError, dataKey, projectName]);
-
-  return { dsl, isPending, isError };
-}
 
 export function useDerivedWireframe(
   projectName: string,

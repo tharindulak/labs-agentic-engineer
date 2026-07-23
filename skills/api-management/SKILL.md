@@ -95,8 +95,11 @@ output from reality.
   `dependencies`. Use **name-only** declarations (`{ "kind": "external",
   "name": "employee-api", "description": "..." }`) for catalog-known APIs —
   the platform resolves the URL from its in-cluster catalog at design-load
-  time. Add `needsSpec: true` (and a `specUrl` hint, or attach the contract
-  later) when the agent must call the API by specific endpoints.
+  time. Add `style: "rest-api"` (and optionally a `specPath` — a URL to a
+  published OpenAPI spec, or a repo-relative path to a committed one) when the
+  agent must call the API by specific endpoints; the coding agent otherwise
+  researches the provider's contract freely from the web at build time. The old
+  `needsSpec: true` flag is removed; the platform derives the state instead.
 - Every component with an `external` dependency MUST also carry an instruction
   line in `componentAgentInstructions` of the form:
   `Upstream external API <name>: env var <NAME_UPPER_SNAKE>_URL (auth: <authentication>). <description>. Read via os.Getenv / process.env / window._env_, call with standard HTTP client.`

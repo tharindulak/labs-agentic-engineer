@@ -27,3 +27,8 @@ export const skillsKeys = {
   details: () => [...skillsKeys.all, "detail"] as const,
   detail: (name: string) => [...skillsKeys.details(), name] as const,
 };
+
+export const resourceKeys = {
+  platformTypes: ["resources", "platform-types"] as const,
+  external: ["resources", "external"] as const,
+};

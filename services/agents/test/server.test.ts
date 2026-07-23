@@ -40,6 +40,7 @@ import { sha256Hex } from "../src/shared/hash.js";
 import { mockModel } from "../src/shared/mock-model.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
+const WORKLOAD_YAML = "specs/design/components/hello-api/workload.yaml";
 const REQUIREMENTS = "specs/requirements/requirements.md";
 const AUD = "agents-service";
 const SECRET = "test-secret";
@@ -383,10 +384,34 @@ test("workspace turn: reads the snapshot + skills from the mount, streams, ends 
   }
 });
 
-test("workspace turn: the snapshot filter drops non-spec files (yaml is NOT in CURRENT STATE)", async () => {
+test("workspace turn: the snapshot filter drops non-spec yaml (workload.yaml is NOT in CURRENT STATE)", async () => {
   const root = makeMountRoot({
     [REQUIREMENTS]: "# Req\n",
-    [OPENAPI]: 'openapi: 3.0.3\ninfo:\n  title: X\n', // present on disk, filtered from the turn
+    [WORKLOAD_YAML]: "kind: Workload\n", // present on disk, filtered from the turn — arbitrary yaml stays excluded
+  });
+  const { baseUrl, close } = await boot(
+    mockModel([
+      { kind: "toolCall", toolCallId: "c1", toolName: "editFile", input: { path: WORKLOAD_YAML, oldString: "Workload", newString: "Job" } },
+      { kind: "text", text: "done" },
+    ]),
+    root,
+  );
+  try {
+    const token = await mintToken();
+    const res = await fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody(), { token, org: WS_ORG }));
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    assert.match(text, /NO_SUCH_FILE/); // the filtered file is not editable — not in the bundle
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace turn: the snapshot filter admits a stored openapi.yaml (editable, IS in CURRENT STATE)", async () => {
+  const root = makeMountRoot({
+    [REQUIREMENTS]: "# Req\n",
+    [OPENAPI]: "openapi: 3.0.3\ninfo:\n  title: X\n", // a turn must be able to read back a spec it just stored
   });
   const { baseUrl, close } = await boot(
     mockModel([
@@ -400,7 +425,8 @@ test("workspace turn: the snapshot filter drops non-spec files (yaml is NOT in C
     const res = await fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody(), { token, org: WS_ORG }));
     assert.equal(res.status, 200);
     const text = await res.text();
-    assert.match(text, /NO_SUCH_FILE/); // the filtered file is not editable — not in the bundle
+    assert.doesNotMatch(text, /NO_SUCH_FILE/);
+    assert.match(text, /"status":"applied"/); // the edit against the admitted spec actually applied
   } finally {
     await close();
     rmSync(root, { recursive: true, force: true });

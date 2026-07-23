@@ -34,11 +34,20 @@ export interface CellDiagramViewProps {
   source?: string | undefined;
   /** Optional override for the empty-state copy. */
   emptyState?: React.ReactNode;
+  /**
+   * Stable identity (e.g. a project name) under which manually dragged node
+   * positions persist in localStorage. The stored layout is keyed to a
+   * fingerprint of `source`, so any change to the DSL discards it — moving
+   * components is a viewing aid, never saved diagram state. Omit to keep
+   * dragged positions in memory only.
+   */
+  layoutKey?: string | undefined;
 }
 
 export const CellDiagramView = memo(function CellDiagramView({
   source,
   emptyState,
+  layoutKey,
 }: CellDiagramViewProps) {
   const hasSource = typeof source === "string" && source.trim().length > 0;
   if (!hasSource) {
@@ -73,7 +82,7 @@ export const CellDiagramView = memo(function CellDiagramView({
           </Box>
         }
       >
-        <CellDiagram source={source} />
+        <CellDiagram source={source} layoutKey={layoutKey} />
       </Suspense>
     </Box>
   );

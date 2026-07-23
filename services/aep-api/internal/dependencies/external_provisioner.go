@@ -39,7 +39,7 @@ type EnvValues struct {
 // ResourceType (get-or-create) → Resource (controller cuts a ResourceRelease)
 // → per-env ResourceReleaseBinding pinned to status.latestRelease.
 type ExternalResourceProvisioner struct {
-	lookup externalResourceLookup
+	design DesignReader
 	rc     openchoreo.ResourceClient
 	sm     SecretWriter
 
@@ -50,12 +50,13 @@ type ExternalResourceProvisioner struct {
 	pollTimeout  time.Duration
 }
 
-// NewExternalResourceProvisioner wires the provisioner. lookup is only read
-// by ResolveRunnerSecrets; Provision/Deprovision receive the resource row from
-// the caller.
-func NewExternalResourceProvisioner(lookup externalResourceLookup, rc openchoreo.ResourceClient, sm SecretWriter) *ExternalResourceProvisioner {
+// NewExternalResourceProvisioner wires the provisioner. design is only read by
+// ResolveRunnerSecrets (the project's committed design.json is the single
+// source of truth for which config keys are secret — the same one the build
+// path reads); Provision/Deprovision receive the resource row from the caller.
+func NewExternalResourceProvisioner(design DesignReader, rc openchoreo.ResourceClient, sm SecretWriter) *ExternalResourceProvisioner {
 	return &ExternalResourceProvisioner{
-		lookup:       lookup,
+		design:       design,
 		rc:           rc,
 		sm:           sm,
 		pollInterval: 2 * time.Second,
@@ -89,14 +90,16 @@ func (p *ExternalResourceProvisioner) Provision(
 	}
 
 	// 1. ResourceType (get-or-create; immutable once created). The cluster RT
-	// name is pinned to the generator's template version — a template change
-	// authors a fresh RT instead of silently reusing a stale same-named one on
-	// 409-conflict.
-	rtName := openchoreo.ExternalResourceRTName(er.ResourceTypeName)
-	rt, err := openchoreo.BuildExternalResourceType(rtName, toRTConfigKeys(er.ConfigKeys))
+	// name is a deterministic hash of the (key, secret) schema plus the
+	// generator's template version — the SAME schema always resolves to the
+	// SAME name (a stable get-or-create target), while a schema OR template
+	// change authors a fresh RT instead of silently reusing a stale same-named
+	// one on 409-conflict.
+	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys))
 	if err != nil {
 		return nil, fmt.Errorf("external resources: build resourcetype: %w", err)
 	}
+	rtName := rt.Metadata.Name
 	if _, err := p.rc.EnsureResourceType(ctx, orgHandle, rt); err != nil {
 		return nil, fmt.Errorf("external resources: ensure resourcetype %q: %w", rtName, err)
 	}
@@ -174,11 +177,11 @@ func (p *ExternalResourceProvisioner) AuthorWithSecretRef(
 	}
 
 	// 1. ResourceType (get-or-create; immutable once created).
-	rtName := openchoreo.ExternalResourceRTName(er.ResourceTypeName)
-	rt, err := openchoreo.BuildExternalResourceType(rtName, toRTConfigKeys(er.ConfigKeys))
+	rt, err := openchoreo.BuildExternalResourceType(er.Name, er.Description, toRTConfigKeys(er.ConfigKeys))
 	if err != nil {
 		return nil, fmt.Errorf("external resources: build resourcetype: %w", err)
 	}
+	rtName := rt.Metadata.Name
 	if _, err := p.rc.EnsureResourceType(ctx, orgHandle, rt); err != nil {
 		return nil, fmt.Errorf("external resources: ensure resourcetype %q: %w", rtName, err)
 	}
@@ -282,22 +285,21 @@ type ExternalResourceRunnerSecret struct {
 
 // ResolveRunnerSecrets returns the per-run-ExternalSecret inputs for the
 // external resources a task depends on, for one environment: the secret key
-// list (from the org catalog) + the SM-API vault path (read back off the
-// resource's per-env ResourceReleaseBinding, where Provision pinned it).
-// Resources with no secret keys (or not yet provisioned) are skipped.
+// list (from the project's committed design.json config[] — the SAME source
+// of truth the build path reads, NOT the org catalog) + the SM-API vault path
+// (read back off the resource's per-env ResourceReleaseBinding, where
+// Provision pinned it). Resources with no secret keys (or not yet
+// provisioned) are skipped. A design-read failure fails the whole call — it
+// never falls back to treating an unresolvable name as secret-free by reading
+// the org catalog instead.
 func (p *ExternalResourceProvisioner) ResolveRunnerSecrets(ctx context.Context, orgHandle, projectName, env string, names []string) ([]ExternalResourceRunnerSecret, error) {
+	secretKeys, err := p.secretKeysByName(ctx, orgHandle, projectName)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ExternalResourceRunnerSecret, 0, len(names))
 	for _, name := range names {
-		er, err := p.lookup.Get(ctx, orgHandle, name)
-		if err != nil || er == nil {
-			continue
-		}
-		var keys []string
-		for _, k := range er.ConfigKeys {
-			if k.Secret {
-				keys = append(keys, k.Key)
-			}
-		}
+		keys := secretKeys[name]
 		if len(keys) == 0 {
 			continue
 		}
@@ -314,6 +316,40 @@ func (p *ExternalResourceProvisioner) ResolveRunnerSecrets(ctx context.Context, 
 			continue
 		}
 		out = append(out, ExternalResourceRunnerSecret{KVPath: path, Keys: keys})
+	}
+	return out, nil
+}
+
+// secretKeysByName reads the project's committed design at HEAD and returns,
+// per external dependency name, its secret config keys (Config[].Secret ==
+// true), MERGED across every component that declares that name — mirroring
+// the build path's secretKeysByDep (internal/feature/build/
+// inputs_coordinator.go) via the shared spec.UnionExternalConfigKeys helper,
+// so a name declared by two components no longer has its second component's
+// keys silently overwrite the first's (each name's config UNIONs; secret
+// wins on conflict). A nil design reader (degraded/absent) yields an empty
+// map: every name is then skipped by the caller (len(keys) == 0), never
+// treated as secret-free by falling back to the org catalog. A dependency
+// absent from the design, or with no config[], likewise resolves to no keys.
+func (p *ExternalResourceProvisioner) secretKeysByName(ctx context.Context, orgHandle, projectName string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if p.design == nil {
+		return out, nil
+	}
+	comps, err := p.design.ReadDesignComponents(ctx, orgHandle, projectName)
+	if err != nil {
+		return nil, err
+	}
+	for name, cfg := range spec.UnionExternalConfigKeys(comps) {
+		var keys []string
+		for _, k := range cfg {
+			if k.Secret {
+				keys = append(keys, k.Key)
+			}
+		}
+		if len(keys) > 0 {
+			out[name] = keys
+		}
 	}
 	return out, nil
 }
@@ -365,7 +401,12 @@ func buildExternalResourceBinding(projectName, name, env, latestRelease, secretS
 func toRTConfigKeys(in []spec.ConfigKey) []openchoreo.ExternalResourceConfigKey {
 	out := make([]openchoreo.ExternalResourceConfigKey, 0, len(in))
 	for _, k := range in {
-		out = append(out, openchoreo.ExternalResourceConfigKey{Key: k.Key, Secret: k.Secret})
+		out = append(out, openchoreo.ExternalResourceConfigKey{
+			Key:          k.Key,
+			Secret:       k.Secret,
+			Description:  k.Description,
+			DefaultValue: k.DefaultValue,
+		})
 	}
 	return out
 }

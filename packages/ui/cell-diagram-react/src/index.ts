@@ -19,7 +19,13 @@
 export { compileProject } from "./compiler/compileProject";
 export { compileCellSource } from "./compiler/compileCellSource";
 export { parseProject } from "./parser/parseProject";
+export {
+  MIXED_CELL_MODE_DIAGNOSTIC_CODE,
+  MIXED_CELL_MODE_MESSAGE
+} from "./parser/parseProject";
+export { planMixedDslConversion } from "./parser/planMixedDslConversion";
 export { DiagramCanvas } from "./renderer/DiagramCanvas";
+export { fingerprintSource, parsePortableSource, serializePortableSource } from "./renderer/customLayout";
 export { CellDiagram } from "./renderer/CellDiagram";
 
 export type {
@@ -35,3 +41,6 @@ export type {
   BoundaryDirection
 } from "./domain/cellModel";
 export type { CellDiagramProps } from "./renderer/CellDiagram";
+export type { MixedDslConversion } from "./parser/planMixedDslConversion";
+export type { CanvasMessage, DiagramCanvasProps, DiagramTheme } from "./renderer/DiagramCanvas";
+export type { CustomLayout, CustomNodePosition, PortableCellSource } from "./renderer/customLayout";

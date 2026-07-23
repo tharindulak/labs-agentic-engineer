@@ -45,8 +45,7 @@ const FULL = JSON.stringify({
     {
       kind: "external",
       name: "stripe",
-      needsSpec: true,
-      specUrl: "https://x/openapi.yaml",
+      specPath: "https://x/openapi.yaml",
       config: [{ key: "STRIPE_API_KEY", secret: true }],
       description: "Charges customers.",
     },
@@ -68,7 +67,6 @@ describe("parseComponentDesign", () => {
     expect(d.dependencies).toHaveLength(4);
     const stripe = d.dependencies.find((x) => x.name === "stripe")!;
     expect(stripe.kind).toBe("external");
-    expect(stripe.needsSpec).toBe(true);
     expect(stripe.config).toEqual([
       { key: "STRIPE_API_KEY", secret: true },
     ]);
@@ -125,5 +123,88 @@ describe("parseComponentDesign", () => {
     );
     if ("kind" in d) throw new Error("unexpected parse error");
     expect(d.skillsApplied).toEqual(["go", "react"]);
+  });
+
+  // #252 Task 9: style/package/candidates are persisted intent
+  // (component-design.schema.json), unlike status/reason which are read-time
+  // computed and never present in the raw file — see the file-header comment.
+  describe("external dependency intent fields (#252 Task 9)", () => {
+    it("parses style, package, specPath, and candidates", () => {
+      const d = parseComponentDesign(
+        JSON.stringify({
+          name: "svc",
+          dependencies: [
+            {
+              kind: "external",
+              name: "payments",
+              style: "sdk",
+              package: "npm:stripe@^14",
+              specPath: "https://stripe.com/openapi.yaml",
+              candidates: [
+                { name: "stripe", style: "sdk" },
+                { name: "adyen", style: "rest-api" },
+              ],
+            },
+          ],
+        }),
+      );
+      if ("kind" in d) throw new Error("unexpected parse error");
+      const dep = d.dependencies[0]!;
+      expect(dep.style).toBe("sdk");
+      expect(dep.package).toBe("npm:stripe@^14");
+      expect(dep.specPath).toBe("https://stripe.com/openapi.yaml");
+      expect(dep.candidates).toEqual([
+        { name: "stripe", style: "sdk" },
+        { name: "adyen", style: "rest-api" },
+      ]);
+    });
+
+    it("omits candidates/style/package/specPath when absent, never emitting empty arrays", () => {
+      const d = parseComponentDesign(
+        JSON.stringify({
+          name: "svc",
+          dependencies: [{ kind: "external", name: "payments" }],
+        }),
+      );
+      if ("kind" in d) throw new Error("unexpected parse error");
+      const dep = d.dependencies[0]!;
+      expect(dep.style).toBeUndefined();
+      expect(dep.package).toBeUndefined();
+      expect(dep.specPath).toBeUndefined();
+      expect(dep.candidates).toBeUndefined();
+    });
+
+    it("drops nameless candidates", () => {
+      const d = parseComponentDesign(
+        JSON.stringify({
+          name: "svc",
+          dependencies: [
+            {
+              kind: "external",
+              name: "payments",
+              candidates: [{ style: "sdk" }, { name: "stripe", style: "sdk" }],
+            },
+          ],
+        }),
+      );
+      if ("kind" in d) throw new Error("unexpected parse error");
+      const dep = d.dependencies[0]!;
+      expect(dep.candidates).toEqual([{ name: "stripe", style: "sdk" }]);
+    });
+
+    it("never carries status/reason — those are not parsed from the raw file", () => {
+      const d = parseComponentDesign(
+        JSON.stringify({
+          name: "svc",
+          dependencies: [
+            { kind: "external", name: "payments", status: "resolved", reason: "ignored" },
+          ],
+        }),
+      );
+      if ("kind" in d) throw new Error("unexpected parse error");
+      const dep = d.dependencies[0] as unknown as Record<string, unknown>;
+      expect(dep.status).toBeUndefined();
+      expect(dep.reason).toBeUndefined();
+    });
   });
 });

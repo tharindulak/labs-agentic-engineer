@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 )
 
@@ -103,6 +105,30 @@ type remoteGitSearchHitView struct {
 	Path string `json:"path"`
 	SHA  string `json:"sha"`
 }
+
+// validateSpecView is the JSON shape returned by validate_openapi_spec: parse
+// result, operation count, the normalized doc (only when validation AND
+// normalization both succeed), and any errors encountered.
+type validateSpecView struct {
+	Valid             bool     `json:"valid"`
+	Operations        int      `json:"operations"`
+	NormalizedContent string   `json:"normalizedContent,omitempty"`
+	Errors            []string `json:"errors"`
+}
+
+// fetchSpecView is the JSON shape returned by fetch_openapi_spec: the fetched
+// spec normalized to canonical form, its operation count, and the URL it was
+// fetched from.
+type fetchSpecView struct {
+	Content    string `json:"content"`
+	Operations int    `json:"operations"`
+	SourceURL  string `json:"sourceUrl"`
+}
+
+// maxToolSpecBytes is fetch_openapi_spec's tool-level size cap (256 KiB) —
+// tighter than FetchSpecFromURL's own 5 MiB SSRF-hardened cap, applied purely
+// for LLM context-window safety on top of the untouched network-level guard.
+const maxToolSpecBytes = 256 << 10
 
 // mcpTools returns the read-only tool descriptors advertised by tools/list.
 func mcpTools() []mcpTool {
@@ -194,6 +220,31 @@ func mcpTools() []mcpTool {
 				"required": []string{"owner", "repo", "query"},
 			},
 		},
+		{
+			Name: "validate_openapi_spec",
+			Description: "Validate an OpenAPI 3.x document you already have (pasted, generated, or read via " +
+				"get_remote_git_file_contents) BEFORE proposing it as a dependency's spec. Parses the document " +
+				"and counts its operations; on success also returns a normalized canonical-form encoding. Fetches " +
+				"nothing and stores nothing — pass the spec content directly. `valid` is false and `errors` is " +
+				"populated when the document does not parse or is not a valid OpenAPI 3.x doc.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"content": map[string]any{"type": "string", "description": "OpenAPI 3.x document content (YAML or JSON)"}},
+				"required":   []string{"content"},
+			},
+		},
+		{
+			Name: "fetch_openapi_spec",
+			Description: "Fetch an OpenAPI spec from a user-supplied URL, then validate and normalize it in one " +
+				"step. The fetch is SSRF-hardened (https only, public IPs only, redirect-guarded, size- and " +
+				"time-capped) and additionally capped at 256 KiB for this tool — if the spec is larger, ask the " +
+				"user for a trimmed spec instead of retrying. Read-only; stores nothing.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"url": map[string]any{"type": "string", "description": "absolute https URL to fetch the OpenAPI document from"}},
+				"required":   []string{"url"},
+			},
+		},
 	}
 }
 
@@ -202,12 +253,14 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 	var call struct {
 		Name      string `json:"name"`
 		Arguments struct {
-			Name  string `json:"name"`
-			Owner string `json:"owner"`
-			Repo  string `json:"repo"`
-			Path  string `json:"path"`
-			Ref   string `json:"ref"`
-			Query string `json:"query"`
+			Name    string `json:"name"`
+			Owner   string `json:"owner"`
+			Repo    string `json:"repo"`
+			Path    string `json:"path"`
+			Ref     string `json:"ref"`
+			Query   string `json:"query"`
+			Content string `json:"content"`
+			URL     string `json:"url"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &call); err != nil {
@@ -329,16 +382,83 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			items = append(items, remoteGitSearchHitView{Path: hit.Path, SHA: hit.SHA})
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"items": items}))
+	case "validate_openapi_spec":
+		if h.validateSpec == nil || h.normalizeSpec == nil {
+			writeToolError(w, req.ID, "spec validator not configured")
+			return
+		}
+		if call.Arguments.Content == "" {
+			writeToolError(w, req.ID, "missing required argument: content")
+			return
+		}
+		writeToolText(w, req.ID, mustJSON(h.validateAndNormalize([]byte(call.Arguments.Content))))
+	case "fetch_openapi_spec":
+		if h.fetchSpec == nil || h.validateSpec == nil || h.normalizeSpec == nil {
+			writeToolError(w, req.ID, "spec fetcher not configured")
+			return
+		}
+		if call.Arguments.URL == "" {
+			writeToolError(w, req.ID, "missing required argument: url")
+			return
+		}
+		raw, err := h.fetchSpec(r.Context(), call.Arguments.URL)
+		if err != nil {
+			// FetchSpecFromURL's own errors are already complete/user-facing
+			// (e.g. "refusing to fetch from non-public address", "fetch spec:
+			// <transport err>") — surfaced verbatim rather than re-wrapped, to
+			// avoid a doubled "fetch spec: fetch spec: ..." prefix.
+			writeToolError(w, req.ID, err.Error())
+			return
+		}
+		// Tool-level context-safety cap, tighter than (and layered on top of,
+		// never a substitute for) FetchSpecFromURL's own SSRF-hardened 5 MiB cap.
+		if len(raw) > maxToolSpecBytes {
+			writeToolError(w, req.ID, "spec too large — ask the user for a trimmed spec")
+			return
+		}
+		result := h.validateAndNormalize(raw)
+		if !result.Valid {
+			writeToolError(w, req.ID, fmt.Sprintf("fetched spec failed validation: %s", strings.Join(result.Errors, "; ")))
+			return
+		}
+		if len(result.Errors) > 0 {
+			writeToolError(w, req.ID, fmt.Sprintf("normalize fetched spec: %s", strings.Join(result.Errors, "; ")))
+			return
+		}
+		writeToolText(w, req.ID, mustJSON(fetchSpecView{
+			Content:    result.NormalizedContent,
+			Operations: result.Operations,
+			SourceURL:  call.Arguments.URL,
+		}))
 	default:
 		writeRPCError(w, req.ID, -32602, "unknown tool: "+call.Name)
 	}
 }
 
-// toExternalResourceView projects a stored ExternalResource to the agent-facing
-// shape (name, description, and its config keys with the secret flag).
-func toExternalResourceView(er *dependencies.ExternalResource) externalResourceView {
-	keys := make([]configKeyDTO, 0, len(er.ConfigKeys))
-	for _, k := range er.ConfigKeys {
+// validateAndNormalize runs h.validateSpec then h.normalizeSpec over raw spec
+// content and projects the outcome into validate_openapi_spec's agent-facing
+// shape (also reused as the validate+normalize half of fetch_openapi_spec).
+func (h *mcpHandler) validateAndNormalize(raw []byte) validateSpecView {
+	ops, err := h.validateSpec(raw)
+	if err != nil {
+		return validateSpecView{Valid: false, Errors: []string{err.Error()}}
+	}
+	normalized, err := h.normalizeSpec(string(raw))
+	if err != nil {
+		return validateSpecView{Valid: true, Operations: ops, Errors: []string{fmt.Sprintf("normalize: %v", err)}}
+	}
+	return validateSpecView{Valid: true, Operations: ops, NormalizedContent: normalized, Errors: []string{}}
+}
+
+// toExternalResourceView projects an external resource's definition —
+// reconstructed from its authored OpenChoreo ResourceType via
+// openchoreo.ExternalDefinitionFromRT — to the agent-facing shape (name,
+// description, and its config keys with the secret flag). The JSON shape is
+// unchanged from the pre-Task-3 DB-backed projection: only the source of `er`
+// moved (org RT registry, not the external_resources table).
+func toExternalResourceView(er *openchoreo.ExternalResourceDefinition) externalResourceView {
+	keys := make([]configKeyDTO, 0, len(er.Config))
+	for _, k := range er.Config {
 		keys = append(keys, configKeyDTO{Key: k.Key, Secret: k.Secret})
 	}
 	return externalResourceView{Name: er.Name, Description: er.Description, ConfigKeys: keys}

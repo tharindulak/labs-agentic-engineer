@@ -25,6 +25,7 @@ package spec
 import (
 	"context"
 	"testing"
+	"testing/fstest"
 )
 
 // goBuiltinStale is a minimal valid `go` SKILL.md whose body differs from the
@@ -247,5 +248,70 @@ func TestLoadEmbeddedLibrary(t *testing.T) {
 	// References ride along where the source tree has them.
 	if got := by["openapi-conventions"].References["references/wso2-rest-api-design-guidelines.md"]; got == "" {
 		t.Fatalf("openapi-conventions reference missing")
+	}
+}
+
+// TestLoadLibrary_StandardStructure: a skill dir carrying scripts/, assets/,
+// references/ (non-.md included), a nested extra dir, and a binary file loads
+// with every aux file byte-faithful under its relative path; a dotfile and a
+// nested dot-dir file are both skipped.
+func TestLoadLibrary_StandardStructure(t *testing.T) {
+	t.Parallel()
+	bin := string([]byte{0x00, 0xFF, 0x10, 0x80}) // not valid UTF-8
+	fsys := fstest.MapFS{
+		"demo/SKILL.md":             {Data: []byte(mkSkillMD("demo", "platform", "demo body"))},
+		"demo/references/a.md":      {Data: []byte("ref a")},
+		"demo/references/data.json": {Data: []byte(`{"k":1}`)},
+		"demo/scripts/run.mjs":      {Data: []byte("console.log(1)\n")},
+		"demo/assets/t.template.ts": {Data: []byte("export const T = 1\n")},
+		"demo/extra/notes.txt":      {Data: []byte("extra file")},
+		"demo/assets/logo.png":      {Data: []byte(bin)},
+		"demo/.hidden":              {Data: []byte("skip me")},
+		"demo/scripts/.cache/x":     {Data: []byte("skip me too")},
+	}
+	got, err := loadLibrary(fsys)
+	if err != nil {
+		t.Fatalf("loadLibrary: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 skill, got %d", len(got))
+	}
+	sk := got[0]
+	want := map[string]string{
+		"references/a.md":      "ref a",
+		"references/data.json": `{"k":1}`,
+		"scripts/run.mjs":      "console.log(1)\n",
+		"assets/t.template.ts": "export const T = 1\n",
+		"extra/notes.txt":      "extra file",
+		"assets/logo.png":      bin,
+	}
+	if len(sk.References) != len(want) {
+		t.Fatalf("aux files = %v, want %v", keysOf(sk.References), keysOf(want))
+	}
+	for p, content := range want {
+		if sk.References[p] != content {
+			t.Fatalf("%s not byte-faithful", p)
+		}
+	}
+	if _, ok := sk.References["scripts/.cache/x"]; ok {
+		t.Fatalf("nested dot-dir file must not be carried: %v", keysOf(sk.References))
+	}
+}
+
+// TestLoadLibrary_RefsOnlySHAUnchanged: a references-only skill's ContentSHA
+// is computed from the same inputs as before the standard-structure change.
+func TestLoadLibrary_RefsOnlySHAUnchanged(t *testing.T) {
+	t.Parallel()
+	md := mkSkillMD("solo", "platform", "solo body")
+	fsys := fstest.MapFS{
+		"solo/SKILL.md":        {Data: []byte(md)},
+		"solo/references/r.md": {Data: []byte("r")},
+	}
+	got, err := loadLibrary(fsys)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("loadLibrary: %v (%d skills)", err, len(got))
+	}
+	if want := contentSHA(md, map[string]string{"references/r.md": "r"}); got[0].ContentSHA != want {
+		t.Fatalf("SHA drifted: %s != %s", got[0].ContentSHA, want)
 	}
 }

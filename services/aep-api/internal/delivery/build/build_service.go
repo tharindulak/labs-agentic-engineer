@@ -64,6 +64,7 @@ type Service struct {
 	tagger SpecTagger
 	tasks  TaskReader
 	coord  *InputsCoordinator
+	design PreflightDesignReader
 }
 
 // Deps carries the service's ports.
@@ -77,11 +78,20 @@ type Deps struct {
 	// Nil-safe: a build with no coordinator (and no inputs) behaves exactly as
 	// before this feature.
 	Coord *InputsCoordinator
+	// Design backs the build-time dependency hard gate (dependencyGateFailures):
+	// the SAME PreflightDesignReader port (and, in production, the same
+	// designComponents{store: artifactStore} adapter) PreflightSvc reads for the
+	// GET-time drawer items — so the hard gate re-runs spec.ComputeDependencyStatus's
+	// already-computed Status/Reason through a genuinely fresh read, never a
+	// copy of the client's last preflight fetch. Nil-safe: a build with no
+	// design reader wired fails OPEN (no dependency can be classified),
+	// mirroring Coord/Tasks.
+	Design PreflightDesignReader
 }
 
 // NewService wires the build service.
 func NewService(d Deps) *Service {
-	return &Service{runner: d.Runner, store: d.Store, repos: d.Repos, tagger: d.Tagger, tasks: d.Tasks, coord: d.Coord}
+	return &Service{runner: d.Runner, store: d.Store, repos: d.Repos, tagger: d.Tagger, tasks: d.Tasks, coord: d.Coord, design: d.Design}
 }
 
 // --- wire shapes (names drive the generated schema names — keep them exactly
@@ -215,6 +225,10 @@ func (s *Service) StartProjectBuild(ctx context.Context, orgID, projectID string
 // ErrBuildAlreadyRunning sentinel, which each caller interprets for its own
 // context (409 vs. idempotent success). NOTE: inputs may carry raw secret
 // values — it must never be logged.
+//
+// The dependency hard gate (dependencyGateFailures) runs after the pre-tag
+// inputs are applied but before the tag is cut — see the inline comment at
+// its call site for why that ordering matters.
 func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []BuildInputItem) (string, []InputFailure, error) {
 	// An unstartable workflow must never claim a version tag — probe first.
 	if err := s.runner.Ready(); err != nil {
@@ -253,6 +267,20 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 			return "", pfails, nil
 		}
 		provInputs = prov
+	}
+
+	// The dependency hard gate (dependency-management migration, restoring the
+	// gate Task 1 orphaned): a doctored client must not be able to skip the
+	// drawer. Runs AFTER ApplyPreTag so a legitimate resolution submitted with
+	// THIS build request (e.g. a drawer-pasted external-spec, which ApplyPreTag
+	// just committed to HEAD above) is reflected in the fresh read below, but
+	// BEFORE the tag-cut so an unresolved external dependency never reaches it.
+	gateFailures, gerr := s.dependencyGateFailures(ctx, orgID, projectID)
+	if gerr != nil {
+		return "", nil, &EdgeError{Status: 500, Message: "check dependency gate: " + gerr.Error()}
+	}
+	if len(gateFailures) > 0 {
+		return "", gateFailures, nil
 	}
 
 	// The whole-spec hard gate runs INSIDE TagSpec, before the tag is cut —

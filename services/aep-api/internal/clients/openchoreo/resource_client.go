@@ -109,6 +109,25 @@ type ResourceClient interface {
 	// ClusterResourceTypes (the platform-resource catalog — read-only).
 	ListClusterResourceTypes(ctx context.Context) ([]ResourceType, error)
 
+	// ListResourceTypes discovers the org-namespaced ResourceTypes registered
+	// in namespace (the org-level ResourceType registry — read-only). Mirrors
+	// ListClusterResourceTypes but scoped to one namespace instead of the
+	// cluster.
+	ListResourceTypes(ctx context.Context, namespace string) ([]ResourceType, error)
+
+	// GetResourceType fetches one namespaced ResourceType by name. Returns the
+	// ErrNotFound sentinel (via sentinelForStatus) when it does not exist.
+	GetResourceType(ctx context.Context, namespace, name string) (*ResourceType, error)
+
+	// DeleteResourceType removes a namespaced ResourceType. 404-tolerant
+	// (idempotent), mirroring DeleteResource/DeleteBinding below. Used by the
+	// org-settings external-resource delete surface (resources.
+	// ExternalResourceCatalog.Delete) to prune every RT registered under a
+	// logical external-resource name — ResourceTypes are immutable and never
+	// edited in place, so more than one RT can carry the same
+	// aep.wso2.com/external-name annotation (see ExternalResourceRTName).
+	DeleteResourceType(ctx context.Context, namespace, name string) error
+
 	// ListWorkloadEndpoints enumerates every provider-side endpoint declared by
 	// the Workloads in an org's namespace (one row per endpoint, carrying owner +
 	// visibility). This is the dynamic source for the org endpoint catalog: the
@@ -170,6 +189,17 @@ type OCObjectMeta struct {
 	Namespace   string            `json:"namespace,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
+	// CreationTimestamp is k8s' own metadata.creationTimestamp (RFC3339,
+	// stamped by OC on every object it creates). It rides along automatically
+	// wherever OCObjectMeta is decoded (ListResourceTypes / GetResourceType /
+	// EnsureResourceType, ListClusterResourceTypes, etc. all decode straight
+	// into this struct via the generic do()/json.Unmarshal path — there is no
+	// separate metadata decode to keep in sync). It exists so callers can
+	// order same-named ResourceTypes by recency: ResourceTypes are immutable
+	// and never deleted, so a schema change mints a brand-new RT (see
+	// ExternalResourceRTName) while the old one persists — without this field
+	// there was no way to tell which of two same-name RTs is current.
+	CreationTimestamp time.Time `json:"creationTimestamp,omitempty"`
 }
 
 // OCKeyRef is a {name,key} reference into a Secret/ConfigMap (both CEL-templatable).
@@ -635,6 +665,30 @@ func (c *resourceClient) ListClusterResourceTypes(ctx context.Context) ([]Resour
 		return nil, fmt.Errorf("list clusterresourcetypes: %w", err)
 	}
 	return out.Items, nil
+}
+
+func (c *resourceClient) ListResourceTypes(ctx context.Context, namespace string) ([]ResourceType, error) {
+	out := &resourceTypeList{}
+	if _, err := c.do(ctx, http.MethodGet, nsBase(namespace)+"/resourcetypes", nil, out); err != nil {
+		return nil, fmt.Errorf("list resourcetypes in %q: %w", namespace, err)
+	}
+	return out.Items, nil
+}
+
+func (c *resourceClient) GetResourceType(ctx context.Context, namespace, name string) (*ResourceType, error) {
+	out := &ResourceType{}
+	if _, err := c.do(ctx, http.MethodGet, nsBase(namespace)+"/resourcetypes/"+name, nil, out); err != nil {
+		return nil, fmt.Errorf("get resourcetype %q: %w", name, err)
+	}
+	return out, nil
+}
+
+func (c *resourceClient) DeleteResourceType(ctx context.Context, namespace, name string) error {
+	code, err := c.do(ctx, http.MethodDelete, nsBase(namespace)+"/resourcetypes/"+name, nil, nil)
+	if err != nil && code != http.StatusNotFound {
+		return fmt.Errorf("delete resourcetype %q: %w", name, err)
+	}
+	return nil
 }
 
 // workloadList / workloadItem mirror just the slice of the Workload CR the

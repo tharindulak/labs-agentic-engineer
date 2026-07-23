@@ -286,14 +286,9 @@ func parseAndValidateSkillMD(skillMD string, references map[string]string) (skil
 			"description must be 1–1024 chars", "description")
 	}
 	total := len(skillMD)
-	for path, content := range references {
-		if !strings.HasPrefix(path, "references/") || !strings.HasSuffix(path, ".md") {
-			return skillFrontmatter{}, "", validationErr("REFERENCE_PATH_INVALID",
-				fmt.Sprintf("reference key %q must be of the form references/<file>.md", path), "references")
-		}
-		if strings.Contains(path, "..") || strings.Contains(path, "//") {
-			return skillFrontmatter{}, "", validationErr("REFERENCE_PATH_INVALID",
-				fmt.Sprintf("reference key %q must not contain path traversal", path), "references")
+	for refPath, content := range references {
+		if err := validateSkillRefPath(refPath); err != nil {
+			return skillFrontmatter{}, "", validationErr("REFERENCE_PATH_INVALID", err.Error(), "references")
 		}
 		total += len(content)
 	}
@@ -302,6 +297,32 @@ func parseAndValidateSkillMD(skillMD string, references map[string]string) (skil
 			fmt.Sprintf("total skill size %d bytes exceeds the %d-byte limit", total, maxSkillBytes), "")
 	}
 	return fm, body, nil
+}
+
+// validateSkillRefPath enforces the storage contract's aux-file path rule for
+// user-facing writes (custom create/update, import): the SAME shape the
+// loaders accept (repo_store.go's isCatalogPath/parseBundleEntries — any aux
+// file, any depth, no extension filter, skipping only SKILL.md itself and
+// dotfile segments), reused here as a hard validation error. The loaders can
+// silently skip an unwanted blob when reading a repo; explicit user input on
+// a write path must be rejected outright rather than silently dropped.
+func validateSkillRefPath(refPath string) error {
+	if refPath == skillFileName {
+		return fmt.Errorf("reference key %q must not shadow %s", refPath, skillFileName)
+	}
+	if refPath == "" || strings.HasPrefix(refPath, "/") {
+		return fmt.Errorf("reference key %q must be a relative path", refPath)
+	}
+	parts := strings.Split(refPath, "/")
+	for _, seg := range parts {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("reference key %q must not contain path traversal or an empty segment", refPath)
+		}
+	}
+	if hasDotSegment(parts) {
+		return fmt.Errorf("reference key %q must not contain a dotfile segment", refPath)
+	}
+	return nil
 }
 
 // normalizeRefs returns a non-nil References map from the raw input.

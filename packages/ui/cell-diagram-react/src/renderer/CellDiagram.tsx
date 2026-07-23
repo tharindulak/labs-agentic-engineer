@@ -19,7 +19,8 @@
 import { useEffect, useMemo, type CSSProperties } from "react";
 import { compileProject } from "../compiler/compileProject";
 import type { Diagnostic, ProjectModel } from "../domain/cellModel";
-import { DiagramCanvas } from "./DiagramCanvas";
+import { DiagramCanvas, type DiagramTheme } from "./DiagramCanvas";
+import type { CustomLayout } from "./customLayout";
 
 export interface CellDiagramProps {
   /** Cell DSL source text; compiled internally. */
@@ -30,14 +31,33 @@ export interface CellDiagramProps {
   style?: CSSProperties;
   /** Called with parse/compile diagnostics whenever `source` changes. */
   onDiagnostics?: (diagnostics: Diagnostic[]) => void;
+  /** Light or dark color theme. Defaults to `"light"`. */
+  theme?: DiagramTheme;
   /**
    * Best-effort compile: render the partial diagram from a still-incomplete
    * `source` (e.g. a streaming `design.cell`) instead of the error placeholder.
    */
   tolerant?: boolean;
+  /**
+   * Manually dragged node positions (see `captureCustomPosition`). Without a
+   * round-trip through these two props a dragged node snaps back to the
+   * auto-layout on drop.
+   */
+  customLayout?: CustomLayout | null;
+  onCustomLayoutChange?: (layout: CustomLayout) => void;
 }
 
-export function CellDiagram({ source, model, className, style, onDiagnostics, tolerant }: CellDiagramProps) {
+export function CellDiagram({
+  source,
+  model,
+  className,
+  style,
+  onDiagnostics,
+  theme = "light",
+  tolerant,
+  customLayout,
+  onCustomLayoutChange
+}: CellDiagramProps) {
   const compiled = useMemo(
     () => (source !== undefined ? compileProject(source, { tolerant }) : null),
     [source, tolerant]
@@ -53,7 +73,13 @@ export function CellDiagram({ source, model, className, style, onDiagnostics, to
 
   return (
     <div className={className} style={{ width: "100%", height: "100%", ...style }}>
-      <DiagramCanvas model={resolvedModel} />
+      <DiagramCanvas
+        model={resolvedModel}
+        theme={theme}
+        source={source ?? ""}
+        customLayout={customLayout}
+        onCustomLayoutChange={onCustomLayoutChange}
+      />
     </div>
   );
 }

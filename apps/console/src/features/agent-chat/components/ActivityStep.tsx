@@ -23,6 +23,7 @@ import {
   ChevronRight,
   X as XIcon,
 } from "@wso2/oxygen-ui-icons-react";
+import type { ReactNode } from "react";
 import type { ChatItem, ToolMessage } from "../toolGrouping";
 
 // One tool step on a turn's activity rail (task 3). A single call is a plain
@@ -79,13 +80,37 @@ function StatusGlyph({
   );
 }
 
+// Every step's first row is this tall (the small-chip height), with the status
+// glyph centered against it — not against the whole step, so a wrapped error
+// below never pulls the glyph off its line.
+const STEP_ROW_HEIGHT = 24;
+
+function GlyphCell({ children }: { children: ReactNode }) {
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        flexShrink: 0,
+        height: STEP_ROW_HEIGHT,
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
 /** The label + optional file chip for a single tool op, plus its full error.
  *  The error wraps (never ellipsizes) — a DSL validation message is the fix
  *  instruction, so cutting it to one line hides the actionable part. */
 function StepLine({ msg, showFile }: { msg: ToolMessage; showFile: boolean }) {
   return (
     <Stack spacing={0.25} sx={{ minWidth: 0, flexGrow: 1 }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ alignItems: "center", minWidth: 0, minHeight: STEP_ROW_HEIGHT }}
+      >
         <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
           {opLabel(msg.op, msg.status)}
         </Typography>
@@ -133,9 +158,9 @@ export function ActivityStep({
         spacing={1}
         sx={{ alignItems: "flex-start", py: 0.25, minWidth: 0 }}
       >
-        <Box sx={{ display: "flex", flexShrink: 0, mt: "3px" }}>
+        <GlyphCell>
           <StatusGlyph status={only.status} ok={only.ok} />
-        </Box>
+        </GlyphCell>
         <StepLine msg={only} showFile />
       </Stack>
     );
@@ -181,9 +206,9 @@ export function ActivityStep({
               spacing={1}
               sx={{ alignItems: "flex-start", minWidth: 0 }}
             >
-              <Box sx={{ display: "flex", flexShrink: 0, mt: "3px" }}>
+              <GlyphCell>
                 <StatusGlyph status={t.status} ok={t.ok} />
-              </Box>
+              </GlyphCell>
               <StepLine msg={t} showFile={false} />
             </Stack>
           ))}

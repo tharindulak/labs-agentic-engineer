@@ -106,6 +106,9 @@ export interface Endpoint {
 /** The closed set of dependency kinds (mirrors Go `models.DependencyKind`). */
 export type DependencyKind = "component" | "org-service" | "external" | "platform-resource";
 
+/** The closed set of external dependency shapes (mirrors Go `models.DependencyStyle`). */
+export type DependencyStyle = "rest-api" | "sdk";
+
 /**
  * One unified dependency edge. A single flat shape carries every kind's
  * fields; `kind` selects which are meaningful — mirroring the Go codec, which
@@ -113,18 +116,42 @@ export type DependencyKind = "component" | "org-service" | "external" | "platfor
  * reject, e.g., `resourceType` on an `external` dep). Only `kind` (closed set)
  * and `name` are required; every other field is optional. `status`/`reason`
  * are deliberately ABSENT — they are read-time computed, never authored.
+ *
+ * `style`/`package`/`specPath`/`candidates` are meaningful only on
+ * `kind: "external"` — a `platform-resource` is catalog-picked, an
+ * `org-service` is catalog-resolved, neither has web provenance. Every
+ * resolution state (resolved / ambiguous / unresolved) is
+ * DERIVED from which of these fields are present, never stored as a flag: the
+ * old `needsSpec` boolean is gone (a boolean can contradict reality; a missing
+ * field cannot).
  */
 export interface Dependency {
   kind: DependencyKind;
   /** Sibling component / org-service provider / external system / resource name. */
   name: string;
   description?: string;
-  /** external (REST/GraphQL): the agent must call specific endpoints ⇒ a spec is needed. */
-  needsSpec?: boolean;
-  /** external: stored contract path, component-relative (dependencies/<name>.openapi.yaml). */
+  /** external: REST API ("rest-api") or SDK ("sdk") shape. External-only. */
+  style?: DependencyStyle;
+  /**
+   * external (sdk style): one ecosystem-prefixed package identifier, e.g.
+   * "npm:stripe@^14" — version inline but optional (omitted ⇒ latest
+   * compatible). External-only.
+   */
+  package?: string;
+  /**
+   * external: the contract location — either a URL to a published OpenAPI
+   * spec (recorded as-is, NOT fetched-and-stored) or a repo-relative path to a
+   * user-provided committed spec (dependencies/<name>.openapi.yaml).
+   */
   specPath?: string;
-  /** external: transient published-OpenAPI hint auto-fetched at save then cleared. */
-  specUrl?: string;
+  /**
+   * external: 2+ identified-but-not-pinned options — the "ambiguous"
+   * resolution state. Omitted, never empty: one option fully known ⇒
+   * resolved; one option partially known ⇒ a partially-filled dep (not a
+   * candidate); 2+ identified options ⇒ ambiguous. Pinning REMOVES the field.
+   * External-only.
+   */
+  candidates?: DependencyCandidate[];
   /** external: the config-key schema the consuming component codes against. */
   config?: ConfigKey[];
   /** platform-resource: the registered (Cluster)ResourceType. */
@@ -136,6 +163,19 @@ export interface Dependency {
    * the OpenChoreo Resource spec.parameters.
    */
   parameters?: Record<string, string | number | boolean>;
+}
+
+/**
+ * One option in an ambiguous external dependency's resolution set (2+
+ * required — see `Dependency.candidates`; a single candidate never occurs).
+ * Mirrors Go `models.DependencyCandidate`.
+ */
+export interface DependencyCandidate {
+  name: string;
+  style: DependencyStyle;
+  description?: string;
+  /** sdk-style candidates only: ecosystem-prefixed package identifier. */
+  package?: string;
 }
 
 /** One env-var key a component reads at runtime. Mirrors Go `models.ConfigKey`. */

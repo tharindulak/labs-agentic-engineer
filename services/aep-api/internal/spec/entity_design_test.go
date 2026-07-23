@@ -93,15 +93,23 @@ func TestDependency_JSONRoundTrip(t *testing.T) {
 			Status: "blocked",
 			Reason: "access-required",
 		},
-		"external": {
-			Kind:      DependencyKindExternal,
-			Name:      "stripe",
-			NeedsSpec: true,
-			SpecPath:  "dependencies/stripe.openapi.yaml",
-			SpecUrl:   "https://api.example.com/openapi.yaml",
+		"external-rest": {
+			Kind:     DependencyKindExternal,
+			Name:     "stripe",
+			Style:    DependencyStyleRestAPI,
+			SpecPath: "dependencies/stripe.openapi.yaml",
 			Config: []ConfigKey{
 				{Key: "STRIPE_API_KEY", Secret: true, Description: "Your Stripe secret API key"},
 				{Key: "STRIPE_REGION", Secret: false, DefaultValue: "us-east-1"},
+			},
+		},
+		"external-ambiguous-candidates": {
+			Kind: DependencyKindExternal,
+			Name: "email-provider",
+			Candidates: []DependencyCandidate{
+				{Name: "sendgrid-rest", Style: DependencyStyleRestAPI, Description: "SendGrid v3 Web API"},
+				{Name: "resend-sdk", Style: DependencyStyleSDK, Description: "Resend Node SDK",
+					Package: "npm:resend@^4.0.0"},
 			},
 		},
 		"platform-resource": {
@@ -153,5 +161,93 @@ func TestComponentTypeConstants(t *testing.T) {
 	}
 	if ComponentTypeWebApplication != "web-application" {
 		t.Errorf("ComponentTypeWebApplication = %q, want %q (OC: deployment/web-application)", ComponentTypeWebApplication, "web-application")
+	}
+}
+
+// TestUnionExternalConfigKeys proves the request-time secret-classification
+// source: config keys UNION across every component declaring an external
+// name, secret wins on conflict, grouping is case-insensitive under the
+// first-seen casing, and non-external kinds are ignored. A regression here is
+// a secret-leak (a key secret in one component classified plain because
+// another component declared it plain / was scanned first).
+func TestUnionExternalConfigKeys(t *testing.T) {
+	comps := []DesignComponent{
+		{Name: "webhook-worker", Dependencies: []Dependency{
+			// same external, api_key PLAIN here + a component-local secret
+			{Kind: DependencyKindExternal, Name: "stripe", Config: []ConfigKey{
+				{Key: "api_key"}, {Key: "webhook_secret", Secret: true},
+			}},
+			// non-external kinds must be ignored
+			{Kind: DependencyKindPlatformResource, Name: "stripe"},
+			{Kind: DependencyKindComponent, Name: "cart"},
+		}},
+		{Name: "checkout", Dependencies: []Dependency{
+			// SAME external, api_key SECRET here + region PLAIN
+			{Kind: DependencyKindExternal, Name: "stripe", Config: []ConfigKey{
+				{Key: "api_key", Secret: true}, {Key: "region"},
+			}},
+			// a DIFFERENT external
+			{Kind: DependencyKindExternal, Name: "sendgrid", Config: []ConfigKey{
+				{Key: "SENDGRID_API_KEY", Secret: true},
+			}},
+		}},
+		{Name: "reporter", Dependencies: []Dependency{
+			// case-variant name must merge into the first-seen "stripe"
+			{Kind: DependencyKindExternal, Name: "Stripe", Config: []ConfigKey{
+				{Key: "extra_key"},
+			}},
+		}},
+	}
+
+	got := UnionExternalConfigKeys(comps)
+
+	// case-insensitive grouping under the first-seen casing "stripe"
+	if _, ok := got["Stripe"]; ok {
+		t.Fatalf("case variant must fold into first-seen casing, got separate %q entry", "Stripe")
+	}
+	secretByKey := func(name string) map[string]bool {
+		m := map[string]bool{}
+		for _, k := range got[name] {
+			if _, dup := m[k.Key]; dup {
+				t.Fatalf("%s: key %q appears twice — union must dedupe", name, k.Key)
+			}
+			m[k.Key] = k.Secret
+		}
+		return m
+	}
+	stripe := secretByKey("stripe")
+	// union of keys across all three declarations of stripe
+	for _, want := range []string{"api_key", "webhook_secret", "region", "extra_key"} {
+		if _, ok := stripe[want]; !ok {
+			t.Errorf("stripe union missing key %q; got %v", want, stripe)
+		}
+	}
+	// secret WINS: api_key is plain in webhook-worker but secret in checkout
+	if !stripe["api_key"] {
+		t.Error("api_key must be SECRET (secret wins across components), got plain — leak")
+	}
+	if !stripe["webhook_secret"] {
+		t.Error("webhook_secret must stay secret")
+	}
+	if stripe["region"] || stripe["extra_key"] {
+		t.Errorf("plain keys must stay plain; region=%v extra_key=%v", stripe["region"], stripe["extra_key"])
+	}
+	// the other external is independent
+	if sg := secretByKey("sendgrid"); !sg["SENDGRID_API_KEY"] || len(sg) != 1 {
+		t.Errorf("sendgrid union wrong: %v", sg)
+	}
+}
+
+func TestUnionExternalConfigFor(t *testing.T) {
+	comps := []DesignComponent{{Name: "c", Dependencies: []Dependency{
+		{Kind: DependencyKindExternal, Name: "stripe", Config: []ConfigKey{{Key: "api_key", Secret: true}}},
+	}}}
+	// case-insensitive lookup
+	if cfg := UnionExternalConfigFor(comps, "STRIPE"); len(cfg) != 1 || cfg[0].Key != "api_key" || !cfg[0].Secret {
+		t.Fatalf("case-insensitive lookup failed: %v", cfg)
+	}
+	// absent name → nil
+	if cfg := UnionExternalConfigFor(comps, "nope"); cfg != nil {
+		t.Fatalf("absent dependency must yield nil, got %v", cfg)
 	}
 }

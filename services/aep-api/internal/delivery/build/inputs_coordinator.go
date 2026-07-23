@@ -18,6 +18,7 @@ package build
 
 import (
 	"context"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -108,7 +109,7 @@ func (c *InputsCoordinator) BuildProvisionInputs(ctx context.Context, orgID, ocO
 	for _, in := range inputs {
 		switch in.Kind {
 		case "external-config":
-			pin, err := c.externalConfigInput(ctx, orgID, ocOrgID, projectID, in, secretKeys[in.Dependency])
+			pin, err := c.externalConfigInput(ctx, orgID, ocOrgID, projectID, in, secretKeys[strings.ToLower(in.Dependency)])
 			if err != nil {
 				return nil, nil, err
 			}
@@ -159,11 +160,15 @@ func (c *InputsCoordinator) externalConfigInput(ctx context.Context, orgID, ocOr
 	return pin, nil
 }
 
-// secretKeysByDep reads the design at HEAD and returns, per external
-// dependency name, the map of config key → secret flag — the source of truth
-// for the secret/non-secret split. A nil design reader (degraded/absent) yields
-// an empty map: every value is then treated as non-secret, which is the safe
-// direction only because the handler never reaches here without a design.
+// secretKeysByDep reads the design at HEAD and returns, per external dependency
+// name (lowercased), the map of config key → secret flag — the source of truth
+// for the secret/non-secret split. It unions each external's config across
+// every declaring component with SECRET WINNING on conflict, via the shared
+// spec.UnionExternalConfigKeys — the exact same classifier the provision +
+// runner-secret paths use — so a key marked secret by ANY component is never
+// staged as a plaintext ConfigMap value because a different component declared
+// it plain. A nil design reader (degraded/absent) yields an empty map (the
+// handler never reaches here without a design).
 func (c *InputsCoordinator) secretKeysByDep(ctx context.Context, orgID, projectID string) (map[string]map[string]bool, error) {
 	out := map[string]map[string]bool{}
 	if c.design == nil {
@@ -173,20 +178,12 @@ func (c *InputsCoordinator) secretKeysByDep(ctx context.Context, orgID, projectI
 	if err != nil {
 		return nil, err
 	}
-	for _, comp := range comps {
-		for _, dep := range comp.Dependencies {
-			if dep.Kind != spec.DependencyKindExternal {
-				continue
-			}
-			flags := out[dep.Name]
-			if flags == nil {
-				flags = map[string]bool{}
-				out[dep.Name] = flags
-			}
-			for _, k := range dep.Config {
-				flags[k.Key] = k.Secret
-			}
+	for name, cfg := range spec.UnionExternalConfigKeys(comps) {
+		flags := map[string]bool{}
+		for _, k := range cfg {
+			flags[k.Key] = k.Secret
 		}
+		out[strings.ToLower(name)] = flags
 	}
 	return out, nil
 }

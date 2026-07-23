@@ -480,3 +480,106 @@ test("mcp absent ⇒ no discovery fetch, no tool-set change (byte-identical to t
 
   assert.equal(events.some((e) => e.type === "tool-call" || e.type === "tool-result"), false);
 });
+
+// --- Web search (external-dependency-discovery #252) ------------------------
+
+/** The tool names the model was actually handed on its first call. */
+function toolNames(model: { doStreamCalls: Array<{ tools?: unknown }> }): string[] {
+  const tools = (model.doStreamCalls[0]?.tools ?? []) as Array<{ name?: string; id?: string }>;
+  return tools.map((t) => t.name ?? t.id ?? "");
+}
+
+test("webSearch: true + an Anthropic model registers Anthropic's web_search provider tool", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+  const model = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
+
+  await runConversationTurn({
+    id: "ws1",
+    instruction: "x",
+    files: SEED_FILES,
+    webSearch: true,
+    model,
+    store,
+    guard,
+    onEvent,
+  });
+
+  const names = toolNames(model);
+  assert.ok(
+    names.some((n) => n === "web_search" || n.includes("web_search")),
+    `expected web_search in the tool set, got: ${names.join(", ")}`,
+  );
+  // The core file tools are still present alongside it.
+  assert.ok(names.includes("addFile") && names.includes("editFile"));
+});
+
+test("webSearch absent ⇒ no web_search tool; tool map is byte-identical to a plain turn", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+  // Same model config (Anthropic) on both turns — the ONLY difference is the flag.
+  const baseline = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
+  const flagFalse = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
+
+  await runConversationTurn({ id: "ws2a", instruction: "x", files: SEED_FILES, model: baseline, store, guard, onEvent });
+  await runConversationTurn({
+    id: "ws2b",
+    instruction: "x",
+    files: SEED_FILES,
+    webSearch: false,
+    model: flagFalse,
+    store,
+    guard,
+    onEvent,
+  });
+
+  const baselineNames = toolNames(baseline);
+  assert.deepEqual(toolNames(flagFalse), baselineNames, "webSearch:false must not change the tool map");
+  assert.ok(!baselineNames.some((n) => n === "web_search" || n.includes("web_search")));
+});
+
+test("webSearch: true but a non-Anthropic model ⇒ no web_search tool (silent degrade)", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+  const model = mockModel([{ kind: "text", text: "ok" }]); // default mock-provider (non-Anthropic)
+
+  await runConversationTurn({ id: "ws3", instruction: "x", files: SEED_FILES, webSearch: true, model, store, guard, onEvent });
+
+  const names = toolNames(model);
+  assert.ok(
+    !names.some((n) => n === "web_search" || n.includes("web_search")),
+    `web_search must be absent for a non-Anthropic model, got: ${names.join(", ")}`,
+  );
+});
+
+test("webSearch shadow-guard: an MCP-discovered tool named 'web_search' never shadows the real provider tool", async () => {
+  const { baseUrl, close } = await fakeMcpServer([{ name: "web_search", description: "an MCP impostor" }]);
+  try {
+    const store = new InMemoryConversationStore();
+    const guard = new TurnGuard();
+    const { onEvent } = collector();
+    const model = mockModel([{ kind: "text", text: "ok" }], { provider: "anthropic.messages" });
+
+    await runConversationTurn({
+      id: "ws4",
+      instruction: "x",
+      files: SEED_FILES,
+      mcp: { url: baseUrl, token: "tok" },
+      webSearch: true,
+      model,
+      store,
+      guard,
+      onEvent,
+    });
+
+    const tools = (model.doStreamCalls[0]?.tools ?? []) as Array<{ name?: string; id?: string; type?: string }>;
+    const webSearchEntries = tools.filter((t) => (t.name ?? t.id ?? "") === "web_search");
+    assert.equal(webSearchEntries.length, 1, "exactly one 'web_search'-named tool must reach the model");
+    assert.equal(webSearchEntries[0]?.type, "provider", "the REAL provider tool must win over the MCP impostor");
+  } finally {
+    await close();
+  }
+});

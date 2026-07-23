@@ -18,13 +18,11 @@
 
 import { Alert, Box, Chip, CircularProgress, Typography } from "@wso2/oxygen-ui";
 import { CellDiagramView } from "@aep/ui-cell-diagram-view";
-import { useDerivedCellDiagram } from "../api/useDerivedDesign";
+import { useSpecFileContent } from "../api/queries";
+import { DESIGN_CELL_PATH } from "../api/designTree";
 import type { SpecFileEntry } from "../api/mapping";
 import type { CollabSpec } from "../collab/useCollabSpec";
 import { useYTextString } from "../collab/useYTextString";
-
-/** Project-level cell-diagram DSL the agent streams first, ahead of design.json. */
-const DESIGN_CELL_PATH = "specs/design/design.cell";
 
 export function CellDiagramPanel({
   projectName,
@@ -35,48 +33,45 @@ export function CellDiagramPanel({
   files: SpecFileEntry[];
   collab: CollabSpec;
 }) {
-  const { dsl, isPending, isError } = useDerivedCellDiagram(projectName, files);
-
-  // The committed design.json bundle is authoritative — `dsl` is derived from
-  // it (design.json → cell DSL, same boundary rules as design.cell). While it
-  // is not yet resolved (no committed design.json, or its fetches still
-  // pending/failing mid-turn), fall back to the live `design.cell` DSL
-  // streaming into the collab doc so the diagram renders piece-by-piece as the
-  // agent writes it. Both paths feed the SAME renderer via a DSL string, so the
-  // streamed and reloaded diagrams match.
+  // design.cell IS the architecture: the diagram always renders the file
+  // itself, never a projection of the design.json bundle. Connected, the
+  // collab doc supplies it live (committed content is seeded into the room;
+  // an agent editFile lands in place, a restructure's removeFile + addFile
+  // re-streams line by line). Solo/offline, the committed git blob is
+  // fetched over REST instead.
   const liveSource = useYTextString(collab.getFileText(DESIGN_CELL_PATH));
-  const derivedReady = !isPending && !isError && dsl != null;
-  const streaming =
-    !derivedReady && typeof liveSource === "string" && liveSource.trim().length > 0;
-  // An agent peer in the room means a design is actively being generated; show a
-  // "waiting" cell rather than the generic "generate a design" empty state.
+  const committed =
+    files.find((f) => f.path === DESIGN_CELL_PATH && f.sha !== "") ?? null;
+  const restFallback = liveSource === null ? committed : null;
+  const rest = useSpecFileContent(projectName, restFallback);
+  const source =
+    liveSource ?? (restFallback ? (rest.data?.content ?? null) : null);
+  // An agent peer in the room means a design turn is running; badge the pane
+  // and show a "waiting" cell rather than the generic "generate a design"
+  // empty state. The badge MUST key on the peer, not the live text: the doc
+  // is re-seeded from git on every workspace load, so text alone would keep
+  // "Designing…" up long after the turn ended (#239).
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
-  // "Designing…" is true only while that agent is actually in the room. The
-  // live design.cell text alone can't carry it: it is re-seeded from git on
-  // every workspace load and the committed design.json can trail the session
-  // by the collab flush debounce, so `streaming` stays true long after the
-  // agent finished.
-  const designing = streaming && agentBusy;
 
-  if (!streaming && isPending) {
+  if (restFallback && rest.isPending) {
     return (
       <Box sx={{ flex: 1, minHeight: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <CircularProgress aria-label="Loading architecture diagram" />
       </Box>
     );
   }
-  if (!streaming && isError) {
-    return <Alert severity="error">Failed to load the design sources for the diagram.</Alert>;
+  if (restFallback && rest.isError) {
+    return <Alert severity="error">Failed to load the architecture diagram source.</Alert>;
   }
 
-  // The diagram fills the pane. While streaming, a thin toolbar row carries the
-  // "Designing…" badge; otherwise the diagram takes the whole pane. Both view
-  // components have a `flex: 1, minHeight: 0` root, so the flex column lets them
-  // fill the space without re-introducing the sizing bug they were written to
-  // avoid.
+  // The diagram fills the pane. While a turn is running, a thin toolbar row
+  // carries the "Designing…" badge; otherwise the diagram takes the whole
+  // pane. Both view components have a `flex: 1, minHeight: 0` root, so the
+  // flex column lets them fill the space without re-introducing the sizing
+  // bug they were written to avoid.
   return (
     <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {designing && (
+      {agentBusy && Boolean(source?.trim()) && (
         <Box
           sx={{
             px: 1.5,
@@ -91,7 +86,8 @@ export function CellDiagramPanel({
         </Box>
       )}
       <CellDiagramView
-        source={(streaming ? liveSource : dsl) ?? undefined}
+        source={source ?? undefined}
+        layoutKey={projectName}
         emptyState={
           agentBusy ? (
             <Typography variant="body2">

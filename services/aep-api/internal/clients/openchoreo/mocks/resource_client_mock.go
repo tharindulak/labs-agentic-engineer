@@ -29,6 +29,9 @@ var _ openchoreo.ResourceClient = &ResourceClientMock{}
 //			DeleteResourceFunc: func(ctx context.Context, namespace string, name string) error {
 //				panic("mock out the DeleteResource method")
 //			},
+//			DeleteResourceTypeFunc: func(ctx context.Context, namespace string, name string) error {
+//				panic("mock out the DeleteResourceType method")
+//			},
 //			EnsureBindingFunc: func(ctx context.Context, namespace string, b *openchoreo.ResourceReleaseBinding) (*openchoreo.ResourceReleaseBinding, error) {
 //				panic("mock out the EnsureBinding method")
 //			},
@@ -41,8 +44,14 @@ var _ openchoreo.ResourceClient = &ResourceClientMock{}
 //			GetResourceFunc: func(ctx context.Context, namespace string, name string) (*openchoreo.Resource, error) {
 //				panic("mock out the GetResource method")
 //			},
+//			GetResourceTypeFunc: func(ctx context.Context, namespace string, name string) (*openchoreo.ResourceType, error) {
+//				panic("mock out the GetResourceType method")
+//			},
 //			ListClusterResourceTypesFunc: func(ctx context.Context) ([]openchoreo.ResourceType, error) {
 //				panic("mock out the ListClusterResourceTypes method")
+//			},
+//			ListResourceTypesFunc: func(ctx context.Context, namespace string) ([]openchoreo.ResourceType, error) {
+//				panic("mock out the ListResourceTypes method")
 //			},
 //			ListWorkloadEndpointsFunc: func(ctx context.Context, orgHandle string) ([]openchoreo.WorkloadEndpointInfo, error) {
 //				panic("mock out the ListWorkloadEndpoints method")
@@ -66,6 +75,9 @@ type ResourceClientMock struct {
 	// DeleteResourceFunc mocks the DeleteResource method.
 	DeleteResourceFunc func(ctx context.Context, namespace string, name string) error
 
+	// DeleteResourceTypeFunc mocks the DeleteResourceType method.
+	DeleteResourceTypeFunc func(ctx context.Context, namespace string, name string) error
+
 	// EnsureBindingFunc mocks the EnsureBinding method.
 	EnsureBindingFunc func(ctx context.Context, namespace string, b *openchoreo.ResourceReleaseBinding) (*openchoreo.ResourceReleaseBinding, error)
 
@@ -78,8 +90,14 @@ type ResourceClientMock struct {
 	// GetResourceFunc mocks the GetResource method.
 	GetResourceFunc func(ctx context.Context, namespace string, name string) (*openchoreo.Resource, error)
 
+	// GetResourceTypeFunc mocks the GetResourceType method.
+	GetResourceTypeFunc func(ctx context.Context, namespace string, name string) (*openchoreo.ResourceType, error)
+
 	// ListClusterResourceTypesFunc mocks the ListClusterResourceTypes method.
 	ListClusterResourceTypesFunc func(ctx context.Context) ([]openchoreo.ResourceType, error)
+
+	// ListResourceTypesFunc mocks the ListResourceTypes method.
+	ListResourceTypesFunc func(ctx context.Context, namespace string) ([]openchoreo.ResourceType, error)
 
 	// ListWorkloadEndpointsFunc mocks the ListWorkloadEndpoints method.
 	ListWorkloadEndpointsFunc func(ctx context.Context, orgHandle string) ([]openchoreo.WorkloadEndpointInfo, error)
@@ -109,6 +127,15 @@ type ResourceClientMock struct {
 		}
 		// DeleteResource holds details about calls to the DeleteResource method.
 		DeleteResource []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Namespace is the namespace argument value.
+			Namespace string
+			// Name is the name argument value.
+			Name string
+		}
+		// DeleteResourceType holds details about calls to the DeleteResourceType method.
+		DeleteResourceType []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
 			// Namespace is the namespace argument value.
@@ -152,10 +179,26 @@ type ResourceClientMock struct {
 			// Name is the name argument value.
 			Name string
 		}
+		// GetResourceType holds details about calls to the GetResourceType method.
+		GetResourceType []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Namespace is the namespace argument value.
+			Namespace string
+			// Name is the name argument value.
+			Name string
+		}
 		// ListClusterResourceTypes holds details about calls to the ListClusterResourceTypes method.
 		ListClusterResourceTypes []struct {
 			// Ctx is the ctx argument value.
 			Ctx context.Context
+		}
+		// ListResourceTypes holds details about calls to the ListResourceTypes method.
+		ListResourceTypes []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// Namespace is the namespace argument value.
+			Namespace string
 		}
 		// ListWorkloadEndpoints holds details about calls to the ListWorkloadEndpoints method.
 		ListWorkloadEndpoints []struct {
@@ -179,11 +222,14 @@ type ResourceClientMock struct {
 	lockApplyResource                  sync.RWMutex
 	lockDeleteBinding                  sync.RWMutex
 	lockDeleteResource                 sync.RWMutex
+	lockDeleteResourceType             sync.RWMutex
 	lockEnsureBinding                  sync.RWMutex
 	lockEnsureResourceType             sync.RWMutex
 	lockGetBinding                     sync.RWMutex
 	lockGetResource                    sync.RWMutex
+	lockGetResourceType                sync.RWMutex
 	lockListClusterResourceTypes       sync.RWMutex
+	lockListResourceTypes              sync.RWMutex
 	lockListWorkloadEndpoints          sync.RWMutex
 	lockPatchBindingEnvironmentConfigs sync.RWMutex
 }
@@ -305,6 +351,46 @@ func (mock *ResourceClientMock) DeleteResourceCalls() []struct {
 	mock.lockDeleteResource.RLock()
 	calls = mock.calls.DeleteResource
 	mock.lockDeleteResource.RUnlock()
+	return calls
+}
+
+// DeleteResourceType calls DeleteResourceTypeFunc.
+func (mock *ResourceClientMock) DeleteResourceType(ctx context.Context, namespace string, name string) error {
+	if mock.DeleteResourceTypeFunc == nil {
+		panic("ResourceClientMock.DeleteResourceTypeFunc: method is nil but ResourceClient.DeleteResourceType was just called")
+	}
+	callInfo := struct {
+		Ctx       context.Context
+		Namespace string
+		Name      string
+	}{
+		Ctx:       ctx,
+		Namespace: namespace,
+		Name:      name,
+	}
+	mock.lockDeleteResourceType.Lock()
+	mock.calls.DeleteResourceType = append(mock.calls.DeleteResourceType, callInfo)
+	mock.lockDeleteResourceType.Unlock()
+	return mock.DeleteResourceTypeFunc(ctx, namespace, name)
+}
+
+// DeleteResourceTypeCalls gets all the calls that were made to DeleteResourceType.
+// Check the length with:
+//
+//	len(mockedResourceClient.DeleteResourceTypeCalls())
+func (mock *ResourceClientMock) DeleteResourceTypeCalls() []struct {
+	Ctx       context.Context
+	Namespace string
+	Name      string
+} {
+	var calls []struct {
+		Ctx       context.Context
+		Namespace string
+		Name      string
+	}
+	mock.lockDeleteResourceType.RLock()
+	calls = mock.calls.DeleteResourceType
+	mock.lockDeleteResourceType.RUnlock()
 	return calls
 }
 
@@ -468,6 +554,46 @@ func (mock *ResourceClientMock) GetResourceCalls() []struct {
 	return calls
 }
 
+// GetResourceType calls GetResourceTypeFunc.
+func (mock *ResourceClientMock) GetResourceType(ctx context.Context, namespace string, name string) (*openchoreo.ResourceType, error) {
+	if mock.GetResourceTypeFunc == nil {
+		panic("ResourceClientMock.GetResourceTypeFunc: method is nil but ResourceClient.GetResourceType was just called")
+	}
+	callInfo := struct {
+		Ctx       context.Context
+		Namespace string
+		Name      string
+	}{
+		Ctx:       ctx,
+		Namespace: namespace,
+		Name:      name,
+	}
+	mock.lockGetResourceType.Lock()
+	mock.calls.GetResourceType = append(mock.calls.GetResourceType, callInfo)
+	mock.lockGetResourceType.Unlock()
+	return mock.GetResourceTypeFunc(ctx, namespace, name)
+}
+
+// GetResourceTypeCalls gets all the calls that were made to GetResourceType.
+// Check the length with:
+//
+//	len(mockedResourceClient.GetResourceTypeCalls())
+func (mock *ResourceClientMock) GetResourceTypeCalls() []struct {
+	Ctx       context.Context
+	Namespace string
+	Name      string
+} {
+	var calls []struct {
+		Ctx       context.Context
+		Namespace string
+		Name      string
+	}
+	mock.lockGetResourceType.RLock()
+	calls = mock.calls.GetResourceType
+	mock.lockGetResourceType.RUnlock()
+	return calls
+}
+
 // ListClusterResourceTypes calls ListClusterResourceTypesFunc.
 func (mock *ResourceClientMock) ListClusterResourceTypes(ctx context.Context) ([]openchoreo.ResourceType, error) {
 	if mock.ListClusterResourceTypesFunc == nil {
@@ -497,6 +623,42 @@ func (mock *ResourceClientMock) ListClusterResourceTypesCalls() []struct {
 	mock.lockListClusterResourceTypes.RLock()
 	calls = mock.calls.ListClusterResourceTypes
 	mock.lockListClusterResourceTypes.RUnlock()
+	return calls
+}
+
+// ListResourceTypes calls ListResourceTypesFunc.
+func (mock *ResourceClientMock) ListResourceTypes(ctx context.Context, namespace string) ([]openchoreo.ResourceType, error) {
+	if mock.ListResourceTypesFunc == nil {
+		panic("ResourceClientMock.ListResourceTypesFunc: method is nil but ResourceClient.ListResourceTypes was just called")
+	}
+	callInfo := struct {
+		Ctx       context.Context
+		Namespace string
+	}{
+		Ctx:       ctx,
+		Namespace: namespace,
+	}
+	mock.lockListResourceTypes.Lock()
+	mock.calls.ListResourceTypes = append(mock.calls.ListResourceTypes, callInfo)
+	mock.lockListResourceTypes.Unlock()
+	return mock.ListResourceTypesFunc(ctx, namespace)
+}
+
+// ListResourceTypesCalls gets all the calls that were made to ListResourceTypes.
+// Check the length with:
+//
+//	len(mockedResourceClient.ListResourceTypesCalls())
+func (mock *ResourceClientMock) ListResourceTypesCalls() []struct {
+	Ctx       context.Context
+	Namespace string
+} {
+	var calls []struct {
+		Ctx       context.Context
+		Namespace string
+	}
+	mock.lockListResourceTypes.RLock()
+	calls = mock.calls.ListResourceTypes
+	mock.lockListResourceTypes.RUnlock()
 	return calls
 }
 

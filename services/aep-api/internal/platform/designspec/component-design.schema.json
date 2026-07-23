@@ -58,14 +58,49 @@
           "description": {
             "type": "string"
           },
-          "needsSpec": {
-            "type": "boolean"
+          "style": {
+            "type": "string",
+            "enum": [
+              "rest-api",
+              "sdk"
+            ]
+          },
+          "package": {
+            "type": "string"
           },
           "specPath": {
             "type": "string"
           },
-          "specUrl": {
-            "type": "string"
+          "candidates": {
+            "minItems": 2,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "style": {
+                  "type": "string",
+                  "enum": [
+                    "rest-api",
+                    "sdk"
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                },
+                "package": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "style"
+              ],
+              "additionalProperties": false
+            }
           },
           "config": {
             "type": "array",

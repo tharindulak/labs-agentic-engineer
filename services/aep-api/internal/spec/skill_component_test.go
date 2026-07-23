@@ -48,6 +48,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"unicode/utf8"
 
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -255,6 +257,55 @@ func TestSkillsComponent_GetOne_MatchesGolden(t *testing.T) {
 	}
 	if got["name"] != "go" || got["kind"] != "org" || got["editable"] != false {
 		t.Fatalf("get-one semantics drifted: %s", resp.Body.String())
+	}
+}
+
+// TestSkillsComponent_GetOne_BinaryReferenceStaysValidJSON: a skill carrying
+// a non-UTF-8 aux file (assets/logo.png) must not corrupt the response.
+// encoding/json never errors on invalid UTF-8 — it silently replaces bad
+// bytes with U+FFFD — so the response-mapping layer must keep binary content
+// OUT of `references` and list its path in `binaryReferences` instead, or the
+// stored bytes would come back mangled without the JSON encoder ever
+// noticing.
+func TestSkillsComponent_GetOne_BinaryReferenceStaysValidJSON(t *testing.T) {
+	t.Parallel()
+	png := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0xD8, 0xFE, 0x00, 0x01, 0x02}
+	if utf8.ValidString(string(png)) {
+		t.Fatal("fixture must be invalid UTF-8")
+	}
+	store := spec.NewComponentStoreWithLibrary(t, fstest.MapFS{
+		"demo/SKILL.md":         {Data: []byte(skillMD("demo", ""))},
+		"demo/assets/logo.png":  {Data: png},
+		"demo/references/ex.md": {Data: []byte("plain text reference")},
+	})
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{Spec: mustSpecHandlers(t, spec.Deps{
+		Skills:      store.Svc,
+		SkillMut:    spec.NewSkillMutationService(store.Svc),
+		SkillImport: spec.NewSkillImportService(store.Svc),
+	})}})
+
+	resp := h.AsOrg("acme").Get(base + "/demo")
+	if resp.Code != 200 {
+		t.Fatalf("get: %d body=%s", resp.Code, resp.Body.String())
+	}
+	if !utf8.Valid(resp.Body.Bytes()) {
+		t.Fatalf("response body itself must be valid UTF-8")
+	}
+	var sk struct {
+		References       map[string]string `json:"references"`
+		BinaryReferences []string          `json:"binaryReferences"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &sk); err != nil {
+		t.Fatalf("response must stay valid JSON: %v", err)
+	}
+	if _, ok := sk.References["assets/logo.png"]; ok {
+		t.Fatalf("binary content must not inline: %v", sk.References)
+	}
+	if sk.References["references/ex.md"] != "plain text reference" {
+		t.Fatalf("UTF-8 reference must still inline: %v", sk.References)
+	}
+	if len(sk.BinaryReferences) != 1 || sk.BinaryReferences[0] != "assets/logo.png" {
+		t.Fatalf("binary file must be listed in binaryReferences: %v", sk.BinaryReferences)
 	}
 }
 

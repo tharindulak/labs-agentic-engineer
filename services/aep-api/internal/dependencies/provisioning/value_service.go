@@ -26,9 +26,11 @@ import (
 )
 
 // SaveValues collects an external dependency's per-env values, splits them into
-// plain / secret by the registered schema (the user never marks secrecy),
-// writes the secrets to SM-API + authors the OC external Resource model, then
-// completes the provision gate synchronously — the external ResourceType is
+// plain / secret by the UNION of the dependency's config schema across every
+// component in the project's committed design.json that declares it (the user
+// never marks secrecy; secret always wins on conflict), writes the secrets to
+// SM-API + authors the OC external Resource model, then completes the
+// provision gate synchronously — the external ResourceType is
 // readyWhen:${true}, so the binding is Ready as soon as OC reconciles it, and
 // upstream likewise treats values-collected as immediately deployed.
 //
@@ -36,22 +38,39 @@ import (
 // ctx must carry the user JWT — the SM-API writer reads the ouId claim for the
 // vault path). No secret value is persisted outside SM-API or echoed anywhere.
 func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, depName string, envValues map[string]map[string]string) error {
-	if _, err := s.findDepInProject(ctx, orgID, projectID, depName, spec.DependencyKindExternal); err != nil {
+	// Read the design ONCE: validate depName exists as an external dependency
+	// (ErrDepNotFound/ErrDepWrongKind on failure, exactly as findDepInProject),
+	// then classify by the UNION of Config[] across EVERY component that
+	// declares an external dependency of this name — not just the first
+	// match — so a key marked secret on ANY component is never misclassified
+	// plain merely because a different, secret-blind component happened to be
+	// scanned first (the CRITICAL leak this fixes). This mirrors the build
+	// path's secretKeysByDep (internal/feature/build/inputs_coordinator.go),
+	// which merges the same way across every component. A design read
+	// failure still fails here (the underlying design-read error) — a value
+	// is never misclassified plain for lack of a schema.
+	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
+	if err != nil {
+		return fmt.Errorf("provisioning: read design: %w", err)
+	}
+	dep, err := matchDependency(comps, depName, spec.DependencyKindExternal)
+	if err != nil {
 		return err
 	}
-	er, err := s.catalog.Get(ctx, orgID, depName)
-	if err != nil {
-		return fmt.Errorf("provisioning: get external resource %q: %w", depName, err)
-	}
-	if er == nil {
-		return dependencies.ErrNotRegistered
-	}
+	unionConfig := spec.UnionExternalConfigFor(comps, depName)
+
+	// The external definition the RT is authored against is built straight off
+	// the design — name + the matched dependency's Description + the UNION
+	// config schema just computed above — NOT fetched from the external_resources
+	// table (that reader is gone; the design is now the only source, same as
+	// classification above).
+	er := &dependencies.ExternalResource{Name: depName, Description: dep.Description, ConfigKeys: unionConfig}
 	if len(envValues) == 0 {
 		return fmt.Errorf("provisioning: no environment values provided for %q", depName)
 	}
 	byEnv := make(map[string]dependencies.EnvValues, len(envValues))
 	for env, vals := range envValues {
-		byEnv[env] = splitBySchema(er.ConfigKeys, vals)
+		byEnv[env] = splitBySchema(unionConfig, vals)
 	}
 
 	// Admit a provision run for the gate issue (when one exists). Values are
@@ -99,8 +118,8 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 }
 
 // splitBySchema partitions a flat env value map into plain / secret entries by
-// the registered config schema. A value whose key is not in the schema is
-// treated as plain (forward-tolerant).
+// the dependency's design.json config schema. A value whose key is not in the
+// schema is treated as plain (forward-tolerant).
 func splitBySchema(keys []spec.ConfigKey, vals map[string]string) dependencies.EnvValues {
 	secret := make(map[string]bool, len(keys))
 	for _, k := range keys {

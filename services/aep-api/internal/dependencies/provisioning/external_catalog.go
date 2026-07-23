@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -38,9 +39,15 @@ type ExternalResourceView struct {
 // ListExternalResources returns the org's external-resource catalog with each
 // entry's consumers (the components across the org whose committed design
 // declares an external dependency of that name — a design scan, since the
-// upstream component_tasks table is gone).
+// upstream component_tasks table is gone). Definitions are sourced from the
+// org's namespaced OpenChoreo ResourceTypes via rtCatalog (Slice 3's
+// resources.ExternalResourceCatalog, reconstructed off each authored RT and
+// deduped to the newest schema-version RT per name) — never the
+// external_resources table (s.catalog is no longer read anywhere in this
+// package; authoring now builds its definition off the design — see
+// build_provision.go / value_service.go).
 func (s *Service) ListExternalResources(ctx context.Context, orgID string) ([]ExternalResourceView, error) {
-	list, err := s.catalog.List(ctx, orgID)
+	defs, err := s.rtCatalog.List(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: list external resources: %w", err)
 	}
@@ -48,21 +55,42 @@ func (s *Service) ListExternalResources(ctx context.Context, orgID string) ([]Ex
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ExternalResourceView, 0, len(list))
-	for i := range list {
-		er := &list[i]
+	out := make([]ExternalResourceView, 0, len(defs))
+	for i := range defs {
+		def := &defs[i]
 		out = append(out, ExternalResourceView{
-			Name:        er.Name,
-			Description: er.Description,
-			Config:      er.ConfigKeys,
-			Consumers:   consumersByName[strings.ToLower(er.Name)],
+			Name:        def.Name,
+			Description: def.Description,
+			Config:      toConfigKeys(def.Config),
+			Consumers:   consumersByName[strings.ToLower(def.Name)],
 		})
 	}
 	return out, nil
 }
 
-// DeleteExternalResource removes an org external-resource catalog entry. It is
-// guarded: a resource with consumers returns ErrExternalResourceInUse (→ 409).
+// toConfigKeys adapts the OC client's leaf-level config-key type (kept
+// import-free of spec by design — see openchoreo.ExternalResourceConfigKey's
+// doc) to the spec.ConfigKey the ExternalResourceDTO wire shape carries.
+// Field-for-field identical; this is purely a package boundary crossing.
+func toConfigKeys(keys []openchoreo.ExternalResourceConfigKey) []spec.ConfigKey {
+	out := make([]spec.ConfigKey, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, spec.ConfigKey{
+			Key:          k.Key,
+			Secret:       k.Secret,
+			Description:  k.Description,
+			DefaultValue: k.DefaultValue,
+		})
+	}
+	return out
+}
+
+// DeleteExternalResource removes an org external-resource catalog entry —
+// every namespaced OpenChoreo ResourceType registered under this logical name
+// (rtCatalog.Delete; more than one schema-version RT can carry the same name —
+// see openchoreo.ExternalResourceRTName). It is guarded: a resource with
+// consumers returns ErrExternalResourceInUse (→ 409) and NO ResourceType is
+// deleted — the design-sweep guard runs BEFORE the OC delete call.
 func (s *Service) DeleteExternalResource(ctx context.Context, orgID, name string) error {
 	consumers, err := s.consumersOf(ctx, orgID, name)
 	if err != nil {
@@ -71,7 +99,10 @@ func (s *Service) DeleteExternalResource(ctx context.Context, orgID, name string
 	if len(consumers) > 0 {
 		return ErrExternalResourceInUse
 	}
-	return s.catalog.Delete(ctx, orgID, name)
+	if err := s.rtCatalog.Delete(ctx, orgID, name); err != nil {
+		return fmt.Errorf("provisioning: delete external resource %q: %w", name, err)
+	}
+	return nil
 }
 
 // consumersOf scans every project's committed design for components declaring an

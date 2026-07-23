@@ -45,6 +45,24 @@ a stored "connected/not" flag.
 _Avoid_: connection (in OpenChoreo that names a consumed endpoint — the
 opposite side of the wire).
 
+**External dependency**:
+**One component's** declared need for a third-party API or SDK — a `kind:
+external` entry in its `design.json` `dependencies[]` (`style: rest-api | sdk`),
+naming the config keys it reads and, for a REST API, an optional `specPath` (a
+URL or a committed spec file) the coding agent starts from (ADR-0010). Resolved
+at read time (ADR-0003), never a stored flag. It **resolves to** an external
+resource (below).
+_Avoid_: `needsSpec`, `specUrl`, `sources` — retired fields, rejected on parse.
+
+**External resource**:
+**The org-level, shared** record of one such integration once provisioned — its
+name, description, and config-key schema — so many components' external
+dependencies reuse it by name instead of each redefining it (one resource, many
+dependencies). It is what the Settings → Resources view lists and what a card's
+"Used by" counts. Stored as an org-namespaced OpenChoreo `ResourceType`, not a
+database table (ADR-0009).
+_Avoid_: "external_resources table" (removed); connection.
+
 **Resource-type marker**:
 A declaration a platform engineer attaches to a resource type in the catalog,
 naming a generic consumption behavior that type needs — for example, "using

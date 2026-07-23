@@ -127,6 +127,10 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 	activityRepo := projects.NewActivityEventRepository(db)
 	activityHub := projects.NewActivityHub()
 	activitySvc := projects.NewActivityService(activityRepo, activityHub)
+	// Shared by the turn + files recorders: a room-scoped turn marks the project
+	// agent-authored; the committer's later files/apply flush claims the mark and
+	// suppresses its user line (issue #239 — see specAuthorship).
+	specAuthored := &specAuthorship{}
 
 	// Temporal devflow runtime. Constructed always, but connects lazily in the
 	// worker watcher's retry loop (never at Build time), so aep-api boots and
@@ -375,7 +379,7 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 		Broker:     turnBroker,
 		Snapshots:  workspaceEngine,
 		SkillsRepo: skillsRepoForTurns,
-		Recorder:   turnActivityRecorder{svc: activitySvc},
+		Recorder:   turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
 	}
 	// MCP discovery on design-generation turns (dependency-management Phase 5):
 	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents
@@ -740,6 +744,10 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 	// /api/v1 edge serves (internal/api/handlers_*.go).
 	params.Deps = edge.Deps{
 		TaskTokens: taskTokens,
+		// DesignSvc backs the edge's own GET /projects/{name}/design/dependencies
+		// handler (the one op served directly on the composite, not a domain
+		// embed). *spec.designService satisfies the narrow reader port.
+		DesignSvc: designService,
 		// The projects domain (project CRUD + component read/build + config) is
 		// assembled below (params.Deps.Projects).
 		// The delivery domain (build + task reads/promote + task-log stream) is
@@ -752,10 +760,11 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 	// Dependency-management MCP discovery readers (agnostic subset — Phase 4 of
 	// the dependency-management migration). The MCP surface (surfaces.go) is
 	// mounted behind the AgentsScopedVerifier; wire real backends for its four
-	// read-only tools: the org external-resource catalog (DB) and the org
-	// published endpoints + platform resource types (OC Resource-model client).
-	// The provisioning surface (value/param collection + the aep:provision issue
-	// funnel) is wired in the Phase-6 block further below.
+	// read-only tools: the org external-resource catalog (org-namespaced OC
+	// ResourceTypes, Task 3 — no longer the external_resources table) and the
+	// org published endpoints + platform resource types (OC Resource-model
+	// client). The provisioning surface (value/param collection + the
+	// aep:provision issue funnel) is wired in the Phase-6 block further below.
 	resourceClient := openchoreo.NewResourceClient(ocConfig)
 	// The resolver collaborators (repo locator + design reader) let the endpoint
 	// catalog discover each org-service's real OpenAPI contract + repo coords
@@ -765,8 +774,17 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 		dependencies.WithRepoLocator(repoRepo),
 		dependencies.WithDesignReader(artifactStore),
 	)
-	externalResourceRepo := dependencies.NewExternalResourceRepository(db)
-	params.MCPExternalResources = externalResourceRepo
+	// External-resource definitions are no longer persisted in AEP's database:
+	// the authored OpenChoreo ResourceType is the org-level registry (read back
+	// via openchoreo.ExternalDefinitionFromRT). MCP discovery + org-settings
+	// list/delete re-source to those provisioned RTs; secret classification and
+	// RT authoring read the project's committed design.json.
+	// externalResourceRTCatalog is the single OC-RT-backed instance shared by
+	// the MCP discovery surface (List/Get) and the org-settings
+	// list+delete surface wired into provisioningSvc below (List/Delete) — one
+	// reconstruction/dedupe rule (dependencies.ExternalResourceCatalog) for both.
+	externalResourceRTCatalog := dependencies.NewExternalResourceCatalog(resourceClient)
+	params.MCPExternalResources = externalResourceRTCatalog
 	// ops — the Incident RCA domain (P1, the first landed domain). Alerts
 	// (console issues #154, #155, BE handshake #156): the org-scoped store for
 	// RCA-agent reports the console's notification bell and Alerts list/stepper
@@ -798,7 +816,7 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 	specHandlers, err := spechttpapi.New(spec.Deps{
 		GenAI:         genaiSvc,
 		Files:         filesSvc,
-		FilesActivity: filesActivityRecorder{svc: activitySvc},
+		FilesActivity: filesActivityRecorder{svc: activitySvc, authorship: specAuthored},
 		Artifacts:     artifactSvcGit,
 		Skills:        skillSvc,
 		SkillMut:      skillMutationSvc,
@@ -843,6 +861,14 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 	// no clone). It resolves the org's credential (token + owner) from
 	// credResolver and refuses any owner that is not the org's GitHub account.
 	params.MCPRemoteGit = mcpdiscovery.NewRemoteGitClient(credResolver)
+	// OpenAPI spec MCP tools (validate_openapi_spec, fetch_openapi_spec): wired
+	// straight to the spec package's spec functions. FetchSpecFromURL is
+	// PLATFORM-TOUCHING SSRF hardening reused as-is — the MCP tool layer only
+	// adds a tighter context-safety size cap on top (mcp_tools.go), never a
+	// looser network-level guard.
+	params.MCPSpecValidator = spec.ValidateOpenAPI
+	params.MCPSpecNormalizer = spec.NormalizeOpenAPIYAML
+	params.MCPSpecFetcher = spec.FetchSpecFromURL
 	// design-save keys end-user-auth derivation on the CRT role marker read from
 	// this catalog (thunder-app generalization); wired consumer-side so design
 	// holds only a narrow MarkersByName port. When the design declares a
@@ -858,22 +884,17 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 	// spec.OrgServiceResolver structurally).
 	artifactStore.SetOrgServiceResolver(orgEndpointCatalog)
 
-	// Register each tagged design's `external` dependencies into the org's
-	// external-resource catalog on save (best-effort). Consumer-side port —
-	// design never imports repositories concretely.
-	designService.SetExternalResourceRegistry(spec.ExternalResourceRegistrarFunc(
-		func(ctx context.Context, orgID, name, description string, schema []spec.ConfigKey) error {
-			_, err := externalResourceRepo.Upsert(ctx, orgID, name, description, schema)
-			return err
-		}))
-
 	// Dependency provisioning (dependency-management Phase 6): the value/param
 	// collection surface + the aep:provision gate funnel. The provisioner cores
 	// author the OC Resource model; the service drives gate issues + provision
 	// Executions (Kind=provision) and closes each issue with a no-secrets
 	// reference; the readiness watcher observes platform-resource bindings'
 	// native Ready condition out-of-band and releases gated consumer tasks.
-	externalProvisioner := dependencies.NewExternalResourceProvisioner(externalResourceRepo, resourceClient, smWriter)
+	// designComponents{store: artifactStore} is the SAME design-reader adapter
+	// wired into provisioningSvc below (Deps.Design) — ResolveRunnerSecrets
+	// classifies secret-vs-plain config keys from the project's committed
+	// design.json, never the org catalog (parity with the build path).
+	externalProvisioner := dependencies.NewExternalResourceProvisioner(designComponents{store: artifactStore}, resourceClient, smWriter)
 	// The public build surface: its InputsCoordinator runs the drawer inputs'
 	// pre-tag work (collect external specs, derive end-user auth) and stages
 	// external-config secrets to SM-API through externalProvisioner before the
@@ -890,6 +911,12 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 			buildSecretStager{prov: externalProvisioner},
 			designComponents{store: artifactStore},
 		),
+		// The build-time dependency hard gate's fresh read (dependencyGateFailures) —
+		// the SAME designComponents{store: artifactStore} adapter PreflightSvc.Design
+		// uses below, so both surfaces read the exact same
+		// models.ComputeDependencyStatus-resolved Status/Reason (artifactStore's
+		// SetOrgServiceResolver/SetExternalResourceResolver wiring above).
+		Design: designComponents{store: artifactStore},
 	})
 	platformProvisioner := dependencies.NewOCNativeProvisioner(resourceClient)
 	provisioningSvc := provisioning.NewService(provisioning.Deps{
@@ -898,7 +925,7 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 		Reeval:    funnel,
 		Design:    designComponents{store: artifactStore},
 		Repos:     repoNamer{repos: repoRepo, db: db},
-		Catalog:   externalResourceRepo,
+		RTCatalog: externalResourceRTCatalog,
 		ExtProv:   externalProvisioner,
 		PlatProv:  platformProvisioner,
 		Bindings:  resourceClient,
@@ -1092,7 +1119,7 @@ func Assemble(cfg config.Config, in Infra) (*App, error) {
 			Planner:            devflowPlanner{plan: taskPlan, reads: taskReads},
 			Validator:          devflowValidator{store: artifactStore, comp: componentService},
 			ValidationResolver: devflowValidationResolver{svc: validationSvc, art: artifactSvcGit},
-			Provisioner:        buildProvisioner{design: designService, prov: provisioningSvc},
+			Provisioner:        buildProvisioner{prov: provisioningSvc},
 			Recorder:           devflowActivityRecorder{svc: activitySvc},
 			Titles:             devflowTitles{reads: taskReads},
 		})

@@ -42,7 +42,7 @@ import { buildInstructions, buildTaskPlanInstructions, buildPrompt } from "../ag
 import type { SkillSource } from "../agents/main/skill-source.js";
 import { buildManifestPart } from "./manifest.js";
 import { config } from "../shared/config.js";
-import { modelProviderOptions } from "../shared/model.js";
+import { isAnthropicModel, modelProviderOptions, webSearchTool } from "../shared/model.js";
 import { loadMcpTools } from "../shared/mcp-client.js";
 import type { Conversation, ConversationStore } from "../store/conversation-store.js";
 
@@ -130,6 +130,15 @@ export interface RunConversationTurnInput {
    * before, leave after); this function only writes through it.
    */
   collabPeer?: RoomPeer;
+  /**
+   * Attach Anthropic's provider-executed `web_search` tool for this turn
+   * (external-dependency-discovery #252). The caller (BFF) sets this true
+   * under the same condition as `mcp`. Registered ONLY when true AND the
+   * turn's `model` is actually Anthropic (`isAnthropicModel`) — Anthropic-only,
+   * injecting it against another provider would error. Omitted/false, or a
+   * non-Anthropic model, → the tool map is byte-identical to a turn without it.
+   */
+  webSearch?: boolean;
   /** Injected at the composition root (createModel is called ONCE there, not per turn). */
   model: LanguageModel;
   store: ConversationStore;
@@ -189,6 +198,20 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       if (Object.keys(mcpTools).length > 0) {
         tools = { ...mcpTools, ...tools };
       }
+    }
+
+    // 3b'. Web search (external-dependency-discovery #252): Anthropic's
+    //      provider-executed `web_search` tool, gated on the caller-supplied
+    //      `webSearch` flag (the BFF sets it true under the same design-
+    //      generate/collab condition as `mcp`) AND the turn's model actually
+    //      being Anthropic (`isAnthropicModel`) — the tool is Anthropic-only,
+    //      so injecting it against another provider would error; a mismatch
+    //      degrades silently to no tool. Absent flag, or a non-Anthropic
+    //      model, leaves `tools` untouched (byte-identical to today). Spread
+    //      LAST — same shadow-guard as the MCP merge above — so a discovered
+    //      MCP tool can never shadow it either.
+    if (input.webSearch && isAnthropicModel(input.model)) {
+      tools = { ...tools, web_search: webSearchTool() };
     }
 
     // 3c. Live doc streaming: a room-scoped `files` turn has a bundle + peer to

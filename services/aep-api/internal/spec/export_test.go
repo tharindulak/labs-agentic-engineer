@@ -65,8 +65,17 @@ type ComponentStore struct {
 // provisions the repo and seeds the embedded built-ins + flow skills, exactly
 // as production does.
 func NewComponentStore(t *testing.T) *ComponentStore {
+	return NewComponentStoreWithLibrary(t, testLibraryFS(t))
+}
+
+// NewComponentStoreWithLibrary is NewComponentStore with an injected library
+// fs.FS in place of the real repo-root skills/ dir — for tests that need a
+// fixture skill (e.g. one carrying scripts/ or assets/) without leaking it
+// into the shared library and perturbing the count-pinned tests that assert
+// against the real embedded skill count.
+func NewComponentStoreWithLibrary(t *testing.T, library fs.FS) *ComponentStore {
 	host := newTestGitHost(t)
-	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.engine), host, testLibraryFS(t))
+	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.engine), host, library)
 	return &ComponentStore{Svc: svc, host: host}
 }
 

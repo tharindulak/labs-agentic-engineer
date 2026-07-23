@@ -50,17 +50,51 @@ const configKeySchema = z.strictObject({
   defaultValue: z.string().optional(),
 });
 
+// One option in an ambiguous external dependency's resolution set (2+ required
+// — see dependencySchema's `candidates`; a single candidate never occurs: one
+// option fully known collapses to a resolved dep, one option partially known
+// is a partial dep, not a candidate). Mirrors Go models.DependencyCandidate.
+const dependencyCandidateSchema = z.strictObject({
+  name: z.string().min(1),
+  style: z.enum(["rest-api", "sdk"]),
+  description: z.string().optional(),
+  package: z.string().optional(),
+});
+
+// The dependency fields meaningful ONLY on kind="external" (candidates, style,
+// package, specPath): a platform-resource is catalog-picked, an org-service
+// is catalog-resolved — neither has web provenance. Enforced mechanically
+// below (superRefine), mirrored in the Go fold gate (agentfold/designgate.go).
+const EXTERNAL_ONLY_DEPENDENCY_FIELDS = [
+  "candidates",
+  "style",
+  "package",
+  "specPath",
+] as const;
+
 // One unified, kind-discriminated dependency edge — the successor to the legacy
 // per-kind `connections[]`. A single flat shape carries every kind's fields;
 // `kind` selects which are meaningful (LENIENT within the known set, mirroring
 // the Go codec) but unknown keys — status/reason especially — are rejected.
-const dependencySchema = z.strictObject({
+// `needsSpec` is GONE (dependency-management schema revision — derived-state
+// model): every resolution state is derived from which of style/package/
+// candidates/specPath are present, never a stored flag.
+const dependencyObjectSchema = z.strictObject({
   kind: z.enum(["component", "org-service", "external", "platform-resource"]),
   name: z.string().min(1),
   description: z.string().optional(),
-  needsSpec: z.boolean().optional(),
+  // external: REST API ("rest-api") or SDK ("sdk") shape.
+  style: z.enum(["rest-api", "sdk"]).optional(),
+  // external (sdk style): one ecosystem-prefixed package identifier, e.g.
+  // "npm:stripe@^14" — version inline but optional.
+  package: z.string().optional(),
+  // external: the contract location — either a URL to a published spec
+  // (recorded as-is, NOT fetched-and-stored) or a repo-relative path to a
+  // user-provided committed spec (dependencies/<name>.openapi.yaml).
   specPath: z.string().optional(),
-  specUrl: z.string().optional(),
+  // external: 2+ identified-but-not-pinned options — omitted, never empty or
+  // single-item (a lone option is a partial dep, not a candidate).
+  candidates: z.array(dependencyCandidateSchema).min(2).optional(),
   config: z.array(configKeySchema).optional(),
   resourceType: z.string().optional(),
   // Values are typed per the target (Cluster)ResourceType's OpenAPI v3 schema —
@@ -69,6 +103,19 @@ const dependencySchema = z.strictObject({
   // is marshalled verbatim into the OpenChoreo Resource spec.parameters, so a
   // number must survive as a JSON number for CRD validation to pass.
   parameters: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+});
+
+const dependencySchema = dependencyObjectSchema.superRefine((dep, ctx) => {
+  if (dep.kind === "external") return;
+  for (const field of EXTERNAL_ONLY_DEPENDENCY_FIELDS) {
+    if (dep[field] !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: [field],
+        message: `${field} is only meaningful on an external dependency (kind="external"), got kind="${dep.kind}"`,
+      });
+    }
+  }
 });
 
 // The component's single network endpoint (mirrors Go models.ComponentEndpoint).

@@ -31,7 +31,7 @@
 export interface SkillCatalogEntry {
   name: string;
   description: string;
-  /** True when the skill carries `references/*.md` (drives the loadSkillReference tool + catalog note). */
+  /** True when the skill carries any aux file (docs, scripts, assets, …) — drives the loadSkillReference tool + catalog note. */
   hasReferences: boolean;
 }
 
@@ -39,9 +39,17 @@ export interface SkillCatalogEntry {
 export interface LoadedSkillBody {
   /** The full guidance body (frontmatter stripped). */
   content: string;
-  /** Reference paths (`references/<file>.md`) `loadSkillReference` can read. */
+  /** Every aux file path under the skill dir (docs, scripts, assets, …) `loadSkillReference` can read. */
   references: string[];
 }
+
+/**
+ * The result of resolving one reference path: `undefined` for an unknown
+ * name/path (never resolved raw against the fs — allowlisted against
+ * `load(name).references`), `{ binary: true }` for a file that isn't valid
+ * UTF-8 text (model-context surfaces never inline binary), otherwise the text.
+ */
+export type LoadedReference = { content: string } | { binary: true } | undefined;
 
 /** The seam both tool sets and the prompt builder read skills through. */
 export interface SkillSource {
@@ -49,8 +57,8 @@ export interface SkillSource {
   catalog(): readonly SkillCatalogEntry[];
   /** Body + reference paths for one skill; undefined for an unknown name. */
   load(name: string): LoadedSkillBody | undefined;
-  /** One reference body; undefined for an unknown name/path. */
-  loadReference(name: string, path: string): string | undefined;
+  /** One reference file: text content, a binary marker, or undefined (unknown name/path). */
+  loadReference(name: string, path: string): LoadedReference;
 }
 
 /** The skill-free source (empty catalog, no loaders) consumers default to. */

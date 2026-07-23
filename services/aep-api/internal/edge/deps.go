@@ -36,6 +36,12 @@ import (
 type Deps struct {
 	TaskTokens *auth.TaskTokenManager
 
+	// DesignSvc is the narrow design-dependency reader backing the edge's own
+	// GET /projects/{name}/design/dependencies handler (handlers_design.go) —
+	// the one op the edge serves directly rather than promoting from a domain
+	// embed. *spec.designService satisfies it structurally. Nil answers 503.
+	DesignSvc designDependencyReader
+
 	// Ops is the FIRST landed domain (P1): its handlers are embedded straight
 	// into apiServer, so the edge holds no ops service and no ops handler file.
 	// Every later domain arrives the same way, and this bag shrinks to nothing

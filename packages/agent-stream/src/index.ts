@@ -61,6 +61,8 @@ export type {
   ComponentDesign,
   Dependency,
   DependencyKind,
+  DependencyStyle,
+  DependencyCandidate,
   ConfigKey,
   ExposesAPI,
 } from "./contracts/component-design.js";

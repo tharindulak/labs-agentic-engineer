@@ -40,17 +40,13 @@ func (t buildSpecTagger) TagSpec(ctx context.Context, orgID, projectID string) (
 	return t.art.SaveSpec(ctx, orgID, projectID, spec.SaveRequest{Message: "Build"})
 }
 
-// designAuthDeriver / designExternalRegistrar are the composition root's narrow
-// consumer views of the concrete *design service — the two pre-tag steps the
-// thin POST /build path reuses (issue #164). The design package no longer
-// exports an interface (its read HTTP surface was retired); *designService
-// satisfies these structurally, so app wires the concrete value straight in.
+// designAuthDeriver is the composition root's narrow consumer view of the
+// concrete *design service — the pre-tag step the thin POST /build path reuses
+// (issue #164). The design package no longer exports an interface (its read
+// HTTP surface was retired); *designService satisfies this structurally, so app
+// wires the concrete value straight in.
 type designAuthDeriver interface {
 	DeriveEndUserAuthAtHead(ctx context.Context, orgID, projectID string) error
-}
-
-type designExternalRegistrar interface {
-	RegisterExternalResources(ctx context.Context, orgID, projectID string) error
 }
 
 // buildAuthDeriver adapts design's DeriveEndUserAuthAtHead onto the build
@@ -110,24 +106,20 @@ func (b buildProvisionStatus) Ready(ctx context.Context, orgID, projectID, depNa
 	return st.Status != "unknown", nil
 }
 
-// buildProvisioner adapts the design + provisioning features onto devflow's
+// buildProvisioner adapts the provisioning feature onto devflow's
 // BuildProvisioner port (issue #164) — the dev workflow's provisioning step.
-// devflow imports neither feature (that would cycle), so the mapping between
-// devflow.ProvisionInput ⇄ provisioning.BuildProvisionInput and their failure
-// twins lives here at the composition root. RegisterExternalResources runs FIRST
-// so the external deps are in the catalog before ProvisionForBuild's
-// EnsureProvisionIssues / catalog.Get read them. orgID doubles as the OC org
-// handle == the SM-API org id (the build path stages secrets under the org
+// devflow does not import provisioning (that would cycle), so the mapping
+// between devflow.ProvisionInput ⇄ provisioning.BuildProvisionInput and their
+// failure twins lives here at the composition root. ProvisionForBuild authors
+// each external's RT-binding straight off the project's committed design (the
+// external_resources pre-registration step is gone). orgID doubles as the OC
+// org handle == the SM-API org id (the build path stages secrets under the org
 // handle — Task 2/3 precedent).
 type buildProvisioner struct {
-	design designExternalRegistrar
-	prov   *provisioning.Service
+	prov *provisioning.Service
 }
 
 func (b buildProvisioner) ProvisionForBuild(ctx context.Context, orgID, projectID, tag string, inputs []delivery.ProvisionInput) ([]devflow.ProvisionFailure, error) {
-	if err := b.design.RegisterExternalResources(ctx, orgID, projectID); err != nil {
-		return nil, err
-	}
 	mapped := make([]provisioning.BuildProvisionInput, 0, len(inputs))
 	for _, in := range inputs {
 		mapped = append(mapped, provisioning.BuildProvisionInput{

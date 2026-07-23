@@ -96,9 +96,9 @@ func ValidateComponentDesignInDir(raw []byte, dirName string) error {
 // uses: type, properties, required, additionalProperties (either the boolean
 // `false` — strict, reject unknown keys — or a subschema, e.g. the unified
 // dependency's `parameters` map whose additionalProperties is `{type:"string"}`,
-// treated as permissive), enum, minLength, items. Driving validation from the
-// embedded file (rather than a hand-coded Go mirror) is what keeps the "one
-// definition" invariant (§8).
+// treated as permissive), enum, minLength, minItems, items. Driving validation
+// from the embedded file (rather than a hand-coded Go mirror) is what keeps
+// the "one definition" invariant (§8).
 
 type schema struct {
 	Type       string             `json:"type"`
@@ -111,7 +111,12 @@ type schema struct {
 	AdditionalProperties json.RawMessage `json:"additionalProperties"`
 	Enum                 []any           `json:"enum"`
 	MinLength            *int            `json:"minLength"`
-	Items                *schema         `json:"items"`
+	// MinItems enforces an array's minimum length (e.g. a dependency's
+	// `candidates` — 2+ — per the derived-state resolution model: a field
+	// that is ever written must carry meaningful content, never an empty
+	// placeholder).
+	MinItems *int    `json:"minItems"`
+	Items    *schema `json:"items"`
 }
 
 func mustParseSchema(raw []byte) *schema {
@@ -179,6 +184,9 @@ func validateArray(value any, s *schema, path string) []string {
 	arr, ok := value.([]any)
 	if !ok {
 		return []string{at(path) + "must be an array"}
+	}
+	if s.MinItems != nil && len(arr) < *s.MinItems {
+		return []string{at(path) + fmt.Sprintf("must have at least %d items", *s.MinItems)}
 	}
 	for i, item := range arr {
 		if msgs := validate(item, s.Items, fmt.Sprintf("%s[%d]", path, i)); len(msgs) > 0 {

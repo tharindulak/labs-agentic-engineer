@@ -32,6 +32,7 @@ import {
   addMessage,
   upsertToolMessage,
   setTurnStatus,
+  notifyTurnEnd,
 } from "./chatStore.js";
 import { getTurn, openTurnStream } from "./api/turns.js";
 
@@ -114,11 +115,16 @@ export async function attachAndFoldTurn(
       case "turn-committed":
         sawTerminal = true;
         setTurnStatus(chatKey, turnId, "completed");
+        // Turn-end flush (#252 Task 5): the terminal frame is the signal the
+        // chat panel's fallback + the spec view's deterministic room flush
+        // both react to (see chatStore's turn-end bus + useTurnEndFlush).
+        notifyTurnEnd(chatKey, "completed");
         onCommitted?.();
         break;
       case "turn-failed":
         sawTerminal = true;
         setTurnStatus(chatKey, turnId, "failed");
+        notifyTurnEnd(chatKey, "failed");
         addMessage(chatKey, {
           role: "error",
           content:
@@ -142,13 +148,17 @@ export async function attachAndFoldTurn(
   }
 
   if (sawTerminal || signal.aborted) return;
-  // Severed before the terminal — one authoritative poll settles the bubble.
+  // Severed before the terminal — one authoritative poll settles the bubble
+  // (and is itself a "terminal frame arrived" for turn-end purposes: the
+  // fallback poll IS how this turn's end is observed here).
   const status = await getTurn(projectName, turnId);
   if (status?.status === "completed") {
     setTurnStatus(chatKey, turnId, "completed");
+    notifyTurnEnd(chatKey, "completed");
     onCommitted?.();
   } else if (status?.status === "failed") {
     setTurnStatus(chatKey, turnId, "failed");
+    notifyTurnEnd(chatKey, "failed");
     addMessage(chatKey, {
       role: "error",
       content: status.message ?? "The agent turn failed.",

@@ -50,6 +50,12 @@ type apiServer struct {
 	*deliveryHandlers      // P6 — delivery (Build, Tasks & Task-log stream)
 	*projectsHandlers      // P7 — projects (Projects, Components, Builds & Config)
 	*dependenciesHandlers  // P8 — dependencies (Provisioning, Resources & Access)
+
+	// designSvc backs ListDesignDependencies (handlers_design.go), the single op
+	// the edge serves via a method of its own rather than a domain embed: the
+	// read-only design-dependency-status surface reads across domains, so it is
+	// homed on the composite itself. Nil answers 503.
+	designSvc designDependencyReader
 }
 
 // An embedded field is named by its UNQUALIFIED type name, so every domain's
@@ -93,6 +99,7 @@ func newAPIV1Handler(deps Deps) http.Handler {
 			deliveryHandlers:      deps.Delivery,
 			projectsHandlers:      deps.Projects,
 			dependenciesHandlers:  dependenciesOrEmpty(deps.Dependencies),
+			designSvc:             deps.DesignSvc,
 		},
 		[]gen.StrictMiddlewareFunc{tenantGate},
 		gen.StrictHTTPServerOptions{

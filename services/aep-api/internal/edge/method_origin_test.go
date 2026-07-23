@@ -32,10 +32,12 @@ import (
 
 // The op→embed ledger + the reflection net guarding the edge.
 //
-// apiServer declares no methods: it satisfies gen.StrictServerInterface purely
-// by promotion from its embedded domain fields. That makes "which embed serves
-// this op?" the load-bearing question, and the compiler only answers it in one
-// case (a same-depth tie). These tests answer it for all 61.
+// apiServer serves every op by promotion from its embedded domain fields, with
+// ONE documented exception: the ops in edgeServed, which the edge implements
+// directly (see handlers_design.go + deps.go). That makes "which embed serves
+// this op?" the load-bearing question for the promoted ops, and the compiler
+// only answers it in one case (a same-depth tie). These tests answer it for all
+// promoted ops, and separately pin the edge-served exception set exactly.
 //
 // Why this reflection gate is not redundant with the compiler's own ambiguity
 // error: a domain aggregator that DECLARED a handler method itself would sit at
@@ -43,7 +45,13 @@ import (
 // This gate asks each embed directly "do you have this method?", so it catches
 // double coverage at ANY depth. It is strictly stronger. (Through P8 the ledger
 // also carried the migration's legacyShim; P8 landed the last op and the shim is
-// gone, so every op now names its domain embed.)
+// gone, so every promoted op now names its domain embed.)
+//
+// The edgeServed allowlist keeps the same honesty discipline: it is checked
+// against the contract (no stale entry, no unlisted op) and the source-level
+// gate asserts apiServer declares EXACTLY these methods — so any UNDOCUMENTED
+// depth-0 method still fails loudly, and an edge-served op may not also be
+// supplied by an embed.
 
 // One const per domain — the field name of its embed in apiServer.
 const (
@@ -125,6 +133,20 @@ var opOwner = map[string]string{
 	"ValidateCollabAccess":          embedSpec,
 }
 
+// edgeServed names the ops the edge implements DIRECTLY on apiServer rather than
+// promoting from a domain embed. These are the deliberate exceptions to the
+// composition rule, each with a declared method + a nil-guarded 503 (see
+// handlers_design.go). The spec domain deliberately exports no service interface
+// (internal/spec/design_service.go), so its read-time dependency-status surface
+// is wired consumer-side through edge.Deps.DesignSvc instead of a domain slice.
+//
+// Every entry here is EXCLUDED from the opOwner/embed requirement and is instead
+// asserted to be served by apiServer's own method set (and by NO embed). The set
+// is honesty-checked against the contract, exactly like opOwner.
+var edgeServed = map[string]bool{
+	"ListDesignDependencies": true,
+}
+
 // embedsProviding returns the names of apiServer's embedded fields whose method
 // set contains op — the direct question the compiler's promotion rule answers
 // only implicitly.
@@ -173,9 +195,20 @@ func contractOps() []string {
 // removes it from both (0 providers), or moves it without updating the ledger.
 func TestMethodOrigin(t *testing.T) {
 	for _, op := range contractOps() {
+		if edgeServed[op] {
+			// Edge-served exception: apiServer supplies it directly, so NO embed
+			// may — otherwise it is a genuine double-cover between the edge body
+			// and a domain slice.
+			if got := embedsProviding(op); len(got) > 0 {
+				t.Errorf("op %q is edge-served but also supplied by embed(s) %v — an edge-served op "+
+					"must not be provided by a domain slice; drop one", op, got)
+			}
+			continue
+		}
 		want, listed := opOwner[op]
 		if !listed {
-			t.Errorf("op %q has no opOwner row — add one naming the embed that serves it", op)
+			t.Errorf("op %q has no opOwner row (and is not edge-served) — add one naming the embed "+
+				"that serves it", op)
 			continue
 		}
 		got := embedsProviding(op)
@@ -204,9 +237,20 @@ func TestOpOwnerLedgerIsHonest(t *testing.T) {
 		if !ops[op] {
 			t.Errorf("opOwner names %q, which is not an operation of the contract — remove the row", op)
 		}
+		if edgeServed[op] {
+			t.Errorf("op %q is in BOTH opOwner and edgeServed — it is served exactly one way, "+
+				"pick one", op)
+		}
 	}
-	if len(opOwner) != len(ops) {
-		t.Errorf("opOwner has %d rows, the contract has %d ops", len(opOwner), len(ops))
+	for op := range edgeServed {
+		if !ops[op] {
+			t.Errorf("edgeServed names %q, which is not an operation of the contract — remove the row", op)
+		}
+	}
+	// Every contract op is served exactly once: promoted (opOwner) or edge-served.
+	if len(opOwner)+len(edgeServed) != len(ops) {
+		t.Errorf("opOwner has %d rows + edgeServed has %d, but the contract has %d ops",
+			len(opOwner), len(edgeServed), len(ops))
 	}
 }
 
@@ -247,15 +291,30 @@ func methodsDeclaredOn(t *testing.T, dir, recvType string) []string {
 	return out
 }
 
-// TestApiServerDeclaresNoMethods pins the promotion-only property the whole
-// scheme rests on: apiServer COMPOSES, it never implements. A method declared on
-// it would sit at depth-0 and silently beat EVERY embed, shim included — the same
-// stale-serve failure the shim exists to prevent, one level up.
-func TestApiServerDeclaresNoMethods(t *testing.T) {
-	if got := methodsDeclaredOn(t, ".", "apiServer"); len(got) > 0 {
-		t.Errorf("apiServer declares %v — the edge composes, it never implements. A method here "+
-			"sits at depth-0 and shadows every embed silently (the build stays green and no "+
-			"reflection check can see it). Move the body into its domain slice.", got)
+// TestApiServerDeclaresExactlyEdgeServed pins the promotion-only property the
+// whole scheme rests on: apiServer COMPOSES, and implements ONLY the documented
+// edgeServed ops. Any OTHER method declared on it would sit at depth-0 and
+// silently beat EVERY embed, shim included — the same stale-serve failure the
+// shim exists to prevent, one level up. A missing edgeServed method means the
+// exception is stale.
+func TestApiServerDeclaresExactlyEdgeServed(t *testing.T) {
+	declared := map[string]bool{}
+	for _, m := range methodsDeclaredOn(t, ".", "apiServer") {
+		declared[m] = true
+	}
+	for m := range declared {
+		if !edgeServed[m] {
+			t.Errorf("apiServer declares %q, which is not in edgeServed — the edge composes, it "+
+				"implements only the documented edge-served ops. An undocumented method here sits "+
+				"at depth-0 and shadows every embed silently. Move the body into its domain slice, "+
+				"or add it to edgeServed if it is a deliberate exception.", m)
+		}
+	}
+	for m := range edgeServed {
+		if !declared[m] {
+			t.Errorf("edgeServed names %q but apiServer declares no such method — the exception is "+
+				"stale; remove the edgeServed row", m)
+		}
 	}
 }
 

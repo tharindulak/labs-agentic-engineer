@@ -307,7 +307,7 @@ describe("toReactFlow", () => {
     expect(internalEdge?.type).toBe("floating");
     // A React Flow arrow marker (orient="auto") is used so it aligns to the path tangent.
     expect(internalEdge?.markerEnd).toEqual(
-      expect.objectContaining({ type: "arrow", color: "#475569" })
+      expect.objectContaining({ type: "arrow", color: "var(--cd-edge)" })
     );
   });
 
@@ -345,7 +345,7 @@ describe("toReactFlow", () => {
     // The terminal segment landing on the external carries the colored arrow marker.
     expect(gatewayExternal?.type).toBe("smoothstep");
     expect(gatewayExternal?.markerEnd).toEqual(
-      expect.objectContaining({ type: "arrow", color: "#ea580c" })
+      expect.objectContaining({ type: "arrow", color: "var(--cd-east)" })
     );
   });
 
@@ -656,5 +656,33 @@ cell products {
     expect(middleSegment?.target).toBe("gateway-products-north");
     const lastSegment = flow.edges.find((e) => e.id === "x2-gateway-component");
     expect(lastSegment?.targetHandle).toBe("component-top-target");
+  });
+
+  it("marks only manually arrangeable node kinds as draggable", () => {
+    const project = compileProject(`
+cell orders {
+  component api
+  api -> east stripe
+  api -> products.api
+}
+cell products {
+  component api
+}
+`).model;
+    expect(project).not.toBeNull();
+
+    const flow = toReactFlow(project!);
+    const component = flow.nodes.find((node) => node.id === "orders::api");
+    const external = flow.nodes.find((node) => node.id === "external-orders-stripe");
+    const cell = flow.nodes.find((node) => node.id === "cell-orders");
+    const gateway = flow.nodes.find((node) => node.id === "gateway-orders-east");
+
+    expect(component).toMatchObject({ draggable: true, data: { layoutKind: "component", cellId: "orders" } });
+    expect(external).toMatchObject({
+      draggable: true,
+      data: { layoutKind: "external", cellId: "orders", direction: "east" }
+    });
+    expect(cell).toMatchObject({ draggable: false, data: { layoutKind: "cell", cellId: "orders" } });
+    expect(gateway).toMatchObject({ draggable: false, data: { layoutKind: "gateway", cellId: "orders" } });
   });
 });

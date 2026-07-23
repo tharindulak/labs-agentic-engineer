@@ -256,9 +256,10 @@ func (s *SkillService) UpdatesAvailable(ctx context.Context, orgID string) ([]Sk
 }
 
 // loadLibrary reads the whole platform skill library (fsys rooted at the
-// library dir, i.e. <name>/SKILL.md + optional references/*.md) into the
-// canonical Skill shape. In production fsys is os.DirFS(config.SkillsDir); in
-// tests it is an injected fs.FS. Each skill's kind comes from its frontmatter
+// library dir, i.e. <name>/SKILL.md + every aux file, standard structure:
+// scripts/, references/, assets/, and any extras) into the canonical Skill
+// shape. In production fsys is os.DirFS(config.SkillsDir); in tests it is an
+// injected fs.FS. Each skill's kind comes from its frontmatter
 // (`metadata.aep.kind`; absent → org); the library may only carry the
 // platform-shipped kinds — anything else is coerced to org with a warning.
 // Entries without a parseable SKILL.md whose frontmatter name matches the
@@ -299,19 +300,35 @@ func loadLibrary(fsys fs.FS) ([]Skill, error) {
 			kind = SkillKindOrg
 		}
 		refs := map[string]string{}
-		refDir := path.Join(root, name, "references")
-		if refEntries, err := fs.ReadDir(fsys, refDir); err == nil {
-			for _, r := range refEntries {
-				if r.IsDir() || !strings.HasSuffix(r.Name(), ".md") {
-					continue
-				}
-				data, err := fs.ReadFile(fsys, path.Join(refDir, r.Name()))
-				if err != nil {
-					slog.Warn("skills: embedded reference read failed", "name", name, "ref", r.Name(), "error", err)
-					continue
-				}
-				refs[refsPrefix+r.Name()] = string(data)
+		skillRoot := path.Join(root, name)
+		walkErr := fs.WalkDir(fsys, skillRoot, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
 			}
+			base := path.Base(p)
+			if strings.HasPrefix(base, ".") {
+				if d.IsDir() && p != skillRoot {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			rel := strings.TrimPrefix(p, skillRoot+"/")
+			if rel == skillFileName { // SKILL.md is the body, not an aux file
+				return nil
+			}
+			data, rerr := fs.ReadFile(fsys, p)
+			if rerr != nil {
+				slog.Warn("skills: embedded aux file read failed", "name", name, "file", rel, "error", rerr)
+				return nil
+			}
+			refs[rel] = string(data)
+			return nil
+		})
+		if walkErr != nil {
+			slog.Warn("skills: embedded skill walk failed", "name", name, "error", walkErr)
 		}
 		out = append(out, Skill{
 			Name:        name,

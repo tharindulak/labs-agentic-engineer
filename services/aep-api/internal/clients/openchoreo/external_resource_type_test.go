@@ -18,6 +18,7 @@ package openchoreo
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -25,28 +26,54 @@ import (
 func TestBuildExternalResourceType_PlainAndSecret(t *testing.T) {
 	t.Parallel()
 
+	keys := []ExternalResourceConfigKey{
+		{Key: "OPENWEATHER_BASE_URL", Secret: false, Description: "API base URL", DefaultValue: "https://api.openweathermap.org"},
+		{Key: "OPENWEATHER_API_KEY", Secret: true, Description: "API key"},
+	}
 	// OpenWeather shape: a plain base URL + a secret API key.
-	rt, err := BuildExternalResourceType("openweather", []ExternalResourceConfigKey{
-		{Key: "OPENWEATHER_BASE_URL", Secret: false},
-		{Key: "OPENWEATHER_API_KEY", Secret: true},
-	})
+	rt, err := BuildExternalResourceType("openweather", "Weather data provider", keys)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if rt.Metadata.Name != "openweather" || rt.Kind != kindResourceType {
-		t.Fatalf("bad metadata: %+v", rt.Metadata)
+	wantName := ExternalResourceRTName("openweather", keys)
+	if rt.Metadata.Name != wantName || rt.Kind != kindResourceType {
+		t.Fatalf("bad metadata: %+v, want name %q", rt.Metadata, wantName)
 	}
 	if rt.Spec.RetainPolicy != retainPolicyDelete {
 		t.Errorf("retainPolicy = %q, want Delete", rt.Spec.RetainPolicy)
 	}
 
-	// environmentConfigs schema carries the plain key + the secret store path.
+	// metadata carries the logical name + description annotations (the
+	// name-hash + version live in metadata.name, not the annotation).
+	if rt.Metadata.Annotations[externalNameAnnotation] != "openweather" {
+		t.Errorf("external-name annotation = %q", rt.Metadata.Annotations[externalNameAnnotation])
+	}
+	if rt.Metadata.Annotations[externalDescriptionAnnotation] != "Weather data provider" {
+		t.Errorf("description annotation = %q", rt.Metadata.Annotations[externalDescriptionAnnotation])
+	}
+
+	// environmentConfigs schema carries the plain key + the secret store path
+	// (type-only — no description/default; that lives in spec.parameters).
 	props, _ := rt.Spec.EnvironmentConfigs.OpenAPIV3Schema["properties"].(map[string]any)
 	if _, ok := props["OPENWEATHER_BASE_URL"]; !ok {
 		t.Errorf("environmentConfigs missing plain key: %v", props)
 	}
 	if _, ok := props[SecretStorePathField]; !ok {
 		t.Errorf("environmentConfigs missing %s: %v", SecretStorePathField, props)
+	}
+
+	// spec.parameters carries EVERY key (plain + secret) with its description/default.
+	params, _ := rt.Spec.Parameters.OpenAPIV3Schema["properties"].(map[string]any)
+	baseURLProp, _ := params["OPENWEATHER_BASE_URL"].(map[string]any)
+	if baseURLProp["description"] != "API base URL" || baseURLProp["default"] != "https://api.openweathermap.org" {
+		t.Errorf("spec.parameters plain key wrong: %v", baseURLProp)
+	}
+	apiKeyProp, _ := params["OPENWEATHER_API_KEY"].(map[string]any)
+	if apiKeyProp["description"] != "API key" {
+		t.Errorf("spec.parameters secret key missing description: %v", apiKeyProp)
+	}
+	if _, hasDefault := apiKeyProp["default"]; hasDefault {
+		t.Errorf("spec.parameters secret key should carry no default: %v", apiKeyProp)
 	}
 
 	// resources: a ConfigMap + an ExternalSecret, both with readyWhen.
@@ -104,7 +131,7 @@ func TestBuildExternalResourceType_PlainAndSecret(t *testing.T) {
 func TestBuildExternalResourceType_AllPlain_NoExternalSecret(t *testing.T) {
 	t.Parallel()
 
-	rt, err := BuildExternalResourceType("plainsvc", []ExternalResourceConfigKey{
+	rt, err := BuildExternalResourceType("plainsvc", "", []ExternalResourceConfigKey{
 		{Key: "BASE_URL", Secret: false},
 	})
 	if err != nil {
@@ -114,18 +141,22 @@ func TestBuildExternalResourceType_AllPlain_NoExternalSecret(t *testing.T) {
 	if len(rt.Spec.Resources) != 1 || rt.Spec.Resources[0].ID != extResourceConfigMapID {
 		t.Fatalf("want only a ConfigMap resource, got %+v", rt.Spec.Resources)
 	}
+	// An empty description sets no annotation at all.
+	if _, ok := rt.Metadata.Annotations[externalDescriptionAnnotation]; ok {
+		t.Errorf("empty description should not set the annotation: %v", rt.Metadata.Annotations)
+	}
 }
 
 func TestBuildExternalResourceType_Errors(t *testing.T) {
 	t.Parallel()
 
-	if _, err := BuildExternalResourceType("", []ExternalResourceConfigKey{{Key: "X"}}); err == nil {
+	if _, err := BuildExternalResourceType("", "", []ExternalResourceConfigKey{{Key: "X"}}); err == nil {
 		t.Error("want error on empty name")
 	}
-	if _, err := BuildExternalResourceType("r", nil); err == nil {
+	if _, err := BuildExternalResourceType("r", "", nil); err == nil {
 		t.Error("want error on no keys")
 	}
-	if _, err := BuildExternalResourceType("r", []ExternalResourceConfigKey{{Key: ""}}); err == nil {
+	if _, err := BuildExternalResourceType("r", "", []ExternalResourceConfigKey{{Key: ""}}); err == nil {
 		t.Error("want error on empty config key")
 	}
 }
@@ -133,9 +164,105 @@ func TestBuildExternalResourceType_Errors(t *testing.T) {
 func TestExternalResourceRTName_PinsTemplateVersion(t *testing.T) {
 	t.Parallel()
 
-	got := ExternalResourceRTName("salesforce-2")
-	want := "salesforce-2-t2"
-	if got != want {
-		t.Fatalf("ExternalResourceRTName = %q, want %q", got, want)
+	keys := []ExternalResourceConfigKey{{Key: "A", Secret: false}}
+	got := ExternalResourceRTName("salesforce", keys)
+	wantSuffix := fmt.Sprintf("-t%d", ExternalResourceRTTemplateVersion)
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Fatalf("ExternalResourceRTName = %q, want suffix %q", got, wantSuffix)
+	}
+	if !strings.HasPrefix(got, "salesforce-") {
+		t.Fatalf("ExternalResourceRTName = %q, want prefix %q", got, "salesforce-")
+	}
+}
+
+func TestExternalResourceRTName_Deterministic(t *testing.T) {
+	t.Parallel()
+
+	keys := []ExternalResourceConfigKey{
+		{Key: "SF_TOKEN", Secret: true},
+		{Key: "SF_REGION", Secret: false},
+	}
+	// Same schema (even reordered) → same name.
+	reordered := []ExternalResourceConfigKey{keys[1], keys[0]}
+	if got, want := ExternalResourceRTName("salesforce", keys), ExternalResourceRTName("salesforce", reordered); got != want {
+		t.Fatalf("same schema (reordered) produced different names: %q vs %q", got, want)
+	}
+
+	// A description/default-only edit does NOT change the name.
+	annotated := []ExternalResourceConfigKey{
+		{Key: "SF_TOKEN", Secret: true, Description: "API token"},
+		{Key: "SF_REGION", Secret: false, DefaultValue: "us-east-1", Description: "deployment region"},
+	}
+	if got, want := ExternalResourceRTName("salesforce", keys), ExternalResourceRTName("salesforce", annotated); got != want {
+		t.Fatalf("description/default-only edit changed the name: %q vs %q", got, want)
+	}
+
+	// A changed key mints a different name.
+	changedKey := []ExternalResourceConfigKey{
+		{Key: "SF_TOKEN", Secret: true},
+		{Key: "SF_REGION_V2", Secret: false},
+	}
+	if got, other := ExternalResourceRTName("salesforce", keys), ExternalResourceRTName("salesforce", changedKey); got == other {
+		t.Fatalf("changed key produced the same name: %q", got)
+	}
+
+	// A changed secret flag mints a different name.
+	changedSecret := []ExternalResourceConfigKey{
+		{Key: "SF_TOKEN", Secret: true},
+		{Key: "SF_REGION", Secret: true},
+	}
+	if got, other := ExternalResourceRTName("salesforce", keys), ExternalResourceRTName("salesforce", changedSecret); got == other {
+		t.Fatalf("changed secret flag produced the same name: %q", got)
+	}
+}
+
+func TestExternalDefinitionFromRT_RoundTrips(t *testing.T) {
+	t.Parallel()
+
+	keys := []ExternalResourceConfigKey{
+		{Key: "SF_REGION", Secret: false, Description: "deployment region", DefaultValue: "us-east-1"},
+		{Key: "SF_TOKEN", Secret: true, Description: "API token"},
+	}
+	rt, err := BuildExternalResourceType("salesforce", "Salesforce CRM", keys)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	def, ok := ExternalDefinitionFromRT(rt)
+	if !ok {
+		t.Fatalf("ExternalDefinitionFromRT returned ok=false for a freshly authored RT")
+	}
+	if def.Name != "salesforce" {
+		t.Errorf("Name = %q, want salesforce", def.Name)
+	}
+	if def.Description != "Salesforce CRM" {
+		t.Errorf("Description = %q, want %q", def.Description, "Salesforce CRM")
+	}
+	if len(def.Config) != len(keys) {
+		t.Fatalf("Config length = %d, want %d: %+v", len(def.Config), len(keys), def.Config)
+	}
+	// def.Config is sorted by key; keys is already sorted (SF_REGION < SF_TOKEN).
+	for i, want := range keys {
+		got := def.Config[i]
+		if got.Key != want.Key || got.Secret != want.Secret || got.Description != want.Description || got.DefaultValue != want.DefaultValue {
+			t.Errorf("Config[%d] = %+v, want %+v", i, got, want)
+		}
+	}
+}
+
+func TestExternalDefinitionFromRT_NotOkWhenNotSelfDescribing(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := ExternalDefinitionFromRT(nil); ok {
+		t.Error("nil RT should not be reconstructable")
+	}
+	if _, ok := ExternalDefinitionFromRT(&ResourceType{}); ok {
+		t.Error("an RT with no external-name annotation should not be reconstructable")
+	}
+	// external-name present but no spec.parameters (e.g. an RT authored by
+	// pre-self-describing code): still not reconstructable.
+	rt := &ResourceType{Metadata: OCObjectMeta{Annotations: map[string]string{externalNameAnnotation: "legacy"}}}
+	if _, ok := ExternalDefinitionFromRT(rt); ok {
+		t.Error("an RT with no spec.parameters should not be reconstructable")
 	}
 }

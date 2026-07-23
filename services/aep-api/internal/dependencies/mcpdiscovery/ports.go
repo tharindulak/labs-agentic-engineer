@@ -16,16 +16,15 @@
 
 package mcpdiscovery
 
-// Consumer-side ports for the MCP discovery surface. The parent `dependencies`
-// package owns only this umbrella surface; it imports its child
-// `dependencies/resources` (for PlatformResourceType — an allowlisted
-// parent→child edge) and otherwise depends on collaborators through narrow
-// interfaces wired concretely at the composition root (app.Build, D5). Each is
-// satisfied structurally by an existing type:
+// Consumer-side ports for the MCP discovery surface. This child package depends
+// on collaborators through narrow interfaces wired concretely at the
+// composition root (app.Build, D5). Each is satisfied structurally by an
+// existing type in the parent `dependencies` package:
 //
-//   - ExternalResourceReader ← *repositories.ExternalResourceRepository (A3)
-//   - OrgEndpointLister       ← *endpoints.Catalog (C1)
-//   - ResourceTypeLister      ← *resources.ResourceTypeCatalog (C3)
+//   - ExternalResourceReader ← *dependencies.ExternalResourceCatalog (Task 3 —
+//     org-namespaced OpenChoreo ResourceTypes, not the external_resources table)
+//   - OrgEndpointLister       ← *dependencies.Catalog (C1)
+//   - ResourceTypeLister      ← *dependencies.ResourceTypeCatalog (C3)
 
 import (
 	"context"
@@ -36,10 +35,14 @@ import (
 
 // ExternalResourceReader is the read slice of the org external-resource catalog
 // the MCP surface exposes (list every registered external resource, get one by
-// name). Get returns (nil, nil) when the name is not registered.
+// name). Sourced from the org's provisioned OpenChoreo ResourceTypes
+// (openchoreo.ExternalDefinitionFromRT) — ONLY a provisioned `external`
+// dependency has an authored RT, so this reflects provisioned externals only
+// (D2: an unprovisioned/design-only external is not discoverable here). Get
+// returns (nil, nil) when the name is not registered.
 type ExternalResourceReader interface {
-	List(ctx context.Context, orgID string) ([]dependencies.ExternalResource, error)
-	Get(ctx context.Context, orgID, name string) (*dependencies.ExternalResource, error)
+	List(ctx context.Context, orgID string) ([]openchoreo.ExternalResourceDefinition, error)
+	Get(ctx context.Context, orgID, name string) (*openchoreo.ExternalResourceDefinition, error)
 }
 
 // OrgEndpointLister is the read slice of the org endpoint catalog — the
@@ -58,6 +61,18 @@ type ResourceTypeLister interface {
 	List(ctx context.Context) ([]dependencies.PlatformResourceType, error)
 }
 
+// PlatformResourceConsumerLister derives, per installed platform ResourceType,
+// the components across the calling org's projects that declare a
+// platform-resource dependency on it (the "used by" overlay on the resource-type
+// catalog). Keyed by lowercased ResourceType name. Satisfied structurally by
+// *provisioning.Service (PlatformResourceConsumersByType) — kept as a narrow
+// port so this cluster-global catalog package never imports the org-scoped
+// provisioning package concretely. The overlay is additive and best-effort: a
+// nil lister or an error degrades to an empty "used by", never failing the list.
+type PlatformResourceConsumerLister interface {
+	PlatformResourceConsumersByType(ctx context.Context, orgID string) (map[string][]dependencies.ExternalResourceConsumer, error)
+}
+
 // RemoteGitReader reads an org's OWN GitHub repos over the REST API (Contents +
 // Code Search, no clone) for endpoint spec discovery — the two MCP tools an
 // agent uses to read a provider's OpenAPI file straight from its repo. Both
@@ -69,3 +84,22 @@ type RemoteGitReader interface {
 	GetFileContents(ctx context.Context, ocOrgID, owner, repo, path, ref string) (*RemoteGitFile, error)
 	SearchCode(ctx context.Context, ocOrgID, owner, repo, query string) ([]RemoteGitSearchHit, error)
 }
+
+// SpecValidator parses an OpenAPI 3.x document and returns its operation
+// count (method entries under paths), or an error when the document does not
+// parse or is not a valid OpenAPI 3.x doc. Backs validate_openapi_spec and the
+// validate half of fetch_openapi_spec. Satisfied by artifacts.ValidateOpenAPI.
+type SpecValidator func(raw []byte) (operations int, err error)
+
+// SpecNormalizer returns the canonical-form encoding of an already-valid
+// OpenAPI document. Backs validate_openapi_spec and fetch_openapi_spec.
+// Satisfied by artifacts.NormalizeOpenAPIYAML.
+type SpecNormalizer func(content string) (normalized string, err error)
+
+// SpecFetcher fetches an OpenAPI spec from a user-supplied https URL. Backs
+// fetch_openapi_spec. Satisfied by artifacts.FetchSpecFromURL — PLATFORM-
+// TOUCHING (SSRF-hardened: https-only, public-IP-only, redirect-guarded, size-
+// and time-capped). This port MUST always be wired to that function as-is; the
+// MCP tool layer only adds a TIGHTER context-safety cap on top, never a looser
+// SSRF posture.
+type SpecFetcher func(ctx context.Context, url string) ([]byte, error)

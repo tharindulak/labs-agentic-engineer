@@ -35,11 +35,19 @@ import {
   addMessage,
   appendAssistantText,
   chatKeyFor,
+  consumePendingSeed,
   conversationIdFor,
   dropTurnOutput,
   getMessages,
+  hasDeterministicFlush,
+  notifyTurnEnd,
+  peekPendingSeed,
+  registerDeterministicFlush,
+  setPendingSeed,
   setTurnStatus,
   subscribe,
+  subscribeSeed,
+  subscribeTurnEnd,
   upsertToolMessage,
 } from "./chatStore";
 
@@ -179,5 +187,126 @@ describe("chatStore", () => {
     expect(id).toBeTruthy();
     expect(conversationIdFor("o", "p", { create: false })).toBe(id);
     expect(conversationIdFor("o", "p2", { create: true })).not.toBe(id);
+  });
+});
+
+// pendingSeed (#252 Task 5): the "Resolve via chat" action writes here from a
+// different subtree than the panel (dep card / drawer vs. AgentChatPanel,
+// siblings under AppLayout) — consumed exactly once, mirroring the ?generate=
+// one-shot-fire shape but sourced from the store since the seeded message is
+// per-click dynamic content, not a fixed enum signal.
+describe("pendingSeed", () => {
+  it("is absent until set, then consumed exactly once", () => {
+    const key = freshKey();
+    expect(peekPendingSeed(key)).toBeNull();
+    expect(consumePendingSeed(key)).toBeNull();
+
+    setPendingSeed(key, "resolve dependency A");
+    expect(peekPendingSeed(key)).toBe("resolve dependency A");
+    expect(peekPendingSeed(key)).toBe("resolve dependency A"); // peek doesn't clear
+
+    expect(consumePendingSeed(key)).toBe("resolve dependency A");
+    expect(peekPendingSeed(key)).toBeNull();
+    expect(consumePendingSeed(key)).toBeNull(); // already consumed
+  });
+
+  it("keeps distinct project keys apart", () => {
+    const key1 = freshKey();
+    const key2 = freshKey();
+    setPendingSeed(key1, "for project 1");
+    expect(peekPendingSeed(key2)).toBeNull();
+    expect(consumePendingSeed(key1)).toBe("for project 1");
+  });
+
+  it("notifies seed subscribers on set, and stops after unsubscribe", () => {
+    const key = freshKey();
+    let notified = 0;
+    const unsubscribe = subscribeSeed(key, () => (notified += 1));
+    setPendingSeed(key, "go");
+    expect(notified).toBe(1);
+    unsubscribe();
+    setPendingSeed(key, "go again");
+    expect(notified).toBe(1);
+  });
+
+  // Minor #2 (fix wave 1): consumePendingSeed used to clear the slot without
+  // notifying, so useHasPendingSeed's useSyncExternalStore snapshot could
+  // stay stuck `true` after the panel consumed the seed.
+  it("also notifies seed subscribers on consume, not just on set", () => {
+    const key = freshKey();
+    let notified = 0;
+    subscribeSeed(key, () => (notified += 1));
+    setPendingSeed(key, "go");
+    expect(notified).toBe(1);
+    consumePendingSeed(key);
+    expect(notified).toBe(2);
+  });
+});
+
+// Turn-end bus (#252 Task 5): "a collab turn's terminal frame arrived" is
+// broadcast through this same key-scoped pub/sub (mirroring the message-log
+// subscribe() above) so both the chat panel's universal fallback and the
+// spec view's deterministic flush (different subtrees, only one of which
+// owns the collab connection) can react to the same event.
+describe("turn-end bus", () => {
+  it("notifies subscribers with the terminal status", () => {
+    const key = freshKey();
+    const seen: string[] = [];
+    subscribeTurnEnd(key, (status) => seen.push(status));
+    notifyTurnEnd(key, "completed");
+    notifyTurnEnd(key, "failed");
+    expect(seen).toEqual(["completed", "failed"]);
+  });
+
+  it("keeps distinct project keys apart", () => {
+    const key1 = freshKey();
+    const key2 = freshKey();
+    let key1Fired = false;
+    subscribeTurnEnd(key1, () => (key1Fired = true));
+    notifyTurnEnd(key2, "completed");
+    expect(key1Fired).toBe(false);
+  });
+
+  it("stops notifying after unsubscribe", () => {
+    const key = freshKey();
+    let count = 0;
+    const unsubscribe = subscribeTurnEnd(key, () => (count += 1));
+    unsubscribe();
+    notifyTurnEnd(key, "completed");
+    expect(count).toBe(0);
+  });
+});
+
+// Deterministic-flush registration (#252 Task 5 fix wave 1, Important #1):
+// lets useTurnEndDependencyRefresh (the universal fallback, mounted on every
+// route) know whether useTurnEndFlush (the deterministic path, mounted only
+// in SpecView) is currently live for the same chat key, so the fallback can
+// skip its own immediate invalidate and avoid racing ahead of the
+// deterministic post-flush invalidate.
+describe("deterministic-flush registration", () => {
+  it("is false until registered, true while registered, false again after unregister", () => {
+    const key = freshKey();
+    expect(hasDeterministicFlush(key)).toBe(false);
+    const unregister = registerDeterministicFlush(key);
+    expect(hasDeterministicFlush(key)).toBe(true);
+    unregister();
+    expect(hasDeterministicFlush(key)).toBe(false);
+  });
+
+  it("keeps distinct keys apart", () => {
+    const key1 = freshKey();
+    const key2 = freshKey();
+    registerDeterministicFlush(key1);
+    expect(hasDeterministicFlush(key2)).toBe(false);
+  });
+
+  it("ref-counts overlapping registrations for the same key", () => {
+    const key = freshKey();
+    const unregisterA = registerDeterministicFlush(key);
+    const unregisterB = registerDeterministicFlush(key);
+    unregisterA();
+    expect(hasDeterministicFlush(key)).toBe(true); // one registration still live
+    unregisterB();
+    expect(hasDeterministicFlush(key)).toBe(false);
   });
 });

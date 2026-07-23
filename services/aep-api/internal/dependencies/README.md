@@ -61,11 +61,12 @@ slices.
 | the 8 public ops | offers | the edge (`dependenciesHandlers`) |
 
 ## Owns
-- `ExternalResource`, `AccessRequest`, the authored OC external Resource model + provisioned binding values,
-  the `aep:provision` gate issues (via `sourcecontrol`), and the resource-type catalog projection.
-- **Persistence**: the `ExternalResource` / `AccessRequest` gorm and entities live in this domain
-  (`repository_external_resource.go` · `repository_access_request.go` over `external_resource.go` /
-  `access_request.go`), single write-authority.
+- `ExternalResource` (an in-memory definition, NOT a DB row — see Persistence), `AccessRequest`, the
+  authored OC external Resource model + provisioned binding values, the `aep:provision` gate issues
+  (via `sourcecontrol`), and the resource-type catalog projection.
+- **Persistence**: only `AccessRequest` is persisted (`repository_access_request.go` over
+  `access_request.go`), single write-authority. `ExternalResource` is an in-memory definition, not a
+  DB row — the org-namespaced OpenChoreo `ResourceType` is the registry (ADR-0009).
 
 ## Invariants — don't break
 - **Secret values never leave the SecretWriter port.** External-resource secret values route through SM-API;

@@ -223,7 +223,7 @@ export function SpecFileList({
         </Box>
         {design.hasComponents || design.hasCellDsl || design.overview.length > 0 ? (
           <List dense disablePadding>
-            {(design.hasComponents || design.hasCellDsl) &&
+            {design.hasCellDsl &&
               row({ kind: "cell-diagram" }, "Architecture", <Network size={16} />)}
             {design.overview.map((f) =>
               row(

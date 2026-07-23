@@ -35,7 +35,11 @@ const SKILLS_WITH_REFS = testSkillSource([
     name: "excalidraw-diagrams",
     description: "architecture diagrams",
     content: "For the JSON element vocabulary read references/schema.md.",
-    references: { "references/schema.md": "rectangles, bound arrows, text labels" },
+    references: {
+      "references/schema.md": "rectangles, bound arrows, text labels",
+      "assets/logo.png": "<binary bytes, never inlined>",
+    },
+    binaryReferences: ["assets/logo.png"],
   },
 ]);
 
@@ -88,7 +92,7 @@ const loadSkillRefExec = (skills: SkillSourceArg): LoadSkillRefExec =>
 test("loadSkill lists a skill's reference paths in a success result", async () => {
   const res = await loadSkillExec(SKILLS_WITH_REFS)({ names: ["excalidraw-diagrams"] }, {});
   assert.equal(res.ok, true);
-  if (res.ok) assert.deepEqual(res.skills[0]!.references, ["references/schema.md"]);
+  if (res.ok) assert.deepEqual(res.skills[0]!.references, ["assets/logo.png", "references/schema.md"]);
 });
 
 test("loadSkill omits the references listing for a skill without references", async () => {
@@ -129,6 +133,15 @@ test("loadSkillReference miss on unknown path lists that skill's reference paths
   assert.equal(res.ok, false);
   if (!res.ok) {
     assert.match(res.error, /unknown reference/);
-    assert.deepEqual(res.available, ["references/schema.md"]);
+    assert.deepEqual(res.available, ["assets/logo.png", "references/schema.md"]);
+  }
+});
+
+test("loadSkillReference refuses a binary aux file with a corrective error naming the path", async () => {
+  const res = await loadSkillRefExec(SKILLS_WITH_REFS)({ name: "excalidraw-diagrams", path: "assets/logo.png" }, {});
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.error, "assets/logo.png is a binary file — it cannot be loaded into context");
+    assert.deepEqual(res.available, ["assets/logo.png", "references/schema.md"]);
   }
 });

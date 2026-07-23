@@ -47,12 +47,23 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 ## Owns
 - git spec content (`requirements.md`, `specs/design/**`), the annotated `v<N>` tag (the version store),
   the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam).
-- **The Skill library.** One flat authored library at repo-root `skills/` (`<name>/SKILL.md` +
-  `references/`), COPY'd into the image and read at runtime from `config.SkillsDir` (default `/app/skills`)
-  — not go:embed'd. Kind (`platform | org | custom | imported`) lives in frontmatter `metadata.aep.kind`,
-  absent ⇒ `org`: platform/org are library-shipped + reconcile-managed (read-only), custom/imported are
-  user-owned + editable. Each org's flat `org-skills` repo (kind in frontmatter) is reconciled
-  content-SHA-wise — seed / overwrite / purge platform+org, skip user-owned.
+- **The Skill library.** One flat authored library at repo-root `skills/`, COPY'd into the image and read
+  at runtime from `config.SkillsDir` (default `/app/skills`) — not go:embed'd. A skill dir is `SKILL.md`
+  plus the [Agent Skills standard structure](https://agentskills.io/specification) — `scripts/`,
+  `references/`, `assets/`, and any other files or directories — carried byte-faithfully end to end
+  (loader → reconcile → org-skills repo → design agent → coding runner); scanners walk the whole dir with
+  no extension filter, skipping only `SKILL.md` itself and dotfile segments; `scripts/` files materialize
+  with the exec bit on the coding runner. Kind (`platform | org | custom | imported`) lives in frontmatter
+  `metadata.aep.kind`, absent ⇒ `org`: platform/org are library-shipped + reconcile-managed (read-only),
+  custom/imported are user-owned + editable — the same aux-file contract governs user-facing create/update
+  and tarball import, rejecting any `..`/absolute path outright rather than silently dropping it. Each
+  org's flat `org-skills` repo (kind in frontmatter) is reconciled content-SHA-wise — seed / overwrite /
+  purge platform+org, skip user-owned. Model-context reads (the design agent's `loadSkillReference`) and
+  JSON API responses inline UTF-8 text only; binary aux files are listed, never inlined
+  (`binaryReferences` in the API; a corrective error naming the binary path in the tool). Binary aux
+  files are therefore delivery-only over the JSON API — their content never round-trips through a
+  GET→edit→PUT cycle — and stay durable only via the embedded library or tarball import, which carry
+  the bytes directly rather than through `binaryReferences`.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority. Spec content itself is not gorm — it lives in git,
   reached through sourcecontrol's `Workspace`/gitfs engine.

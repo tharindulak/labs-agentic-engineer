@@ -16,6 +16,12 @@
 
 package spec
 
+import (
+	"strings"
+
+	"github.com/wso2/aep/aep-api/internal/contracts"
+)
+
 // Component type vocabulary. AEP uses OpenChoreo's OWN terms end-to-end —
 // these are OC's ComponentType names minus the `deployment/` prefix (OC:
 // `deployment/service`, `deployment/web-application`), so no translation
@@ -92,8 +98,10 @@ func (c DesignComponent) EndpointName() string {
 	return DefaultEndpointName
 }
 
-// DependencyKind discriminates the unified Dependency entry.
-type DependencyKind = string
+// DependencyKind discriminates the unified Dependency entry. The wire type
+// lives in the contracts leaf (so the generated contract package stays
+// domain-free); the spec domain owns the kind consts + resolution algebra.
+type DependencyKind = contracts.DependencyKind
 
 const (
 	DependencyKindComponent        DependencyKind = "component"
@@ -104,12 +112,14 @@ const (
 
 // Dependency Status/Reason enum values. These are read-time computed (see
 // the Dependency.Status/Reason doc below) — never authored, never persisted.
-// The 4-state org-service resolution model (artifacts.resolveOrgServices)
-// produces DependencyStatusResolved / DependencyStatusBlocked (with
-// DependencyReasonAccessRequired) / DependencyStatusUnresolved (with
-// DependencyReasonNotFound). DependencyStatusAmbiguous is reserved for a
-// dependency the platform cannot resolve to a single target; the design-save
-// proceed-gate (design.ErrUnresolvedDependency) blocks on all three
+// ComputeDependencyStatus (dependency_status.go) is the single authority: for
+// kind=org-service, namespace-visible → Resolved, catalog-visible elsewhere →
+// Blocked/AccessRequired, absent → Unresolved/NotFound. For kind=external,
+// 2+ Candidates → Ambiguous (no reason); a registry-known name → Resolved; no
+// Style → Unresolved/NeedsInput; Style=rest-api with no SpecPath →
+// Unresolved/NeedsSpec; Style=sdk with no Package → Unresolved/NeedsInput;
+// otherwise Resolved. component/platform-resource are always Resolved here.
+// The design-save proceed-gate (design.ErrUnresolvedDependency) blocks on all
 // non-resolved states.
 const (
 	DependencyStatusResolved   = "resolved"
@@ -119,64 +129,40 @@ const (
 
 	DependencyReasonAccessRequired = "access-required"
 	DependencyReasonNotFound       = "not-found"
+	// DependencyReasonNeedsSpec pairs with DependencyStatusUnresolved on an
+	// external `style: rest-api` dependency with no specPath yet — the
+	// contract-collection state (see ComputeDependencyStatus rule 4).
+	DependencyReasonNeedsSpec = "needs-spec"
+	// DependencyReasonNeedsInput pairs with DependencyStatusUnresolved on an
+	// external dependency the platform cannot resolve without more from the
+	// architect: no style at all, or an `sdk` style with no package yet (see
+	// ComputeDependencyStatus rules 3 and 5).
+	DependencyReasonNeedsInput = "needs-input"
+)
+
+// DependencyStyle is the closed set of external dependency shapes (mirrors the
+// agent-stream TS `DependencyStyle`). Meaningful only on kind=external. The wire
+// type lives in the contracts leaf; the style consts live here.
+type DependencyStyle = contracts.DependencyStyle
+
+const (
+	DependencyStyleRestAPI DependencyStyle = "rest-api"
+	DependencyStyleSDK     DependencyStyle = "sdk"
 )
 
 // Dependency is the unified, kind-discriminated dependency entry on a
-// component. It subsumes the legacy DependsOn (sibling components) and the
-// external HTTP APIs a component consumed at runtime. Go has no native
-// discriminated union, so a single struct carries every kind's fields; `Kind`
-// selects which are meaningful (Config for external; ResourceType/Parameters
-// for platform-resource; the rest common). Mirrors the agents-service Zod
-// `Dependency`.
-type Dependency struct {
-	Kind        DependencyKind `json:"kind"`
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	// Status and Reason are READ-TIME computed fields (recomputed against the
-	// live catalog on every design read by later tasks); they are NOT persisted
-	// and carry NO gorm/yaml tags — plain wire JSON only. The architect never
-	// sets them.
-	//   Status: resolved|ambiguous|unresolved|blocked
-	//   Reason: access-required|not-found|needs-spec|access-pending|needs-input
-	Status string `json:"status,omitempty"`
-	Reason string `json:"reason,omitempty"`
-	// external (REST/GraphQL): the architect sets NeedsSpec when the agent must
-	// call the API by specific endpoints; SpecPath points at the stored contract
-	// (relative to the component dir: dependencies/<name>.openapi.yaml). SpecUrl
-	// is a transient published-OpenAPI hint auto-fetched at design save then
-	// cleared. Unlike Status/Reason these ARE persisted.
-	NeedsSpec bool   `json:"needsSpec,omitempty"`
-	SpecPath  string `json:"specPath,omitempty"`
-	SpecUrl   string `json:"specUrl,omitempty"`
-	// external: the config key schema the consuming component codes against.
-	Config []ConfigKey `json:"config,omitempty"`
-	// platform-resource: the registered (Cluster)ResourceType + provisioning params.
-	// Parameter values are mixed scalar types (string | number | bool) per the
-	// target (Cluster)ResourceType's OpenAPI v3 schema — e.g. postgres-cnpg's
-	// `instances` is an integer while `storage`/`version` are strings — so the
-	// map is any-valued and marshalled verbatim into the OC Resource
-	// spec.parameters (numbers must stay JSON numbers for CRD validation).
-	ResourceType string         `json:"resourceType,omitempty"`
-	Parameters   map[string]any `json:"parameters,omitempty"`
-}
+// component. The wire shape lives in the contracts leaf (re-exported here) so
+// the generated contract package can name it without importing this domain; the
+// spec domain owns all behaviour over it (ComputeDependencyStatus, validators).
+type Dependency = contracts.Dependency
 
-// ConfigKey is one env-var key a component reads at runtime. For an external
-// resource these keys form the resource's schema (drives the OC ResourceType).
-// Secret keys route through the secret path. `secret` is optional and omitted
-// when false — a key with no `secret` field is a plain (non-secret) config value.
-type ConfigKey struct {
-	Key    string `json:"key"`
-	Secret bool   `json:"secret,omitempty"`
-	// Description is an optional human-readable note on what this value is for,
-	// authored alongside the key. The Build dependency drawer renders it under
-	// the field so the user knows what to supply.
-	Description string `json:"description,omitempty"`
-	// DefaultValue is an optional suggested initial value the agent MAY set for a
-	// NON-secret key it can infer a sensible default for (a region, a base URL).
-	// The Build dependency drawer pre-fills the field with it. Never set for a
-	// secret key — a credential has no default to invent.
-	DefaultValue string `json:"defaultValue,omitempty"`
-}
+// DependencyCandidate is one option in an ambiguous external dependency's
+// resolution set (see Dependency.Candidates). Wire shape in the contracts leaf.
+type DependencyCandidate = contracts.DependencyCandidate
+
+// ConfigKey is one env-var key a component reads at runtime. Wire shape in the
+// contracts leaf (re-exported here).
+type ConfigKey = contracts.ConfigKey
 
 // ComponentDependsOn returns the names of this component's sibling-component
 // dependencies — the successor to the legacy DependsOn []string field. Used
@@ -248,6 +234,72 @@ type ExposesAPI struct {
 	// catalog lists it as a cross-project `org-service` target. Deliberate +
 	// source-of-truth: the provider owns this; the platform never patches it.
 	OrgPublished bool `json:"orgPublished,omitempty"`
+}
+
+// UnionExternalConfigKeys scans comps and returns, per external dependency
+// name, the UNION of Config[] declared by every component whose
+// Dependencies[] names it — a key present in ANY component's Config is
+// included, and Secret is OR'd across every declaring component, so a key
+// already marked secret by one component can never be downgraded to plain by
+// another component that omits it or marks it plain (secret wins). Dependency
+// names are grouped case-insensitively (the same fold match
+// provisioning.findDepInProject uses to locate a dependency) but keyed in the
+// result by the FIRST-SEEN exact casing, so a stray casing difference between
+// two components declaring "the same" external dependency cannot split it
+// into two separate map entries.
+//
+// This is the single source of truth two request-time classification paths
+// read (provisioning.SaveValues and dependencies/resources'
+// secretKeysByName). It MUST stay behaviorally identical to the build path's
+// independently-implemented secretKeysByDep
+// (internal/feature/build/inputs_coordinator.go), which performs the same
+// union-merge, secret-wins accumulation in its own package.
+func UnionExternalConfigKeys(comps []DesignComponent) map[string][]ConfigKey {
+	out := map[string][]ConfigKey{}
+	canonName := map[string]string{}        // lower(name) -> first-seen exact name
+	keyIndex := map[string]map[string]int{} // lower(name) -> config key -> index into out[canonName[lower(name)]]
+	for _, c := range comps {
+		for _, d := range c.Dependencies {
+			if d.Kind != DependencyKindExternal {
+				continue
+			}
+			lower := strings.ToLower(d.Name)
+			name, ok := canonName[lower]
+			if !ok {
+				name = d.Name
+				canonName[lower] = name
+				keyIndex[lower] = map[string]int{}
+			}
+			idx := keyIndex[lower]
+			merged := out[name]
+			for _, k := range d.Config {
+				if i, exists := idx[k.Key]; exists {
+					if k.Secret {
+						merged[i].Secret = true
+					}
+					continue
+				}
+				idx[k.Key] = len(merged)
+				merged = append(merged, k)
+			}
+			out[name] = merged
+		}
+	}
+	return out
+}
+
+// UnionExternalConfigFor returns the UNION Config[] schema (see
+// UnionExternalConfigKeys) for the external dependency matching depName
+// case-insensitively, or nil when no component in comps declares it. Callers
+// that already know the exact dependency name they want (e.g. SaveValues)
+// use this instead of scanning UnionExternalConfigKeys's full map themselves.
+func UnionExternalConfigFor(comps []DesignComponent, depName string) []ConfigKey {
+	for name, cfg := range UnionExternalConfigKeys(comps) {
+		if strings.EqualFold(name, depName) {
+			return cfg
+		}
+	}
+	return nil
 }
 
 // DesignComponents is a slice of DesignComponent.

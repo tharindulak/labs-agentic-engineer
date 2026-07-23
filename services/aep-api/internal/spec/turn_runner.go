@@ -130,6 +130,20 @@ func (s *Service) runTurn(ctx context.Context, job turnJob) {
 	s.finishTurn(finishCtx, job, term)
 }
 
+// designOrCollabTurn is the shared gate design-generation turns AND collab
+// room-scoped turns (regardless of useCase) satisfy: the Spec view authors
+// design.json interactively through collab (useCase "requirements-chat"), so
+// gating on design-generate alone starved the collab architect of
+// list_org_endpoints, causing invented cross-project org-service names that
+// fail exact-name resolution at build. mcpForTurn (additionally gated on the
+// MCP token minter being wired) and the dispatched TurnRequest.WebSearch flag
+// (external-dependency-discovery #252 — Anthropic's web_search provider tool,
+// which needs no BFF-minted credential) key off this SAME condition. A plain
+// requirements-chat/general turn with no room does not qualify.
+func designOrCollabTurn(job turnJob) bool {
+	return job.useCase == useCaseDesignGenerate || job.collabRoomID != ""
+}
+
 // mcpForTurn mints the per-turn MCP discovery block for design-generation turns
 // AND collab room-scoped turns (dependency-management Phase 5): a BFF-signed
 // token (aud aep-api-mcp) carrying the org, plus the BFF's internal MCP endpoint
@@ -141,12 +155,7 @@ func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBloc
 	if s.mcpTokens == nil || s.mcpBaseURL == "" {
 		return nil
 	}
-	// Attach MCP discovery to design-generation turns AND every collab
-	// room-scoped turn: the Spec view authors design.json interactively through
-	// collab (useCase "requirements-chat"), so gating on design-generate alone
-	// starved the collab architect of list_org_endpoints, causing invented
-	// cross-project org-service names that fail exact-name resolution at build.
-	if job.useCase != useCaseDesignGenerate && job.collabRoomID == "" {
+	if !designOrCollabTurn(job) {
 		return nil
 	}
 	token, err := s.mcpTokens.IssueMCPToken(job.orgID)
@@ -198,6 +207,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		},
 		FilesChangedExternally: filesChangedExternally,
 		MCP:                    s.mcpForTurn(ctx, job),
+		WebSearch:              designOrCollabTurn(job),
 		Collab:                 collab,
 	})
 	if err != nil {
@@ -301,7 +311,16 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		}
 		// Edits live in the room's doc; git is untouched (persistence is the
 		// #86 phase-3 committer). The base sha stays the "content as of" pin.
-		return TurnTerminal{Status: turnStatusCompleted, CommitSHA: job.baseRef, NoChanges: true}
+		// SpecEdited reflects the agent's doc edits (non-empty manifest) so the
+		// feed can attribute this agent work — the committer's later flush lands
+		// under the user's token and cannot (issue #239).
+		return TurnTerminal{
+			Status:      turnStatusCompleted,
+			CommitSHA:   job.baseRef,
+			NoChanges:   true,
+			SpecEdited:  !manifest.IsEmpty(),
+			EditedPaths: manifest.MutatedPaths(),
+		}
 	}
 
 	switch {
@@ -429,7 +448,12 @@ func (s *Service) commitFold(ctx context.Context, job turnJob, fold *agentfold.F
 	}
 	// Changed=false: the fold re-produced content identical to base — no
 	// commit object, but the turn is a valid completion.
-	return TurnTerminal{Status: turnStatusCompleted, CommitSHA: res.CommitSHA, NoChanges: !res.Changed}
+	return TurnTerminal{
+		Status:     turnStatusCompleted,
+		CommitSHA:  res.CommitSHA,
+		NoChanges:  !res.Changed,
+		SpecEdited: res.Changed,
+	}
 }
 
 // finishTurn stamps the terminal row state and emits the ONE terminal stream
@@ -460,21 +484,20 @@ func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal
 	}
 }
 
-// recordTurnActivity appends the spec_updated feed line for a turn that landed
-// a real commit (issue #239). Best-effort and observational: a nil recorder, a
-// failed turn, or a no-changes completion record nothing. The actor is the
-// prompting user (the commit author), so the console renders "You updated the
-// spec"; the turn id keys dedup so a re-finish is a no-op.
+// recordTurnActivity appends the spec_updated feed line for a turn that authored
+// real spec changes (issue #239). Best-effort and observational: a nil recorder,
+// a failed turn, or a turn that edited nothing records nothing. A genai turn is
+// the agent working, so the actor is the agent (the console renders "Spec agent
+// updated the spec") regardless of the git commit author — the committer flush
+// of a room turn lands under the user's token, which is exactly why the user
+// cannot be the feed actor here. The turn id keys dedup so a re-finish is a
+// no-op. SpecEdited (not NoChanges) is the gate: a room turn is always NoChanges
+// yet still authored the doc edits the feed must attribute.
 func (s *Service) recordTurnActivity(ctx context.Context, job turnJob, term TurnTerminal) {
-	if s.recorder == nil || term.Status != turnStatusCompleted || term.NoChanges {
+	if s.recorder == nil || term.Status != turnStatusCompleted || !term.SpecEdited {
 		return
 	}
-	var email, name string
-	if job.author != nil {
-		email, name = job.author.Email, job.author.Name
-	}
-	s.recorder.RecordSpecUpdated(ctx, job.orgID, job.projectID, job.turnID,
-		firstLine(job.summary, 96), email, name)
+	s.recorder.RecordSpecUpdated(ctx, job.orgID, job.projectID, job.turnID, firstLine(job.summary, 96), term.EditedPaths)
 }
 
 // turnBaseReader adapts Workspace.ReadFile at the turn's base ref into the

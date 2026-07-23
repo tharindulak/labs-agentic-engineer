@@ -53,9 +53,18 @@ var (
 	webAppTypeAliases   = map[string]bool{"webapp": true, "web-app": true, "webapplication": true, "web application": true}
 	dependencyKinds     = map[string]bool{"component": true, "org-service": true, "external": true, "platform-resource": true}
 	dependencyKnownKeys = map[string]bool{
-		"kind": true, "name": true, "description": true, "needsSpec": true,
-		"specPath": true, "specUrl": true, "config": true, "resourceType": true,
-		"parameters": true,
+		"kind": true, "name": true, "description": true,
+		"style": true, "package": true, "specPath": true,
+		"candidates": true,
+		"config": true, "resourceType": true, "parameters": true,
+	}
+	// externalOnlyDependencyKeys are meaningful only on kind="external" — a
+	// platform-resource is catalog-picked, an org-service is catalog-resolved,
+	// neither carries an external contract. Mirrors the zod gate's
+	// EXTERNAL_ONLY_DEPENDENCY_FIELDS (component-design-schema.ts superRefine).
+	externalOnlyDependencyKeys = map[string]bool{
+		"candidates": true, "style": true, "package": true,
+		"specPath": true,
 	}
 	designKnownKeys = map[string]bool{
 		"name": true, "type": true, "version": true, "language": true,
@@ -72,7 +81,9 @@ var (
 // accept/reject outcome is what parity needs). It is deliberately AT MOST as
 // strict as the TS zod gate (which the FileBundle runs first), so a zod-passing
 // write always folds here: the top-level shape + each dependency's kind/name and
-// strict-key set are enforced; the optional platform-owned blocks (exposesAPI /
+// strict-key set are enforced (the retired specUrl/sources fields are no longer
+// in that set, so — like status/reason — they reject as unknown keys); the
+// optional platform-owned blocks (exposesAPI /
 // componentAgentInstructions) are type-checked only.
 func validateComponentDesign(content, dirName string) *designProblem {
 	var parsed any
@@ -176,7 +187,9 @@ func validateSkillsApplied(raw any) *designProblem {
 // validateDependency mirrors the zod dependencySchema.strictObject: a
 // kind-discriminated edge whose kind + name are required and whose keys are a
 // closed set (unknown keys — notably the read-time-computed status/reason, which
-// the agent must NEVER author — reject).
+// the agent must NEVER author — reject). It also mirrors the zod gate's
+// superRefine: candidates/style/package/specPath are rejected on any kind
+// other than "external".
 func validateDependency(i int, d any) *designProblem {
 	dep, ok := d.(map[string]any)
 	if !ok {
@@ -194,6 +207,13 @@ func validateDependency(i int, d any) *designProblem {
 	name, ok := dep["name"].(string)
 	if !ok || name == "" {
 		return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("dependencies[%d].name: must be a non-empty string", i)}
+	}
+	if kind != "external" {
+		for k := range dep {
+			if externalOnlyDependencyKeys[k] {
+				return &designProblem{code: ErrSchemaViolation, message: fmt.Sprintf("dependencies[%d]: %s is only meaningful on an external dependency (kind=\"external\"), got kind=%q", i, k, kind)}
+			}
+		}
 	}
 	if p := validateDependencyParameters(i, dep["parameters"]); p != nil {
 		return p

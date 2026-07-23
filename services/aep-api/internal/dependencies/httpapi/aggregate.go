@@ -48,8 +48,18 @@ type Handlers struct {
 // are nil-tolerant (a wired-but-nil service degrades to 503, matching the
 // pre-migration edge), so zero Deps is a supported configuration.
 func New(d Deps) (*Handlers, error) {
+	// The provisioning service backs the platform-resource "used by" overlay via
+	// its PlatformResourceConsumersByType port. Guard the concrete→interface
+	// conversion: a nil *provisioning.Service wrapped in the interface would be a
+	// non-nil interface over a nil pointer (a panic on first call), so pass the
+	// port only when the service is actually wired, keeping the overlay off (nil
+	// lister ⇒ empty consumers) otherwise.
+	var consumers mcpdiscovery.PlatformResourceConsumerLister
+	if d.ProvisioningSvc != nil {
+		consumers = d.ProvisioningSvc
+	}
 	return &Handlers{
 		provisioningHandler: provisioning.NewHandler(d.ProvisioningSvc),
-		mcpdiscoveryHandler: mcpdiscovery.NewHandler(d.ResourceTypes),
+		mcpdiscoveryHandler: mcpdiscovery.NewHandler(d.ResourceTypes, consumers),
 	}, nil
 }

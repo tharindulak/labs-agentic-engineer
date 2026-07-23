@@ -38,6 +38,10 @@ import (
 //   - list_org_endpoints             → every service endpoint published across the org
 //   - list_org_component_endpoints   → list_org_endpoints resolved with repo coords + discovered OpenAPI spec
 //   - list_platform_resource_types   → the platform-provisioned resource types on the cluster
+//   - get_remote_git_file_contents   → read a file/directory from an org repo (endpoint spec discovery)
+//   - search_remote_git_code         → locate a file by code search in an org repo
+//   - validate_openapi_spec          → validate + normalize an OpenAPI doc the caller already has
+//   - fetch_openapi_spec             → SSRF-hardened fetch of an OpenAPI doc by URL, then validate + normalize
 //
 // Mounted at POST /internal/v1/mcp behind auth.AgentsScopedVerifier, which binds
 // the acting org onto the request context from a verified BFF-signed token
@@ -72,18 +76,30 @@ type mcpHandler struct {
 	orgEndpoints  OrgEndpointLister
 	resourceTypes ResourceTypeLister
 	remoteGit     RemoteGitReader
+	validateSpec  SpecValidator
+	normalizeSpec SpecNormalizer
+	fetchSpec     SpecFetcher
 }
 
 // NewMCPHandler returns the JSON-RPC MCP handler over the external-resource
-// reader, the org endpoint lister, the platform resource-type lister, and the
-// read-only remote-git reader (endpoint spec discovery). The acting org is
-// resolved from the request context (bound by the auth middleware), never from
-// the request itself. A nil external-resource reader makes the surface
-// unavailable (503 — it is the surface's core catalog). A nil
-// orgEndpoints/resourceTypes degrades that one tool to an empty result; a nil
-// remoteGit makes the two remote-git tools return a tool error.
-func NewMCPHandler(er ExternalResourceReader, ep OrgEndpointLister, rt ResourceTypeLister, rg RemoteGitReader) http.Handler {
-	h := &mcpHandler{resources: er, orgEndpoints: ep, resourceTypes: rt, remoteGit: rg}
+// reader, the org endpoint lister, the platform resource-type lister, the
+// read-only remote-git reader (endpoint spec discovery), and the OpenAPI spec
+// validate/normalize/fetch functions (validate_openapi_spec, fetch_openapi_spec).
+// The acting org is resolved from the request context (bound by the auth
+// middleware), never from the request itself. A nil external-resource reader
+// makes the surface unavailable (503 — it is the surface's core catalog). A
+// nil orgEndpoints/resourceTypes degrades that one tool to an empty result; a
+// nil remoteGit makes the two remote-git tools return a tool error; a nil
+// validateSpec/normalizeSpec/fetchSpec makes the two spec tools return a tool
+// error.
+func NewMCPHandler(
+	er ExternalResourceReader, ep OrgEndpointLister, rt ResourceTypeLister, rg RemoteGitReader,
+	vs SpecValidator, ns SpecNormalizer, fs SpecFetcher,
+) http.Handler {
+	h := &mcpHandler{
+		resources: er, orgEndpoints: ep, resourceTypes: rt, remoteGit: rg,
+		validateSpec: vs, normalizeSpec: ns, fetchSpec: fs,
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.resources == nil {
 			http.Error(w, "external resource registry not configured", http.StatusServiceUnavailable)

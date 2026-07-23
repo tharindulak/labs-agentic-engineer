@@ -1,8 +1,9 @@
-# Agent Activity feed — how activity reaches the console (issue #239)
+# Activity feed — how activity reaches the console (issue #239)
 
-How the project overview's **Agent Activity** panel gets its data: where events
+How the project overview's **Recent activity** panel gets its data: where events
 are produced, where the state lives, and how it travels to the console — before
-(shipped in #232) versus after (backend #254 + the console follow-up PR).
+(shipped in #232, when the panel was named "Agent Activity") versus after
+(backend #254 + console cutover #265).
 
 ## Before — client-side derivation (shipped in #232)
 
@@ -40,7 +41,7 @@ Consequences (why #239 exists):
 - With zero tasks (every project before a build), the panel is permanently
   empty.
 
-## After — activity event store + replay/tail SSE (#254 backend + console PR)
+## After — activity event store + replay/tail SSE (#254 backend + #265 console)
 
 Producers append **ActivityEvent rows** to a dedicated Postgres table at the
 moment something happens; the console reads one page and then tails an SSE
@@ -52,6 +53,7 @@ flowchart LR
   subgraph Producers["Producers (aep-api)"]
     BH["delivery/build handler<br/>build start → spec_published<br/>(actor = signed-in user)"]
     WF["delivery/devflow Temporal workflows<br/>plan_derived · task_started<br/>task_deployed · task_failed<br/>(actor = plan/build agent)"]
+    SP["spec turn + files/apply → spec_updated<br/>(actor = Spec agent for turns,<br/>signed-in user for manual edits)"]
   end
 
   subgraph AppRoot["app root (composition)"]
@@ -76,13 +78,14 @@ flowchart LR
     S["openActivityStream + parseSseStream<br/>features/activity/api/stream.ts"]
     H["useActivityFeed<br/>seed page + live events, dedup by id"]
     R["render.tsx — event → sentence + tone"]
-    AA2["AgentActivity.tsx (overview)"]
+    AA2["RecentActivity.tsx (overview,<br/>newest 6 events)"]
     Q --> H
     S --> H
     H --> R --> AA2
   end
 
   BH --> AD
+  SP --> AD
   WF -->|"RecordActivity activity<br/>(workflow.Now → deterministic time)"| AD
   AD --> SVC
   DB --> LIST
@@ -117,6 +120,38 @@ flowchart LR
 - **Best-effort recording.** `ActivityService.Record` swallows storage errors:
   the feed is observability, and must never fail a build or a workflow.
 
+### Spec-edit attribution (who "updated the spec")
+
+A `spec_updated` line can originate from three places, and only one of them
+knows the agent was the author:
+
+- **Committed genai turn** — the turn lands its own commit; the turn recorder
+  writes the line as **Spec agent** (a turn is the agent working, so no user
+  identity is involved).
+- **Room-scoped genai turn** — the agent writes into the shared collab doc and
+  commits nothing; the collab committer flushes the doc to git later via
+  `files/apply` **under a participating user's token**. At the git layer the
+  flush is indistinguishable from a manual edit, so the turn recorder writes the
+  agent line at turn end and marks the manifest's paths in `specAuthorship`
+  (app root, in-process). When an apply's commit contains a marked path, the
+  files recorder claims those marks and suppresses its user line — the work is
+  already on the feed as the agent.
+- **Manual apply** (spec editor save, collab flush of hand edits) — no marked
+  path matches, so the files recorder attributes the commit to the signed-in
+  user from the request context. Each collaborator's flush carries their own
+  token, so different users appear under their own names.
+
+Marks are **per path**, not per project: the committer holds agent-marked
+markdown until the session-end force flush, so a user's own edit can land in an
+interim commit between the turn and that flush; path scoping lets that interim
+commit record as the user while the agent's paths stay marked until they land.
+Known limits, accepted for the single-replica deployment: one flush is one
+commit and one feed line (concurrent edits by several users inside a debounce
+window collapse into the flushing user's line; a commit mixing agent and user
+edits is attributed to the agent), a restart between turn and flush mislabels
+that one flush as manual, and a user reverting the agent's doc edits leaves the
+mark to suppress at most one later commit of that same path in the session.
+
 ## Diff — previous vs with the new PRs
 
 | | Before (#232 only) | After (#254 + console PR) |
@@ -124,7 +159,7 @@ flowchart LR
 | Source of truth | none — derived from the task list on render | `activity_events` table (append-only) |
 | Event coverage | build-task statuses only | spec_published, plan_derived, task_started, task_deployed, task_failed (taxonomy extensible via `activityvocab`) |
 | Timestamps | hardcoded `PLACEHOLDER_TIMES` | real `occurredAt` (workflow-deterministic inside Temporal) |
-| Actor | implicit "Build agent" | user (email + display name from JWT) or agent, rendered viewer-relative ("You") |
+| Actor | implicit "Build agent" | user (email + display name from JWT) or agent — Spec agent for turn-authored spec edits (see *Spec-edit attribution*) — rendered viewer-relative ("You") |
 | Liveness | refetch-only | SSE live tail with replay-based reconnect |
 | Pagination | n/a | keyset cursor `(occurred_at, id)`, newest first |
 | Console data path | `agentActivity(tasks)` in `features/projects/lib/projectActivity.ts` | `features/activity/` (queries + stream + `useActivityFeed` + `render`) |
@@ -138,6 +173,8 @@ flowchart LR
   store, producers, read API, SSE stream, contract. After the upstream merge,
   the feature lives in the domain layout (projects domain + activityfeed
   slice + activityvocab leaf + app-root adapters).
-- **Console follow-up PR** (to cut from the local `aep-rewrite-latest` FE
-  commits) — `features/activity/` data layer and `AgentActivity` consuming the
-  real feed; deletes `PLACEHOLDER_TIMES`. Depends on #254's contract types.
+- **#265** (`feat/agent-activity-frontend`) — the console cutover:
+  `features/activity/` data layer and the overview panel consuming the real
+  feed; deletes `PLACEHOLDER_TIMES`. A follow-up renamed the panel to
+  **Recent activity** (users appear on the feed too), capped the overview at
+  the newest 6 events, and added the path-scoped spec-edit attribution above.

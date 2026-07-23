@@ -20,6 +20,28 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // parse.test.ts is pure logic and node is the fastest default;
+    // DesignView.test.tsx (#252 Task 9, component rendering) opts into jsdom
+    // per-file via a `// @vitest-environment jsdom` pragma, mirroring
+    // apps/console's vitest.config.ts convention.
     environment: "node",
+    // Needed so @testing-library/react's auto-cleanup-between-tests effect
+    // detects a global `afterEach` and actually registers (it silently no-ops
+    // without a global test-framework hook) — DesignView.test.tsx renders
+    // several times in one file and would otherwise leak DOM across tests.
+    globals: true,
+    setupFiles: ["src/test-setup.ts"],
+    server: {
+      // oxygen-ui ships in a form that needs vite's transform pipeline rather
+      // than a plain node require (matches apps/console/vitest.config.ts).
+      deps: {
+        inline: [
+          "@wso2/oxygen-ui",
+          "@mui/x-data-grid",
+          "@mui/x-date-pickers",
+          "@mui/x-tree-view",
+        ],
+      },
+    },
   },
 });

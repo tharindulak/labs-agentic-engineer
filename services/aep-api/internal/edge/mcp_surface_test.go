@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -38,26 +40,27 @@ import (
 // (IssueMCPToken) → initialize → tools/list → tools/call, plus the two edge
 // negatives (no token; org bound from the claim, not the request).
 
-// mcpTestReader is a fake dependencies.ExternalResourceReader recording the
-// org each call was scoped to.
+// mcpTestReader is dependencies.ExternalResourceReader's real implementation
+// (resources.ExternalResourceCatalog) wired over a ResourceClientMock, so the
+// component test fixtures OC ResourceTypes — not external_resources rows —
+// while still recording the org (namespace) each call was scoped to.
 type mcpTestReader struct {
-	items   []dependencies.ExternalResource
+	*dependencies.ExternalResourceCatalog
 	lastOrg string
 }
 
-func (f *mcpTestReader) List(_ context.Context, orgID string) ([]dependencies.ExternalResource, error) {
-	f.lastOrg = orgID
-	return f.items, nil
-}
-
-func (f *mcpTestReader) Get(_ context.Context, orgID, name string) (*dependencies.ExternalResource, error) {
-	f.lastOrg = orgID
-	for i := range f.items {
-		if f.items[i].Name == name {
-			return &f.items[i], nil
-		}
+// newMCPTestReader returns a reader whose backing ListResourceTypes serves
+// rts verbatim for whatever namespace it's called with.
+func newMCPTestReader(rts ...openchoreo.ResourceType) *mcpTestReader {
+	f := &mcpTestReader{}
+	rc := &mocks.ResourceClientMock{
+		ListResourceTypesFunc: func(_ context.Context, namespace string) ([]openchoreo.ResourceType, error) {
+			f.lastOrg = namespace
+			return rts, nil
+		},
 	}
-	return nil, nil
+	f.ExternalResourceCatalog = dependencies.NewExternalResourceCatalog(rc)
+	return f
 }
 
 // newMCPTestServer builds the full handler with the MCP surface wired and
@@ -75,11 +78,12 @@ func newMCPTestServer(t *testing.T) (*httptest.Server, *auth.TaskTokenManager, *
 	if err != nil {
 		t.Fatalf("NewTaskTokenManager: %v", err)
 	}
-	reader := &mcpTestReader{items: []dependencies.ExternalResource{{
-		Name:        "salesforce",
-		Description: "CRM",
-		ConfigKeys:  dependencies.ConfigKeySlice{{Key: "SALESFORCE_TOKEN", Secret: true}},
-	}}}
+	salesforceRT, err := openchoreo.BuildExternalResourceType("salesforce", "CRM",
+		[]openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}})
+	if err != nil {
+		t.Fatalf("build salesforce RT fixture: %v", err)
+	}
+	reader := newMCPTestReader(*salesforceRT)
 	handler := NewHandler(AppParams{
 		Config:               config.Config{},
 		Deps:                 Deps{TaskTokens: mgr},

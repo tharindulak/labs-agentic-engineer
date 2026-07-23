@@ -228,3 +228,112 @@ export function conversationIdFor(
     return create ? crypto.randomUUID() : null;
   }
 }
+
+// --- pendingSeed (#252 Task 5: "Resolve via chat") ------------------------
+//
+// The "Resolve via chat" action (dep card / drawer / build drawer — Task 9)
+// and the chat panel (AgentChatPanel, mounted by AppLayout) are SIBLINGS
+// under AppLayout, not ancestor/descendant — there's no shared React state to
+// prop-drill a seed message through. This in-memory slot (never persisted:
+// a one-shot signal, not chat history) is the cross-subtree handoff, mirroring
+// the message-log's own Map+listeners+subscribe shape above. The panel
+// consumes it exactly once (get-and-clear) so a re-render never re-sends it.
+
+const pendingSeeds = new Map<string, string>();
+const seedListeners = new Map<string, Set<() => void>>();
+
+/** Set the one-shot seed message the panel will auto-send next time it looks. */
+export function setPendingSeed(key: string, message: string): void {
+  pendingSeeds.set(key, message);
+  for (const fn of seedListeners.get(key) ?? []) fn();
+}
+
+/** Non-destructive read — for callers (e.g. "should the panel open?") that
+ *  only need to know a seed is waiting, without consuming it. */
+export function peekPendingSeed(key: string): string | null {
+  return pendingSeeds.get(key) ?? null;
+}
+
+/** Get-and-clear: the seed is consumed exactly once. Also notifies seed
+ *  listeners (mirroring `setPendingSeed`) — `useHasPendingSeed`'s
+ *  `useSyncExternalStore` snapshot flips from true back to false only when
+ *  a listener fires; without this, it would stay stuck `true` after the
+ *  panel consumes the seed. */
+export function consumePendingSeed(key: string): string | null {
+  const msg = pendingSeeds.get(key);
+  if (msg === undefined) return null;
+  pendingSeeds.delete(key);
+  for (const fn of seedListeners.get(key) ?? []) fn();
+  return msg;
+}
+
+export function subscribeSeed(key: string, fn: () => void): () => void {
+  const set = seedListeners.get(key) ?? new Set();
+  set.add(fn);
+  seedListeners.set(key, set);
+  return () => set.delete(fn);
+}
+
+// --- Turn-end bus (#252 Task 5: freshness / turn-end flush) ---------------
+//
+// "A collab turn's terminal frame arrived" (runTurn.ts's `turn-committed` /
+// `turn-failed`, or its severed-stream poll fallback) is broadcast here so
+// BOTH the chat panel's universal refetch-on-turn-done fallback AND the spec
+// view's deterministic room flush (useTurnEndFlush — only available where the
+// collab connection actually lives, i.e. only while SpecView is mounted) can
+// react to the same event without one owning a reference to the other.
+
+export type TurnEndStatus = "completed" | "failed";
+
+const turnEndListeners = new Map<string, Set<(status: TurnEndStatus) => void>>();
+
+export function notifyTurnEnd(key: string, status: TurnEndStatus): void {
+  for (const fn of turnEndListeners.get(key) ?? []) fn(status);
+}
+
+export function subscribeTurnEnd(
+  key: string,
+  fn: (status: TurnEndStatus) => void,
+): () => void {
+  const set = turnEndListeners.get(key) ?? new Set();
+  set.add(fn);
+  turnEndListeners.set(key, set);
+  return () => set.delete(fn);
+}
+
+// --- Deterministic-flush registration (fix wave 1, Important #1) ----------
+//
+// `notifyTurnEnd` above dispatches to its subscribers SYNCHRONOUSLY.
+// `useTurnEndFlush` (SpecView — only place the collab room lives) reacts by
+// force-flushing the room then invalidating, which is necessarily ASYNC.
+// `useTurnEndDependencyRefresh` (AgentChatPanel — mounted on every route) is
+// the universal fallback and used to invalidate immediately and
+// unconditionally. When both hooks are mounted for the same chatKey (chat
+// open on the Spec route — the common case), that immediate invalidate
+// landed BEFORE the deterministic flush did, briefly showing the
+// freshly-resolved dependency's OLD status — defeating the point of the
+// forced flush.
+//
+// This registry lets the fallback hook ask "is a deterministic flush owner
+// live for this key right now?" and skip its own immediate invalidate when
+// so, leaving that to the deterministic path's post-flush invalidate.
+// Ref-counted (not a plain Set) so two overlapping registrations for the
+// same key (e.g. a remount) can't have one's cleanup clear the other's.
+
+const deterministicFlushKeys = new Map<string, number>();
+
+/** Mark a deterministic flush listener as live for `key`. Call the returned
+ *  function on unmount/cleanup. */
+export function registerDeterministicFlush(key: string): () => void {
+  deterministicFlushKeys.set(key, (deterministicFlushKeys.get(key) ?? 0) + 1);
+  return () => {
+    const remaining = (deterministicFlushKeys.get(key) ?? 1) - 1;
+    if (remaining <= 0) deterministicFlushKeys.delete(key);
+    else deterministicFlushKeys.set(key, remaining);
+  };
+}
+
+/** True while at least one deterministic flush listener is registered for `key`. */
+export function hasDeterministicFlush(key: string): boolean {
+  return (deterministicFlushKeys.get(key) ?? 0) > 0;
+}

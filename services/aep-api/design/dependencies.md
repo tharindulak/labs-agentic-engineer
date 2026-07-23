@@ -7,8 +7,10 @@ aligned with OpenChoreo's Workload taxonomy: the **endpoints** family
 Resource model: ResourceType → Resource → ResourceReleaseBinding).
 
 - `dependencies/` (parent) — the authenticated MCP server (`POST /internal/v1/mcp`,
-  JSON-RPC 2.0, aud `aep-api-mcp`) exposing the four discovery tools; tool calls
-  run under the BFF's OC service identity (see the E2E-caught 401 in git history).
+  JSON-RPC 2.0, aud `aep-api-mcp`) exposing the nine discovery tools (org-service +
+  external-resource catalog lookups, remote-git read/search, and OpenAPI spec
+  `validate_openapi_spec`/`fetch_openapi_spec`); tool calls run under the BFF's
+  OC service identity (see the E2E-caught 401 in git history).
 - `endpoints/` — org endpoint catalog (reads deployed Workloads), org-service
   URL env naming, and the single-owner access-request state machine.
 - `resources/` — external-resource registry + per-project value collection

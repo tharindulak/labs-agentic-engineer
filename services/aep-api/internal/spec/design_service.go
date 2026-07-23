@@ -33,8 +33,12 @@ var ErrSpecNotApproved = errors.New("spec must be saved (tagged) before generati
 // controller) when the tag-cut (SaveAndProceed) is attempted while a
 // dependency in the design being tagged is still in a non-actionable state:
 // an `org-service` that is not namespace-visible (unresolved/blocked/ambiguous
-// against the live org catalog — see resolveOrgServices), or an
-// `external` dependency that declares needsSpec but has no collected spec yet.
+// against the live org catalog — see resolveOrgServices). external
+// dependencies are NOT proceed-gated here for now: the needsSpec flag that
+// used to drive this was dropped (dependency-management schema revision —
+// derived-state model, see design_json.go); the equivalent check is reborn
+// once the shared resolver (a later task) can derive an external dependency's
+// resolution state from style/specPath against the live catalog.
 // external-values (config-only) and platform-resource dependencies are NOT
 // proceed-gated here — they are dispatch-gated in Phase 6. The tag-cut is the
 // only path that checks this; committed-truth has no autosave to gate.
@@ -91,18 +95,17 @@ var (
 // removed outright — superseded by the Files API (list-files/read-file). The
 // hard save gate (SaveAndProceed → tag at HEAD) was retired with it: tagging is
 // the single-tag POST /build flow now, so the design feature is a write helper,
-// not a gate. What remains: CollectSpec (dependency spec collection), and the
-// two steps the thin POST /build path reuses pre-tag — DeriveEndUserAuthAtHead
-// and RegisterExternalResources (issue #164). There is no exported
-// interface — every caller holds the concrete type; the composition root
-// adapts the two build-path methods onto narrow consumer interfaces
+// not a gate. What remains: CollectSpec (dependency spec collection), the read
+// model ListDependencies, and the pre-tag step the thin POST /build path reuses
+// — DeriveEndUserAuthAtHead (issue #164). There is no exported interface —
+// every caller holds the concrete type; the composition root adapts the
+// build-path method onto a narrow consumer interface
 // (internal/app/build_adapters.go) since build cannot import design.
 type designService struct {
-	store               *ArtifactStore
-	artifactSvc         ArtifactService
-	externalResourceReg externalResourceRegistrar // for RegisterExternalResources; may be nil
-	fileCommitter       designFileCommitter       // for CollectSpec's committed-truth spec write; may be nil
-	resourceCatalog     resourceMarkerCatalog     // for DeriveEndUserAuthAtHead end-user-auth derivation; may be nil (fails closed when platform-resource deps exist)
+	store           *ArtifactStore
+	artifactSvc     ArtifactService
+	fileCommitter   designFileCommitter   // for CollectSpec's committed-truth spec write; may be nil
+	resourceCatalog resourceMarkerCatalog // for DeriveEndUserAuthAtHead end-user-auth derivation; may be nil (fails closed when platform-resource deps exist)
 }
 
 // DesignFileWrite is one file in a CollectSpec atomic commit. Path is the full
@@ -141,26 +144,6 @@ type resourceMarkerCatalog interface {
 	MarkersByName(ctx context.Context) (map[string]CRTMarkers, error)
 }
 
-// externalResourceRegistrar is design_service's narrow consumer port for the
-// dependency-management external-resource catalog. *repositories.ExternalResourceRepository
-// satisfies it; defined here (consumer side) so design needn't import the
-// repositories package concretely. Wired via SetExternalResourceRegistry at the
-// composition root.
-type externalResourceRegistrar interface {
-	Upsert(ctx context.Context, orgID, name, description string, schema []ConfigKey) error
-}
-
-// ExternalResourceRegistrarFunc adapts a plain func to externalResourceRegistrar.
-// The concrete catalog repository's Upsert also returns the persisted row, which
-// design ignores (registration is best-effort) — so the composition root wraps it
-// in this adapter, keeping design's consumer port free of a dependencies import
-// (which would cycle: dependencies already reads the design bundle).
-type ExternalResourceRegistrarFunc func(ctx context.Context, orgID, name, description string, schema []ConfigKey) error
-
-func (f ExternalResourceRegistrarFunc) Upsert(ctx context.Context, orgID, name, description string, schema []ConfigKey) error {
-	return f(ctx, orgID, name, description, schema)
-}
-
 func NewDesignService(
 	store *ArtifactStore,
 	artifactSvc ArtifactService,
@@ -169,13 +152,6 @@ func NewDesignService(
 		store:       store,
 		artifactSvc: artifactSvc,
 	}
-}
-
-// SetExternalResourceRegistry wires the external-resource catalog so `external`
-// dependencies are registered (best-effort) whenever RegisterExternalResources
-// runs. A nil registry is a documented no-op.
-func (s *designService) SetExternalResourceRegistry(reg externalResourceRegistrar) {
-	s.externalResourceReg = reg
 }
 
 // SetFileCommitter wires the committed-truth Files commit surface CollectSpec
@@ -193,44 +169,24 @@ func (s *designService) SetResourceCatalog(c resourceMarkerCatalog) {
 	s.resourceCatalog = c
 }
 
-// registerExternalResources best-effort upserts every distinct `external`
-// dependency in the tagged design into the org's external-resource catalog (the
-// reusable definition layer consumers request access to later). Non-fatal: a
-// registry hiccup must never fail a design save — the value/wiring provisioning
-// happens later, independently, when a consumer requests access (Phase 6).
-func (s *designService) registerExternalResources(ctx context.Context, orgID string, design *DesignFile) {
-	if s.externalResourceReg == nil || design == nil {
-		return
-	}
-	seen := map[string]struct{}{}
-	for _, c := range design.Components {
-		for _, dep := range c.Dependencies {
-			if dep.Kind != DependencyKindExternal {
-				continue
-			}
-			if _, ok := seen[dep.Name]; ok {
-				continue
-			}
-			seen[dep.Name] = struct{}{}
-			if err := s.externalResourceReg.Upsert(ctx, orgID, dep.Name, dep.Description, dep.Config); err != nil {
-				slog.WarnContext(ctx, "failed to register external resource",
-					"org", orgID, "resource", dep.Name, "error", err)
-			}
-		}
-	}
-}
-
-// RegisterExternalResources reads the design at HEAD and best-effort upserts
-// every distinct `external` dependency into the org catalog (the public entry
-// the build path's provisioning adapter calls before authoring bindings, so the
-// catalog resolves each external resource). A nil design is a no-op.
-func (s *designService) RegisterExternalResources(ctx context.Context, orgID, projectID string) error {
-	designFile, err := s.store.ReadDesign(ctx, orgID, projectID)
+// ListDependencies returns every component's dependencies in the design at
+// HEAD, each already carrying its read-time computed Status/Reason —
+// ReadDesign → AssembleDesignFrom runs the full resolution pass (both
+// resolveOrgServices and the external/component/platform-resource pass, both
+// via ComputeDependencyStatus, the single resolution authority) before
+// returning, so this is a plain projection, not a second resolution pass. The
+// single read model behind the console's dependency-status surface (GET
+// /projects/{projectName}/design/dependencies). Returns (nil,
+// ErrDesignNotFound) when no design exists yet.
+func (s *designService) ListDependencies(ctx context.Context, orgID, projectID string) ([]DesignComponent, error) {
+	design, err := s.store.ReadDesign(ctx, orgID, projectID)
 	if err != nil {
-		return fmt.Errorf("design: read design: %w", err)
+		return nil, fmt.Errorf("read design: %w", err)
 	}
-	s.registerExternalResources(ctx, orgID, designFile)
-	return nil
+	if design == nil {
+		return nil, ErrDesignNotFound
+	}
+	return design.Components, nil
 }
 
 // CollectSpec resolves the {component, depName} external dependency in the
@@ -307,11 +263,10 @@ func (s *designService) CollectSpec(ctx context.Context, orgID, projectID, compo
 		return "", err
 	}
 
-	// Record specPath + drop the transient specUrl hint, then render ONLY this
-	// component's design.json through the canonical codec.
+	// Record specPath, then render ONLY this component's design.json through the
+	// canonical codec.
 	comp := design.Components[compIdx]
 	comp.Dependencies[depIdx].SpecPath = specPath
-	comp.Dependencies[depIdx].SpecUrl = ""
 	rendered, rerr := SplitDesign(&DesignFile{Components: []DesignComponent{comp}})
 	if rerr != nil {
 		return "", fmt.Errorf("render component %q design.json: %w", component, rerr)

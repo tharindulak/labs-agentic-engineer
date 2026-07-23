@@ -35,17 +35,20 @@
 export { buildSpecGenerationInstruction, buildDesignGenerationInstruction } from "@aep/contracts/prompts";
 
 // MUST match steeringByUseCase[useCaseGeneral],
-// services/aep-api/internal/feature/genai/steering.go
+// services/aep-api/internal/spec/steering.go
 export const GENERAL_STEER =
   "\n\nApply the requested change to the spec bundle, or answer the question if no change is requested. " +
   "Spec sources live under specs/ (requirements under specs/requirements/, design under specs/design/) — when creating a file that does not exist yet, always use its full path, never a bare filename.";
 
 // MUST match collabDepsSteer,
-// services/aep-api/internal/feature/genai/steering.go
+// services/aep-api/internal/spec/steering.go
 export const COLLAB_DEPS_STEER =
   "\n\nBefore editing any design.json, load the `high-level-architecture` skill. " +
   "When your change adds or edits a component's `dependencies` — especially an `org-service` referencing another project — " +
-  "FIRST call `list_org_endpoints` and copy the provider component name VERBATIM; never invent a role-based name.";
+  "FIRST call `list_org_endpoints` and copy the provider component name VERBATIM; never invent a role-based name. " +
+  "When the requested change ALTERS THE ARCHITECTURE — a component added, removed, or renamed; an edge, exposure, or external/SaaS dependency changed — " +
+  "load the `cell-architecture-dsl` skill and update specs/design/design.cell FIRST with targeted editFile edits (removeFile + ONE addFile only when restructuring MOST of the diagram), " +
+  "then update design.md and every affected design.json to match; do not narrate the process.";
 
 // MUST match planInstruction,
 // services/aep-api/internal/feature/task/plan.go

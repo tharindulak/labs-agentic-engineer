@@ -174,6 +174,7 @@ Pin \`golang:1.25-alpine\` as the builder; the build pod runs with
 
 Expose \`GET /health\` for liveness on port **9090**.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-go-1",
     updatedAt: "2026-05-01T00:00:00Z",
   },
@@ -194,6 +195,7 @@ description: How to build a React SPA on the platform.
 Load \`/env-config.js\` synchronously **before** the bundle, then read runtime
 config from \`window._env_\`. Throw on a missing key rather than defaulting.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-rw-1",
     updatedAt: "2026-05-02T00:00:00Z",
   },
@@ -210,6 +212,7 @@ description: Derives component architecture from requirements.
 
 Derive the component architecture from the approved requirements.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-hla-1",
     updatedAt: "2026-05-01T00:00:00Z",
   },
@@ -226,6 +229,7 @@ description: Breaks a design into buildable tasks.
 
 Break the approved design into a sequence of buildable tasks.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-tb-1",
     updatedAt: "2026-05-01T00:00:00Z",
   },
@@ -248,6 +252,7 @@ description: Acme's internal pre-deploy checklist.
     references: {
       "references/rollback.md": "# Rollback\n\nRevert the release tag.",
     },
+    binaryReferences: [],
     contentSha: "sha-adc-1",
     updatedAt: "2026-06-20T00:00:00Z",
   },
@@ -264,6 +269,7 @@ description: Discover and evaluate community AgentSkills before adopting.
 
 Search the registry, read the SKILL.md, and check the declared license.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-fs-1",
     updatedAt: "2026-07-01T00:00:00Z",
   },
@@ -280,6 +286,7 @@ description: How to build a Node.js service on the platform.
 
 Pin the LTS base image; expose \`GET /health\` on port **9090**.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-ns-1",
     updatedAt: "2026-05-03T00:00:00Z",
   },
@@ -296,6 +303,7 @@ description: How to build a Python service on the platform.
 
 Use \`uv\` for dependency management; expose \`GET /health\` on port **9090**.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-ps-1",
     updatedAt: "2026-05-03T00:00:00Z",
   },
@@ -312,6 +320,7 @@ description: Schema and migration conventions for platform databases.
 
 One migration per change; never edit an applied migration.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-pg-1",
     updatedAt: "2026-05-04T00:00:00Z",
   },
@@ -328,6 +337,7 @@ description: Derives per-component wireframes from the design file.
 
 Derive one wireframe per user-facing component in the approved design.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-wf-1",
     updatedAt: "2026-05-01T00:00:00Z",
   },
@@ -344,6 +354,7 @@ description: Derives validation files from approved requirements.
 
 Every requirement gets at least one validation criterion.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-vf-1",
     updatedAt: "2026-05-01T00:00:00Z",
   },
@@ -360,6 +371,7 @@ description: Acme's REST API naming and versioning conventions.
 
 Plural nouns, kebab-case paths, \`/v1\` prefix, RFC 9457 errors.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-aas-1",
     updatedAt: "2026-06-22T00:00:00Z",
   },
@@ -376,6 +388,7 @@ description: Conventional-commit message rules for agent-authored PRs.
 
 \`type(scope): summary\` — imperative, no trailing period.`,
     references: {},
+    binaryReferences: [],
     contentSha: "sha-cc-1",
     updatedAt: "2026-07-02T00:00:00Z",
   },

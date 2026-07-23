@@ -24,6 +24,8 @@ import type { DispatchRequest } from "./types.js";
 import type { WorkspaceLayout } from "./workspace.js";
 import { emit } from "./progress/emitter.js";
 import { progressFromSdkMessage } from "./progress/from-sdk.js";
+import { createWebSearchDlpHook, stagedSecretValues } from "./websearch_dlp.js";
+import { createWebFetchGuardHook } from "./webfetch_guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_PATH = path.resolve(__dirname, "../../plugin");
@@ -32,7 +34,15 @@ const PLUGIN_PATH = path.resolve(__dirname, "../../plugin");
 // tools. Endpoint Spec Discovery (B2) re-introduces MCP — but only as an
 // in-process remote HTTP server (see buildMcpOptions below), never the
 // file-based .mcp.json that settingSources: [] deliberately blocks.
-const BASE_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep"];
+// D9 secure search (Task 12) adds WebSearch, gated by the PreToolUse DLP
+// hook wired in runClaudeQuery below (see websearch_dlp.ts for why
+// PreToolUse, not canUseTool, and .superpowers/sdd/task-12-report.md for
+// the spike evidence). WebFetch (external API/SDK doc + spec-URL fetches)
+// is added alongside it, gated by its own PreToolUse SSRF + secret guard
+// (see webfetch_guard.ts) — fail-closed, so pod egress to arbitrary
+// fetched pages never reaches internal/private/link-local/metadata
+// addresses or leaks a staged secret in the URL.
+const BASE_ALLOWED_TOOLS = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"];
 
 // The server key the BFF MCP endpoint is registered under. The SDK
 // namespaces MCP tools as `mcp__<serverKey>__<toolName>` (confirmed from
@@ -190,6 +200,21 @@ export function runClaudeQuery(
   // runner falls back to the base tool set unchanged.
   const { mcpServers, allowedTools } = buildMcpOptions(req.mcpUrl, req.mcpToken);
 
+  // D9 secure search (Task 12) — DLP gate for the server-side WebSearch
+  // tool. Secret candidates are read from childEnv, the SAME env record
+  // injected into this run (see websearch_dlp.ts's stagedSecretValues doc
+  // comment): staged dependency secrets (Tasks 9-11's per-run K8s Secrets,
+  // mounted via envFrom) and the runner's own credentials both land there
+  // before the query() call below, so this is the single source of truth
+  // for "what's secret in this run" without a second, drift-prone channel.
+  const stagedSecrets = stagedSecretValues(childEnv);
+  const webSearchDlpHook = createWebSearchDlpHook(stagedSecrets);
+
+  // WebFetch SSRF + secret-leak guard (see webfetch_guard.ts) — built from
+  // the SAME staged-secret list as the WebSearch hook above, one source of
+  // truth for "what's secret in this run".
+  const webFetchGuardHook = createWebFetchGuardHook(stagedSecrets);
+
   // SDK v0.2.126 auto-discovers the bundled native binary — no
   // pathToClaudeCodeExecutable needed. settingSources: [] ensures no
   // host filesystem settings leak into the container agent.
@@ -208,6 +233,20 @@ export function runClaudeQuery(
       persistSession: false,
       settingSources: [],
       env: childEnv,
+      // NOT canUseTool — the Task 12 spike found canUseTool is never
+      // invoked for the server-executed WebSearch tool (confirmed under
+      // bypassPermissions above too). PreToolUse is the mechanism that
+      // actually gates it pre-dispatch. See websearch_dlp.ts. WebFetch is
+      // a genuine local dispatch (it actually dials out), but is gated the
+      // same way for consistency and because PreToolUse is still the
+      // earliest point to deny before any egress happens. See
+      // webfetch_guard.ts.
+      hooks: {
+        PreToolUse: [
+          { matcher: "WebSearch", hooks: [webSearchDlpHook] },
+          { matcher: "WebFetch", hooks: [webFetchGuardHook] },
+        ],
+      },
     },
   });
 

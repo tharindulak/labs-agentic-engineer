@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { readSnapshot, filterTurnSnapshot, loadSkillsFromSnapshot } from "../src/conversation/load-workspace.js";
+import { readSnapshot, filterTurnSnapshot, keepInTurnSnapshot, loadSkillsFromSnapshot } from "../src/conversation/load-workspace.js";
 import { buildSkillCatalog } from "../src/agents/main/prompt.js";
 
 function makeTree(files: Record<string, string | Buffer>): string {
@@ -41,8 +41,12 @@ test("readSnapshot walks recursively with POSIX keys and applies the turn filter
     "specs/design/design.cell": "title Shop\n",
     "specs/design/system.dsl": "workspace {}\n",
     "specs/design/components/api/design.json": "{}\n",
+    // Produced + consumed OpenAPI contracts: the two admitted *.yaml shapes —
+    // a turn must be able to read back the spec it just stored.
+    "specs/design/components/api/openapi.yaml": "openapi: 3.0.3\n",
+    "specs/design/components/api/dependencies/stripe.openapi.yaml": "openapi: 3.0.3\n",
     // Everything below must be EXCLUDED from the turn input:
-    "specs/design/components/api/openapi.yaml": "openapi: 3.0.3\n", // not .md/.dsl/design.json
+    "specs/design/components/api/workload.yaml": "kind: Workload\n", // arbitrary yaml, not one of the two admitted shapes
     "specs/design/components/api/api.gen.json": "{}\n", // derived projection
     "specs/design/wireframe.excalidraw": "{}\n", // derived scene
     "src/main.go": "package main\n", // code
@@ -53,7 +57,9 @@ test("readSnapshot walks recursively with POSIX keys and applies the turn filter
   try {
     const snap = readSnapshot(root);
     assert.deepEqual(Object.keys(snap).sort(), [
+      "specs/design/components/api/dependencies/stripe.openapi.yaml",
       "specs/design/components/api/design.json",
+      "specs/design/components/api/openapi.yaml",
       "specs/design/design.cell",
       "specs/design/design.md",
       "specs/design/system.dsl",
@@ -71,7 +77,9 @@ test("filterTurnSnapshot mirrors the walk's rules over an in-memory map", () => 
     "b/system.dsl": "y",
     "b/design.json": "z",
     "specs/validation/validation-criteria.json": "keep",
-    "b/openapi.yaml": "drop",
+    "specs/design/components/api/openapi.yaml": "keep",
+    "specs/design/components/api/dependencies/stripe.openapi.yaml": "keep",
+    "b/openapi.yaml": "drop", // not under specs/design/components/*/
     "b/x.gen.json": "drop",
     ".hidden/inner.md": "drop",
     "b/.dot.md": "drop",
@@ -80,8 +88,24 @@ test("filterTurnSnapshot mirrors the walk's rules over an in-memory map", () => 
     "a.md",
     "b/design.json",
     "b/system.dsl",
+    "specs/design/components/api/dependencies/stripe.openapi.yaml",
+    "specs/design/components/api/openapi.yaml",
     "specs/validation/validation-criteria.json",
   ]);
+});
+
+test("keepInTurnSnapshot admits the two OpenAPI contract shapes but still rejects arbitrary yaml", () => {
+  // Produced contract: specs/design/components/<c>/openapi.yaml
+  assert.equal(keepInTurnSnapshot("specs/design/components/orders/openapi.yaml"), true);
+  // Consumed contract: specs/design/components/<c>/dependencies/<dep>.openapi.yaml
+  assert.equal(keepInTurnSnapshot("specs/design/components/orders/dependencies/stripe.openapi.yaml"), true);
+  // Arbitrary *.yaml — including workload.yaml sitting right next to an admitted
+  // spec — must stay excluded; only the two exact shapes above are admitted.
+  assert.equal(keepInTurnSnapshot("specs/design/components/orders/workload.yaml"), false);
+  assert.equal(keepInTurnSnapshot("workload.yaml"), false);
+  assert.equal(keepInTurnSnapshot("specs/design/components/orders/openapi.yml"), false);
+  // A `*` must not cross a path segment: nesting the dep name breaks the shape.
+  assert.equal(keepInTurnSnapshot("specs/design/components/orders/dependencies/nested/stripe.openapi.yaml"), false);
 });
 
 const SKILL_MD = (name: string, description: string, body: string): string =>
@@ -107,7 +131,7 @@ test("skills snapshot: FLAT layout (skills/<name>/) with kind in frontmatter", (
     );
     assert.equal(source.load("go")?.content, "Write idiomatic Go.");
     assert.equal(source.load("high-level-architecture")?.content, "Components live under specs/design.");
-    assert.equal(source.loadReference("org-style", "references/tone.md"), "REF BODY — tone guide");
+    assert.deepEqual(source.loadReference("org-style", "references/tone.md"), { content: "REF BODY — tone guide" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -143,7 +167,7 @@ test("skills snapshot: LEGACY nested layout still scans (old snapshots), lazy bo
     ),
     "skills/custom/org-style/SKILL.md": SKILL_MD("org-style", "house style", "Use our tone.\n\nSee references/tone.md."),
     "skills/custom/org-style/references/tone.md": "REF BODY — tone guide",
-    "skills/custom/org-style/references/notes.txt": "not a .md — never addressable",
+    "skills/custom/org-style/references/notes.txt": "any extension is addressable, not just .md",
     // A dir without SKILL.md is not a skill:
     "skills/imported/broken/readme.md": "no SKILL.md here",
   });
@@ -159,17 +183,58 @@ test("skills snapshot: LEGACY nested layout still scans (old snapshots), lazy bo
       [false, true, false],
     );
 
-    // Lazy body read (frontmatter stripped, trimmed) + reference listing.
+    // Lazy body read (frontmatter stripped, trimmed) + full aux-file listing (any extension).
     assert.equal(source.load("go")?.content, "Write idiomatic Go.");
-    assert.deepEqual(source.load("org-style")?.references, ["references/tone.md"]);
-    assert.equal(source.loadReference("org-style", "references/tone.md"), "REF BODY — tone guide");
+    assert.deepEqual(source.load("org-style")?.references, ["references/notes.txt", "references/tone.md"]);
+    assert.deepEqual(source.loadReference("org-style", "references/tone.md"), { content: "REF BODY — tone guide" });
+    assert.deepEqual(source.loadReference("org-style", "references/notes.txt"), {
+      content: "any extension is addressable, not just .md",
+    });
 
     // Misses are undefined; reference paths are allowlisted (no raw fs resolution).
     assert.equal(source.load("nope"), undefined);
     assert.equal(source.loadReference("org-style", "references/missing.md"), undefined);
     assert.equal(source.loadReference("org-style", "../../../etc/passwd"), undefined);
-    assert.equal(source.loadReference("org-style", "references/notes.txt"), undefined);
     assert.equal(source.loadReference("go", "references/tone.md"), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("skills snapshot: full Agent Skills structure — recursive walk lists every aux file, SKILL.md and dotfiles skipped", () => {
+  const root = makeTree({
+    "skills/toolkit/SKILL.md": SKILL_MD("toolkit", "full aux structure", "See scripts/run.mjs and assets/logo.png."),
+    "skills/toolkit/references/a.md": "REF A",
+    "skills/toolkit/scripts/run.mjs": "export default () => {};\n",
+    // PNG magic bytes + a NUL — not valid UTF-8 text.
+    "skills/toolkit/assets/logo.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d, 0x0a]),
+    "skills/toolkit/extra/deep/n.txt": "nested text",
+    "skills/toolkit/.hidden.txt": "dotfile — skipped",
+    "skills/toolkit/.hiddendir/x.md": "dot dir — skipped",
+  });
+  try {
+    const source = loadSkillsFromSnapshot(root);
+    assert.deepEqual(source.load("toolkit")?.references, [
+      "assets/logo.png",
+      "extra/deep/n.txt",
+      "references/a.md",
+      "scripts/run.mjs",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("loadSkillReference: text file → content, binary file → a binary marker (never inlined into context)", () => {
+  const root = makeTree({
+    "skills/toolkit/SKILL.md": SKILL_MD("toolkit", "full aux structure", "See scripts/run.mjs and assets/logo.png."),
+    "skills/toolkit/scripts/run.mjs": "export default () => {};\n",
+    "skills/toolkit/assets/logo.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0d, 0x0a]),
+  });
+  try {
+    const source = loadSkillsFromSnapshot(root);
+    assert.deepEqual(source.loadReference("toolkit", "scripts/run.mjs"), { content: "export default () => {};\n" });
+    assert.deepEqual(source.loadReference("toolkit", "assets/logo.png"), { binary: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

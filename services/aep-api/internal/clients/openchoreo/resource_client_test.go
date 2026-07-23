@@ -631,6 +631,62 @@ func TestListClusterResourceTypes_Success(t *testing.T) {
 	}
 }
 
+// ---- ListResourceTypes / GetResourceType ------------------------------------------
+
+func TestListResourceTypes_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/namespaces/wc-abc/resourcetypes" || r.Method != http.MethodGet {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, http.StatusOK, resourceTypeList{Items: []ResourceType{
+			{Metadata: OCObjectMeta{Name: "postgres-rt"}},
+			{Metadata: OCObjectMeta{Name: "redis-rt"}},
+		}})
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	got, err := c.ListResourceTypes(context.Background(), "wc-abc")
+	if err != nil {
+		t.Fatalf("ListResourceTypes: %v", err)
+	}
+	if len(got) != 2 || got[0].Metadata.Name != "postgres-rt" {
+		t.Errorf("unexpected result: %+v", got)
+	}
+}
+
+func TestGetResourceType_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/namespaces/wc-abc/resourcetypes/postgres-rt" || r.Method != http.MethodGet {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, http.StatusOK, ResourceType{Metadata: OCObjectMeta{Name: "postgres-rt"}})
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	got, err := c.GetResourceType(context.Background(), "wc-abc", "postgres-rt")
+	if err != nil {
+		t.Fatalf("GetResourceType: %v", err)
+	}
+	if got.Metadata.Name != "postgres-rt" {
+		t.Errorf("unexpected result: %+v", got)
+	}
+}
+
+func TestGetResourceType_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusNotFound, map[string]string{"error": "not found"})
+	}))
+	defer srv.Close()
+
+	c := newTestResourceClient(t, srv)
+	_, err := c.GetResourceType(context.Background(), "wc-abc", "missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
 // ---- ListWorkloadEndpoints --------------------------------------------------------
 
 func TestListWorkloadEndpoints_Success(t *testing.T) {

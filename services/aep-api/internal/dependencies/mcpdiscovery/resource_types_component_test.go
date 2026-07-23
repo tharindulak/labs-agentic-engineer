@@ -17,12 +17,12 @@
 // COMPONENT tier: the platform-resource-type
 // discovery endpoint through the REAL production handler chain — faked auth →
 // contract validation → the deny-by-default tenant gate in ENFORCE → the
-// strict handler (handlers_dependencies.go) — with only the resource-type
-// lister faked. Replaces the retired Huma registration/spec test; the
-// domain→DTO projection assertions now ride the wire response.
+// strict handler (handlers.go) — with only the resource-type lister faked.
+// Replaces the retired Huma registration/spec test; the domain→DTO projection
+// assertions now ride the wire response.
 //
-// External test package: the harness imports api, which imports dependencies —
-// an in-package test file would be an import cycle.
+// External test package: the harness imports edge, which imports the
+// dependencies domain — an in-package test file would be an import cycle.
 package mcpdiscovery_test
 
 import (
@@ -34,11 +34,13 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	dephttpapi "github.com/wso2/aep/aep-api/internal/dependencies/httpapi"
+	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// stubResourceTypeLister satisfies dependencies.ResourceTypeLister.
+// stubResourceTypeLister satisfies mcpdiscovery.ResourceTypeLister.
 type stubResourceTypeLister struct {
 	types []dependencies.PlatformResourceType
 	err   error
@@ -46,6 +48,28 @@ type stubResourceTypeLister struct {
 
 func (s stubResourceTypeLister) List(context.Context) ([]dependencies.PlatformResourceType, error) {
 	return s.types, s.err
+}
+
+// stubDesignReader satisfies provisioning.DesignReader — the single-project
+// committed-design fixture the consumers overlay tests scan.
+type stubDesignReader struct{ comps []spec.DesignComponent }
+
+func (s stubDesignReader) ReadDesignComponents(context.Context, string, string) ([]spec.DesignComponent, error) {
+	return s.comps, nil
+}
+
+// stubProjectLister satisfies provisioning.ProjectLister, org-filtered like
+// the real repository-backed adapter.
+type stubProjectLister struct{ refs []provisioning.ProjectRef }
+
+func (s stubProjectLister) ListProjects(_ context.Context, orgID string) ([]provisioning.ProjectRef, error) {
+	var out []provisioning.ProjectRef
+	for _, r := range s.refs {
+		if r.OrgID == orgID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func newLister(t *testing.T, lister stubResourceTypeLister) *componenttest.Harness {
@@ -137,5 +161,77 @@ func TestPlatformResourceTypes_NoClaims401(t *testing.T) {
 
 	if resp := h.NoAuth().Get("/api/v1/dependencies/platform-resource-types"); resp.Code != 401 {
 		t.Fatalf("claimless: want 401, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+// newListerWithProvisioning assembles the dependencies domain with both the
+// resource-type lister and a real provisioning.Service, so the overlay rides
+// the production handler chain.
+func newListerWithProvisioning(t *testing.T, lister stubResourceTypeLister, prov *provisioning.Service) *componenttest.Harness {
+	t.Helper()
+	deps, err := dephttpapi.New(dephttpapi.Deps{ResourceTypes: lister, ProvisioningSvc: prov})
+	if err != nil {
+		t.Fatalf("assemble dependencies domain: %v", err)
+	}
+	return componenttest.New(t, componenttest.Options{Deps: edge.Deps{Dependencies: deps}})
+}
+
+// The "used by" overlay: a component's platform-resource dependency
+// (design-scanned across the calling org's projects, via the real
+// provisioning.Service) surfaces as a ConsumerDTO on its matching type, keyed
+// case-insensitively on resourceType — mirroring how ExternalResourceDTO
+// carries its own design-scanned consumers.
+func TestPlatformResourceTypes_ConsumersOverlay(t *testing.T) {
+	t.Parallel()
+	prov := provisioning.NewService(provisioning.Deps{
+		Design: stubDesignReader{comps: []spec.DesignComponent{{
+			Name: "orders",
+			Dependencies: []spec.Dependency{
+				// Mixed-case resourceType must still match the "postgres-cnpg" type.
+				{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "Postgres-CNPG"},
+			},
+		}}},
+		Projects: stubProjectLister{refs: []provisioning.ProjectRef{{OrgID: "acme", ProjectID: "shop"}}},
+	})
+	h := newListerWithProvisioning(t, stubResourceTypeLister{types: []dependencies.PlatformResourceType{
+		{Name: "postgres-cnpg"},
+		{Name: "redis-cache"},
+	}}, prov)
+
+	resp := h.AsOrg("acme").Get("/api/v1/dependencies/platform-resource-types")
+	if resp.Code != 200 {
+		t.Fatalf("list: got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var got []gen.PlatformResourceTypeDTO
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body: %v\n%s", err, resp.Body.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if len(got[0].Consumers) != 1 || got[0].Consumers[0].ProjectID != "shop" || got[0].Consumers[0].ComponentName != "orders" {
+		t.Fatalf("postgres-cnpg consumers = %+v, want the design-scanned orders consumer", got[0].Consumers)
+	}
+	if len(got[1].Consumers) != 0 {
+		t.Fatalf("redis-cache must have no consumers, got %+v", got[1].Consumers)
+	}
+}
+
+// A nil/unwired ProvisioningSvc must not fail the request — the consumers
+// overlay is additive on top of the primary catalog data.
+func TestPlatformResourceTypes_NoProvisioningSvc_ConsumersEmpty(t *testing.T) {
+	t.Parallel()
+	h := newLister(t, stubResourceTypeLister{types: []dependencies.PlatformResourceType{{Name: "postgres-cnpg"}}})
+
+	resp := h.AsOrg("acme").Get("/api/v1/dependencies/platform-resource-types")
+	if resp.Code != 200 {
+		t.Fatalf("list: got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var got []gen.PlatformResourceTypeDTO
+	if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body: %v\n%s", err, resp.Body.String())
+	}
+	if len(got) != 1 || len(got[0].Consumers) != 0 {
+		t.Fatalf("want no consumers with an unwired ProvisioningSvc, got %+v", got)
 	}
 }
