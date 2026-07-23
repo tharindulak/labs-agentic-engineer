@@ -20,9 +20,9 @@
  * A self-contained spec-bundle fixture for this package's fold tests: free-form
  * prose, markdown-with-frontmatter, indentation-sensitive OpenAPI YAML, and a
  * schema-gated component `design.json` — the shapes `FileBundle` must handle.
- * The agents service keeps its own copy (`SEED_FILES` in `prompt.ts`, the demo
- * seed); this package is fold-only and depends on nothing in the service, so its
- * tests carry their own corpus.
+ * The agents service keeps its own copy (`SEED_FILES` in `test/seed-files.ts`); this
+ * package is fold-only and depends on nothing in the service, so its tests carry
+ * their own corpus.
  */
 export const SEED_FILES: Record<string, string> = {
   "specs/requirements/requirements.md": `# Overview

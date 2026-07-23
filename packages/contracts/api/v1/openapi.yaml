@@ -414,6 +414,90 @@ paths:
       summary: Get a project
       tags:
       - Projects
+  /projects/{projectName}/activity:
+    get:
+      operationId: list-activity
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Max events to return (default 50, max 200).
+        explode: false
+        in: query
+        name: limit
+        schema:
+          description: Max events to return (default 50, max 200).
+          format: int64
+          type: integer
+      - description: 'Keyset cursor: return events strictly older than this occurredAt (RFC3339); pair with beforeId.'
+        explode: false
+        in: query
+        name: before
+        schema:
+          description: 'Keyset cursor: occurredAt of the last event seen.'
+          type: string
+      - description: 'Keyset cursor tiebreak: the id of the last event seen (pair with before).'
+        explode: false
+        in: query
+        name: beforeId
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityFeed'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: List a project's activity events (newest first, cursor-paginated)
+      tags:
+      - Projects
+  /projects/{projectName}/activity/stream:
+    get:
+      operationId: stream-activity
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: 'SSE resume cursor: the last frame id seen (occurredAt|id). Replay resumes after it.'
+        in: header
+        name: Last-Event-ID
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/ActivityEvent'
+          description: 'SSE stream of the project''s activity feed: an initial replay of recent events (oldest-first on the wire so the client appends in order), then a live tail as new events are recorded. One data: JSON ActivityEvent per frame, id: occurredAt|id. Reconnect-safe: the client dedups by id.'
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Stream a project's activity feed (replay + live tail) as SSE
+      tags:
+      - Projects
   /projects/{projectName}/agents/{conversationId}/messages:
     get:
       operationId: get-conversation
@@ -1758,6 +1842,37 @@ paths:
       summary: Attach to a turn's event stream (SSE replay + live tail)
       tags:
       - GenAI
+  /projects/{projectName}/usage:
+    get:
+      description: Per-phase actual usage for a project (#245) — spec, build, validation, plus the current
+        drafting cycle. USD derived at read time from the configured model rates (ADR-0011).
+      operationId: get-project-usage
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectUsage'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Get per-phase project usage
+      tags:
+      - Projects
   /rca-agent/reports:
     get:
       operationId: list-rca-agent-reports
@@ -2069,9 +2184,6 @@ paths:
 components:
   schemas:
     AccessRequest:
-      x-go-type: models.AccessRequest
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
       additionalProperties: false
       properties:
         consumerComponentName:
@@ -2109,6 +2221,63 @@ components:
       - status
       - createdAt
       - updatedAt
+      type: object
+    ActivityEvent:
+      additionalProperties: false
+      description: One project activity event (issue #239). The console renders the line from these structured facts; tone is derived client-side from type.
+      properties:
+        id:
+          type: string
+        type:
+          enum: [spec_updated, spec_published, plan_derived, task_started, task_deployed, task_failed]
+          type: string
+          x-go-type: string
+        actorKind:
+          enum: [user, agent]
+          type: string
+          x-go-type: string
+        actorId:
+          type: string
+        actorName:
+          type: string
+        issue:
+          format: int64
+          type: integer
+        title:
+          type: string
+        component:
+          type: string
+        environment:
+          type: string
+        tag:
+          type: string
+        occurredAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - type
+      - actorKind
+      - actorName
+      - occurredAt
+      type: object
+    ActivityFeed:
+      additionalProperties: false
+      description: A page of activity events plus the cursor for the next (older) page.
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/ActivityEvent'
+          type: array
+          nullable: true
+        nextBefore:
+          description: occurredAt cursor for the next page; absent when there are no older events.
+          type: string
+        nextBeforeId:
+          description: id cursor tiebreak for the next page.
+          type: string
+      required:
+      - items
       type: object
     ApplyRequest:
       additionalProperties: false
@@ -2397,6 +2566,10 @@ components:
           type: string
         tasks:
           $ref: '#/components/schemas/BuildTally'
+        usage:
+          $ref: '#/components/schemas/Usage'
+          description: Aggregate actual usage of the run's coding executions (#245); absent for runs
+            that predate usage capture.
       required:
       - tag
       - status
@@ -2499,9 +2672,6 @@ components:
       - name
       type: object
     ComponentConfig:
-      x-go-type: models.ComponentConfig
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
       nullable: true
       additionalProperties: false
       properties:
@@ -2584,9 +2754,9 @@ components:
       - key
       type: object
     ConfigPatch:
-      x-go-type: models.ConfigPatch
+      x-go-type: orgconfig.ConfigPatch
       x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
         gitProvider:
@@ -2643,9 +2813,9 @@ components:
           nullable: true
       type: object
     ConfigProjection:
-      x-go-type: models.ConfigProjection
+      x-go-type: orgconfig.ConfigProjection
       x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
         gitProvider:
@@ -2905,9 +3075,6 @@ components:
     EnvVar:
       # Hand-written in models/ (the gorm-persisted EnvVarSlice embeds it);
       # gen aliases this type to keep the models↔gen dependency one-way.
-      x-go-type: models.EnvVar
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
       additionalProperties: false
       properties:
         key:
@@ -3036,9 +3203,9 @@ components:
       - sha
       type: object
     GitProviderProjection:
-      x-go-type: models.GitProviderProjection
+      x-go-type: orgconfig.GitProviderProjection
       x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
         connectedAt:
@@ -3086,9 +3253,9 @@ components:
       - connectedAt
       type: object
     IDPProjection:
-      x-go-type: models.IDPProjection
+      x-go-type: orgconfig.IDPProjection
       x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
         hasClientSecret:
@@ -3218,9 +3385,9 @@ components:
       - Labels
       type: object
     LLMProjection:
-      x-go-type: models.LLMProjection
+      x-go-type: orgconfig.LLMProjection
       x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       properties:
         connectedAt:
@@ -3485,6 +3652,28 @@ components:
       - build
       - deploy
       type: object
+    ProjectUsage:
+      additionalProperties: false
+      description: Per-phase actual usage for a project (#245). All figures derive from persisted per-run token records (ADR-0011); costUsd is computed at read time from the configured model rates.
+      properties:
+        build:
+          $ref: "#/components/schemas/Usage"
+          description: All coding/build executions.
+        draftCycle:
+          $ref: "#/components/schemas/Usage"
+          description: Spec/design agent turns since the last published spec tag — the Spec view chip.
+        spec:
+          $ref: "#/components/schemas/Usage"
+          description: All spec/design agent turns (project lifetime).
+        validation:
+          $ref: "#/components/schemas/Usage"
+          description: All validation executions.
+      required:
+        - spec
+        - build
+        - validation
+        - draftCycle
+      type: object
     ProvisionBody:
       additionalProperties: false
       properties:
@@ -3500,9 +3689,6 @@ components:
           type: object
       type: object
     RcaAgentReport:
-      x-go-type: models.RcaAgentReport
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/models
       additionalProperties: false
       description: An RCA report from the OpenChoreo SRE/RCA-agent handoff (console issues
       properties:
@@ -3520,6 +3706,7 @@ components:
         deployedAt:
           type: string
           format: date-time
+          x-go-type: '*time.Time'
         diagnosis:
           description: Full RCA diagnosis + remediation content (markdown)
           type: string
@@ -3537,6 +3724,7 @@ components:
             absent when the handoff was config-only
           format: int64
           type: integer
+          x-go-type: '*int64'
         issueTitle:
           type: string
         issueUrl:
@@ -3556,6 +3744,7 @@ components:
       - summary
       - classification
       - diagnosis
+      - dispatched
       - deployed
       type: object
     RcaAgentReportList:
@@ -3918,6 +4107,9 @@ components:
           type: string
         title:
           type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+          description: Aggregate actual usage across the task's executions (#245); absent for tasks that predate usage capture.
       required:
       - issueNumber
       - title
@@ -4098,6 +4290,39 @@ components:
           type: string
       required:
       - skillMd
+      type: object
+    Usage:
+      additionalProperties: false
+      description: Actual token usage for one unit of agent work or an aggregate (#245). Tokens + model are the persisted truth; costUsd is derived at read time from the configured model rates (ADR-0011) and null when no rate is configured for the model.
+      properties:
+        cacheCreationTokens:
+          format: int64
+          type: integer
+        cacheReadTokens:
+          format: int64
+          type: integer
+        costUsd:
+          description: Catalog-derived USD; null when pricing is unavailable for the model.
+          format: double
+          type: number
+          nullable: true
+          x-go-type: '*float64'
+        inputTokens:
+          format: int64
+          type: integer
+        model:
+          description: Model id the work ran on; "" on mixed-model aggregates.
+          type: string
+        outputTokens:
+          format: int64
+          type: integer
+      required:
+        - inputTokens
+        - outputTokens
+        - cacheReadTokens
+        - cacheCreationTokens
+        - model
+        - costUsd
       type: object
     Warning:
       additionalProperties: false

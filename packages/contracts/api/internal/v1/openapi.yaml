@@ -129,11 +129,11 @@ components:
       - expiresAt
       - identity
       - taskId
-      # Byte-compat: the served body is the orgcreds service's own struct —
-      # no mapping layer, so the runner-lockstep wire shape cannot drift.
-      x-go-type: orgcreds.RefreshResponse
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/internal/feature/orgcreds
+      # Generated as igen.RefreshResponse (no x-go-type). The org domain owns the
+      # RefreshResponse value type and projects onto this wire shape at the edge —
+      # igen must stay a leaf, so it cannot import the domain that owns the type.
+      # This schema IS the runner-lockstep wire contract; keep it field-aligned
+      # with the domain's mapping.
     Identity:
       description: 'Git commit identity. Field names are CAPITALIZED on the
         wire (historical lockstep — changing them needs a coordinated runner
@@ -154,8 +154,11 @@ components:
       - Email
       - Login
     ValidationContextResponse:
-      description: Deployed endpoints + criteria path for a validation run. Served
-        as the validation service's own struct (no mapping layer).
+      description: Deployed endpoints + criteria path for a validation run.
+        Generated as igen.ValidationContextResponse (no x-go-type) — igen must
+        stay a leaf, so the edge's internal handler projects the delivery
+        domain's own struct onto this wire shape (the same decoupling as
+        RefreshResponse).
       type: object
       additionalProperties: false
       properties:
@@ -168,9 +171,6 @@ components:
       required:
       - endpoints
       - criteriaPath
-      x-go-type: validation.ValidationContextResponse
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/internal/feature/validation
     ComponentEndpoint:
       type: object
       additionalProperties: false
@@ -182,12 +182,10 @@ components:
       required:
       - component
       - url
-      x-go-type: validation.ComponentEndpoint
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/internal/feature/validation
     TestCredential:
-      description: Test login credentials for a validation run. Served as the
-        validation service's own struct (no mapping layer).
+      description: Test login credentials for a validation run. Generated as
+        igen.TestCredential (no x-go-type); the edge's internal handler projects
+        the delivery domain's own struct onto this wire shape.
       type: object
       additionalProperties: false
       properties:
@@ -203,9 +201,6 @@ components:
       - username
       - password
       - mock
-      x-go-type: validation.TestCredential
-      x-go-type-import:
-        path: github.com/wso2/aep/aep-api/internal/feature/validation
     TestCredentialRequest:
       description: Optional hints for a runner test-credential request.
       type: object

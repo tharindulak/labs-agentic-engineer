@@ -90,24 +90,6 @@ func RepoDir(root string, ref RepoRef) (string, error) {
 	return filepath.Join(ReposDir(root), ref.OrgID, ref.ProjectID, ref.RepoSlug), nil
 }
 
-// GitDir is the bare mirror dir <repoDir>/git.
-func GitDir(root string, ref RepoRef) (string, error) {
-	d, err := RepoDir(root, ref)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(d, "git"), nil
-}
-
-// LockPath is the per-repo flock file <repoDir>/repo.lock.
-func LockPath(root string, ref RepoRef) (string, error) {
-	d, err := RepoDir(root, ref)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(d, "repo.lock"), nil
-}
-
 // SnapshotsDir is <repoDir>/snapshots.
 func SnapshotsDir(root string, ref RepoRef) (string, error) {
 	d, err := RepoDir(root, ref)
@@ -133,8 +115,8 @@ func SnapshotDir(root string, ref RepoRef, sha string) (string, error) {
 // already hold the slug dir (repos/<orgId>/<projectId>/<repoSlug>) — the
 // reaper walks the tree by hand and never reconstructs a RepoRef. They are
 // the un-validated slugDir-relative twins of the canonical RepoRef-based
-// GitDir / SnapshotsDir above (which stay the single derivation point from a
-// row); keeping the "git" / "snapshots" leaf names in one place.
+// SnapshotsDir above (which stays the single derivation point from a row);
+// keeping the "git" / "snapshots" leaf names in one place.
 
 // GitSubdir is <slugDir>/git.
 func GitSubdir(slugDir string) string { return filepath.Join(slugDir, "git") }

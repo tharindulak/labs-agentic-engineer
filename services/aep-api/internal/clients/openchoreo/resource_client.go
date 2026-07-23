@@ -696,7 +696,7 @@ func (c *resourceClient) ListWorkloadEndpoints(ctx context.Context, orgHandle st
 // (ReleaseName on ApplyResource's result):
 //
 //   - "" when the Resource was freshly created — any non-empty release
-//     satisfies the wait (the wait-for-nonempty case; see WaitForLatestRelease);
+//     satisfies the wait (the wait-for-nonempty case);
 //   - the stale release when an EXISTING Resource was reconciled — the wait then
 //     holds until the OC controller cuts the NEW release for the changed spec,
 //     so a reconcile never pins the binding to the pre-reconcile release.
@@ -726,11 +726,4 @@ func WaitForReleaseChange(ctx context.Context, rc ResourceClient, namespace, res
 		case <-time.After(interval):
 		}
 	}
-}
-
-// WaitForLatestRelease is the prior=="" special case of WaitForReleaseChange:
-// wait until any non-empty release appears. Used on the create path where no
-// stale release exists yet.
-func WaitForLatestRelease(ctx context.Context, rc ResourceClient, namespace, resourceName string, interval, timeout time.Duration) (string, error) {
-	return WaitForReleaseChange(ctx, rc, namespace, resourceName, "", interval, timeout)
 }

@@ -1,4 +1,5 @@
 import type { components } from "../../generated/aep-api";
+import { buildUsageByScenario, taskUsage } from "./usage";
 
 type ProjectStatus = components["schemas"]["ProjectStatus"];
 type ComponentList = components["schemas"]["ComponentList"];
@@ -414,12 +415,15 @@ function task(
   derivedStatus: string,
   component?: string,
 ): TaskView {
+  const usage = taskUsage[issueNumber];
   return {
     issueNumber,
     title,
     derivedStatus,
     issueUrl: `${BOARD_URL}/${issueNumber}`,
     ...(component !== undefined && { component }),
+    // Pending tasks (no execution yet) carry no usage — exercises the "—" cell (#245).
+    ...(usage !== undefined && { usage }),
     attention: null,
     dependsOn: null,
     executions: {},
@@ -477,6 +481,8 @@ const runningV1Build: BuildList = {
       status: "in_progress",
       tasks: { total: 4, done: 0, failed: 1, active: 3 },
       startedAt: "2026-07-10T09:12:00Z",
+      // Mid-build the aggregate is the cost so far — it accrues on the poll (#245).
+      usage: buildUsageByScenario.running,
     },
   ],
 };
@@ -488,6 +494,7 @@ const completedV1Build: BuildList = {
       tasks: { total: 4, done: 4, failed: 0, active: 0 },
       startedAt: "2026-07-10T09:12:00Z",
       completedAt: "2026-07-10T10:03:00Z",
+      usage: buildUsageByScenario.completed,
     },
   ],
 };

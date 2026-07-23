@@ -32,7 +32,6 @@ import {
   Menu,
   MenuItem,
   PageContent,
-  PageTitle,
   SearchBar,
   Typography,
   useMediaQuery,
@@ -45,6 +44,8 @@ import {
   Trash2,
 } from "@wso2/oxygen-ui-icons-react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { EmptyState } from "../../../components/EmptyState";
+import { PageHeader } from "../../../components/PageHeader";
 import type { components } from "../../../generated/aep-api";
 import { useProjectsList } from "../api/queries";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
@@ -142,28 +143,6 @@ function ProjectCard({
   );
 }
 
-function EmptyState() {
-  return (
-    <Box sx={{ textAlign: "center", py: 8 }}>
-      <Folder size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
-      <Typography variant="h6" gutterBottom>
-        No projects yet
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Tell AEP what you want to build and it becomes your first project.
-      </Typography>
-      <Button
-        variant="contained"
-        startIcon={<Plus size={20} />}
-        component={Link}
-        to="/projects/new"
-      >
-        Create project
-      </Button>
-    </Box>
-  );
-}
-
 // Grid columns per breakpoint — must mirror the card Grid size props below.
 function useGridColumns(): number {
   const theme = useTheme();
@@ -204,13 +183,11 @@ export function ProjectsList() {
 
   return (
     <PageContent>
-      <PageTitle>
-        <PageTitle.Header>Projects</PageTitle.Header>
-        <PageTitle.SubHeader>
-          Everything AEP is building for you, one project per app.
-        </PageTitle.SubHeader>
-        {!isTrueEmpty && (
-          <PageTitle.Actions>
+      <PageHeader
+        title="Projects"
+        subtitle="Everything AEP is building for you, one project per app."
+        {...(!isTrueEmpty && {
+          actions: (
             <Button
               variant="contained"
               startIcon={<Plus size={20} />}
@@ -219,9 +196,9 @@ export function ProjectsList() {
             >
               Create project
             </Button>
-          </PageTitle.Actions>
-        )}
-      </PageTitle>
+          ),
+        })}
+      />
 
       {isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
@@ -236,7 +213,21 @@ export function ProjectsList() {
           {error instanceof Error && error.message ? `: ${error.message}` : ""}
         </Alert>
       ) : isTrueEmpty ? (
-        <EmptyState />
+        <EmptyState
+          icon={<Folder size={48} />}
+          title="No projects yet"
+          description="Tell AEP what you want to build and it becomes your first project."
+          action={
+            <Button
+              variant="contained"
+              startIcon={<Plus size={20} />}
+              component={Link}
+              to="/projects/new"
+            >
+              Create project
+            </Button>
+          }
+        />
       ) : (
         <>
           <Box sx={{ maxWidth: 420, mb: 3 }}>

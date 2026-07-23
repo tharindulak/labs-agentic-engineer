@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestBuildBearerChallenge(t *testing.T) {
@@ -191,4 +193,14 @@ func TestTokenClaims_SubShadowsEmbeddedSubject(t *testing.T) {
 	if tc.Subject != "" {
 		t.Fatalf("tc.Subject = %q — the shadowing assumption changed; re-audit every tc.Sub consumer", tc.Subject)
 	}
+}
+
+// validateIssuer and validateAudience are thin wrappers for tests that
+// exercise the matcher directly with a raw allowed-list.
+func validateIssuer(issuer string, allowed []string) error {
+	return compileIssuers(allowed).match(issuer)
+}
+
+func validateAudience(audiences jwt.ClaimStrings, allowed []string) error {
+	return compileAudiences(allowed).match(audiences)
 }

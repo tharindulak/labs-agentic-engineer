@@ -22,17 +22,17 @@ import (
 	"go.temporal.io/sdk/activity"
 
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
-	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
-	"github.com/wso2/aep/aep-api/internal/feature/devflow"
-	"github.com/wso2/aep/aep-api/internal/feature/gitrepo"
-	"github.com/wso2/aep/aep-api/internal/feature/task"
-	"github.com/wso2/aep/aep-api/repositories"
+	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/delivery/devflow"
+	"github.com/wso2/aep/aep-api/internal/delivery/task"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // repoFullNameLookup resolves a project's "owner/name" from the repo row —
 // the devflow API's RepoLookup port.
 type repoFullNameLookup struct {
-	repos repositories.RepoRepository
+	repos sourcecontrol.RepoRepository
 }
 
 func (l repoFullNameLookup) RepoFullName(ctx context.Context, orgID, projectID string) (string, error) {
@@ -41,9 +41,9 @@ func (l repoFullNameLookup) RepoFullName(ctx context.Context, orgID, projectID s
 		return "", err
 	}
 	if row == nil {
-		return "", gitrepo.ErrRepoNotFound
+		return "", sourcecontrol.ErrRepoNotFound
 	}
-	owner, name, err := gitrepo.ParseOwnerRepo(row.RepoURL)
+	owner, name, err := sourcecontrol.ParseOwnerRepo(row.RepoURL)
 	if err != nil {
 		return "", err
 	}
@@ -57,7 +57,7 @@ func (l repoFullNameLookup) RepoFullName(ctx context.Context, orgID, projectID s
 // devflowSpecValidator re-runs the whole-spec hard gate at the build tag via
 // the artifacts service — the dev workflow's pre-plan defensive check.
 type devflowSpecValidator struct {
-	art artifacts.ArtifactService
+	art spec.ArtifactService
 }
 
 func (v devflowSpecValidator) ValidateSpecAtTag(ctx context.Context, orgID, projectID, tag string) error {
@@ -94,7 +94,7 @@ func (p devflowPlanner) RunPlan(ctx context.Context, orgID, projectID string) ([
 // executing fan-out. The list read model now excludes the validation task
 // itself, making the skip below redundant — kept as defense-in-depth, because
 // a validation task leaking into this graph would hang the dev workflow.
-func implementationTasks(views []task.TaskView) []devflow.PlannedTask {
+func implementationTasks(views []delivery.TaskView) []devflow.PlannedTask {
 	out := make([]devflow.PlannedTask, 0, len(views))
 	for _, v := range views {
 		if v.ExecutorClass == string(taskmeta.ClassValidation) {
@@ -111,6 +111,20 @@ func implementationTasks(views []task.TaskView) []devflow.PlannedTask {
 		})
 	}
 	return out
+}
+
+// devflowTitles resolves a Task's title for activity lines, over task.Reads.
+// Best-effort: the caller (RecordActivity) degrades a task-* line to just
+// "#<issue>" when the title is unavailable, so any error or not-found here
+// returns "" rather than propagating.
+type devflowTitles struct{ reads *task.Reads }
+
+func (t devflowTitles) TitleFor(ctx context.Context, orgID, projectID string, issue int) string {
+	detail, err := t.reads.Get(ctx, orgID, projectID, issue)
+	if err != nil || detail == nil {
+		return ""
+	}
+	return detail.Title
 }
 
 // heartbeatWriter records a Temporal activity heartbeat on each write so a

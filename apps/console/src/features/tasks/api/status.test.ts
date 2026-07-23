@@ -21,15 +21,15 @@ import { isActiveStatus, taskChip } from "./status";
 
 describe("taskChip", () => {
   it("gives on_hold its own distinct chip (#164 follow-up)", () => {
-    expect(taskChip("on_hold")).toEqual({ label: "On hold", color: "warning" });
+    expect(taskChip("on_hold")).toEqual({ label: "On hold", tone: "warning" });
   });
 
   it("keeps pending as its own chip, distinct from on_hold", () => {
-    expect(taskChip("pending")).toEqual({ label: "Pending", color: "default" });
+    expect(taskChip("pending")).toEqual({ label: "Pending", tone: "neutral" });
   });
 
   it("falls back to an error chip with the raw status for unknown values", () => {
-    expect(taskChip("???")).toEqual({ label: "???", color: "error" });
+    expect(taskChip("???")).toEqual({ label: "???", tone: "error" });
   });
 });
 

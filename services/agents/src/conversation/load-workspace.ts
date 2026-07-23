@@ -40,7 +40,7 @@ import { basename, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 // Reuse the bundle's single frontmatter grammar + LF canonicalizer so SKILL.md
 // fence parsing cannot drift from the spec-file fence parsing (same approach as
-// the eval-side resolver in `evals/skills.ts`, which this adapts).
+// the caller-side skill resolver the playground uses to materialize the mount).
 import { FRONTMATTER_RE, lf } from "@aep/agent-stream";
 import type { SkillCatalogEntry, SkillSource, LoadedSkillBody } from "../agents/main/skill-source.js";
 
@@ -108,7 +108,7 @@ export function readSnapshot(snapshotDir: string): Record<string, string> {
 
 // --- The `_skills` snapshot → lazy SkillSource --------------------------------
 
-/** Split a `SKILL.md` into frontmatter fields + body (adapted from `evals/skills.ts`). */
+/** Split a `SKILL.md` into frontmatter fields + body (mirrors the caller-side skill resolver). */
 function parseSkillMd(raw: string): { name?: string; description: string; body: string } {
   const text = lf(raw);
   const m = FRONTMATTER_RE.exec(text);

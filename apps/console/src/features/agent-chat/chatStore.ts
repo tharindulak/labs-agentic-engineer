@@ -29,6 +29,18 @@ export type ChatMessage =
       content: string;
       turnId?: string;
       status: "in_flight" | "completed" | "failed";
+      /**
+       * Who sent this turn. Optional so logs persisted before multi-user
+       * attribution (#130 follow-up) still parse — an absent author means
+       * "the signed-in user" for display purposes.
+       */
+      author?: { id: string; displayName: string };
+      /**
+       * Epoch millis the message was sent, for the feed's author-line time
+       * (task 3). Optional: rehydrated history carries no server timestamp,
+       * and logs from before this field simply render without a time.
+       */
+      createdAt?: number;
     }
   | { id: string; role: "assistant"; turnId: string; content: string }
   | {
@@ -181,6 +193,21 @@ export function replaceMessages(key: string, messages: ChatMessage[]): void {
     key,
     messages.map((m) => ({ ...m, id: nextId() })),
   );
+}
+
+/**
+ * Start a fresh conversation for the project (header "New conversation"):
+ * mint a new conversation uuid and clear the display log. The old server-side
+ * conversation stays intact server-side; this only re-points local identity
+ * and empties the panel. Callers gate this behind "no turn running".
+ */
+export function startNewConversation(org: string, project: string): void {
+  try {
+    localStorage.setItem(convKey(org, project), crypto.randomUUID());
+  } catch {
+    // identity is best-effort; a fresh id is minted lazily on next send
+  }
+  replaceMessages(storageKey(org, project), []);
 }
 
 /** The project's conversation uuid; minted + persisted on first use. */

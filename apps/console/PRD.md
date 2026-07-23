@@ -83,6 +83,13 @@ Features currently being built. One line each; **must be emptied on ship**
 (the line moves to the inventory below). If a line sits here for weeks,
 that's a stalled feature — investigate, don't ignore.
 
+- Cost visibility — actual USD spend for every unit of agentic work, per
+  phase (per task/build on the Builds page, drafting-cycle chip on the Spec
+  view; USD-only primary, token detail on expand, no overview surface);
+  actuals only — estimates and the model comparator are out of scope
+  (single-model platform); tokens stored, USD derived at read (ADR-0011) —
+  [#245](https://github.com/wso2/labs-agentic-engineer/issues/245)
+  (BE handshake: [#249](https://github.com/wso2/labs-agentic-engineer/issues/249))
 - Deployments page — two-column board (Development / Production): one card
   per component × binding with status chip, release, endpoint URL,
   deployed-at; unbound components show greyed "Not deployed" cards in dev;

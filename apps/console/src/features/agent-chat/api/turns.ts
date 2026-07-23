@@ -48,18 +48,66 @@ export async function startCollabTurn(
   return data.turnId;
 }
 
+export interface ConversationMessageAuthor {
+  id: string;
+  displayName: string;
+}
+
+export interface ConversationMessage {
+  role: string;
+  content: unknown;
+  /** Who sent this message (#130 multi-user threads) — absent for the agent
+   *  and for logs from before attribution existed. */
+  author?: ConversationMessageAuthor;
+}
+
+// The rehydrate response's schema is currently untyped in the contract
+// (`schema: {}` for GET .../messages in openapi.yaml — no author field
+// defined yet). Read it as an optional unknown-extension field instead of
+// regenerating the client: `author` first, `user` as a fallback name, so a
+// future contract addition is likely to just work without another change
+// here. See task-2 report for the contract-gap note.
+function mapAuthor(raw: unknown): ConversationMessageAuthor | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const source =
+    (raw as { author?: unknown }).author ?? (raw as { user?: unknown }).user;
+  if (typeof source !== "object" || source === null) return undefined;
+  const s = source as Record<string, unknown>;
+  const id = typeof s.id === "string" ? s.id : undefined;
+  const displayName =
+    typeof s.displayName === "string"
+      ? s.displayName
+      : typeof s.name === "string"
+        ? s.name
+        : undefined;
+  if (!id || !displayName) return undefined;
+  return { id, displayName };
+}
+
+/** Maps one raw history entry, dropping a malformed author rather than throwing. */
+export function mapConversationMessage(raw: unknown): ConversationMessage | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as { role?: unknown; content?: unknown };
+  if (typeof r.role !== "string") return null;
+  const author = mapAuthor(raw);
+  return { role: r.role, content: r.content, ...(author ? { author } : {}) };
+}
+
 /** Text-only rehydrate of a conversation's server-side history. */
 export async function getConversationMessages(
   projectName: string,
   conversationId: string,
-): Promise<{ role: string; content: unknown }[] | null> {
+): Promise<ConversationMessage[] | null> {
   const { data, error } = await client.GET(
     "/projects/{projectName}/agents/{conversationId}/messages",
     { params: { path: { projectName, conversationId } } },
   );
   if (error || data === undefined) return null;
-  const body = data as { messages?: { role: string; content: unknown }[] };
-  return body.messages ?? null;
+  const body = data as { messages?: unknown[] };
+  if (!body.messages) return null;
+  return body.messages
+    .map(mapConversationMessage)
+    .filter((m): m is ConversationMessage => m !== null);
 }
 
 /** The project's running turn, or null (204 / none). */

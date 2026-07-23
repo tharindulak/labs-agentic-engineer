@@ -21,24 +21,23 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
-	"github.com/wso2/aep/aep-api/internal/feature/build"
-	"github.com/wso2/aep/aep-api/internal/feature/dependencies/resources"
-	"github.com/wso2/aep/aep-api/internal/feature/design"
-	"github.com/wso2/aep/aep-api/internal/feature/devflow"
-	"github.com/wso2/aep/aep-api/internal/feature/provisioning"
-	"github.com/wso2/aep/aep-api/models"
+	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/delivery/build"
+	"github.com/wso2/aep/aep-api/internal/delivery/devflow"
+	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// buildSpecTagger adapts artifacts.SaveSpec onto the build feature's
+// buildSpecTagger adapts spec.SaveSpec onto the build feature's
 // SpecTagger port. Errors pass through unwrapped — the build handler unpacks
-// *artifacts.SpecValidationError into the 422 detail.
+// *spec.SpecValidationError into the 422 detail.
 type buildSpecTagger struct {
-	art artifacts.ArtifactService
+	art spec.ArtifactService
 }
 
-func (t buildSpecTagger) TagSpec(ctx context.Context, orgID, projectID string) (*artifacts.SpecSaveResult, error) {
-	return t.art.SaveSpec(ctx, orgID, projectID, artifacts.SaveRequest{Message: "Build"})
+func (t buildSpecTagger) TagSpec(ctx context.Context, orgID, projectID string) (*spec.SpecSaveResult, error) {
+	return t.art.SaveSpec(ctx, orgID, projectID, spec.SaveRequest{Message: "Build"})
 }
 
 // designAuthDeriver / designExternalRegistrar are the composition root's narrow
@@ -67,9 +66,9 @@ func (d buildAuthDeriver) DeriveEndUserAuthAtHead(ctx context.Context, orgID, pr
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, design.ErrEndUserAuthConflict):
+	case errors.Is(err, spec.ErrEndUserAuthConflict):
 		return fmt.Errorf("%w: %v", build.ErrEndUserAuthConflict, err)
-	case errors.Is(err, design.ErrResourceCatalogUnavailable):
+	case errors.Is(err, spec.ErrResourceCatalogUnavailable):
 		return fmt.Errorf("%w: %v", build.ErrResourceCatalogUnavailable, err)
 	default:
 		return err
@@ -83,11 +82,11 @@ func (d buildAuthDeriver) DeriveEndUserAuthAtHead(ctx context.Context, orgID, pr
 // needs to form the per-env secret entity. orgID is unused — the SM-API write
 // keys on ocOrgID.
 type buildSecretStager struct {
-	prov *resources.ExternalResourceProvisioner
+	prov *dependencies.ExternalResourceProvisioner
 }
 
 func (s buildSecretStager) StageExternalSecrets(ctx context.Context, _, ocOrgID, projectID, depName string, secretsByEnv map[string]map[string]string) (map[string]string, error) {
-	return s.prov.StageSecrets(ctx, ocOrgID, projectID, &models.ExternalResource{Name: depName}, secretsByEnv)
+	return s.prov.StageSecrets(ctx, ocOrgID, projectID, &dependencies.ExternalResource{Name: depName}, secretsByEnv)
 }
 
 // buildProvisionStatus adapts provisioning.Service.Status onto the build
@@ -125,7 +124,7 @@ type buildProvisioner struct {
 	prov   *provisioning.Service
 }
 
-func (b buildProvisioner) ProvisionForBuild(ctx context.Context, orgID, projectID, tag string, inputs []devflow.ProvisionInput) ([]devflow.ProvisionFailure, error) {
+func (b buildProvisioner) ProvisionForBuild(ctx context.Context, orgID, projectID, tag string, inputs []delivery.ProvisionInput) ([]devflow.ProvisionFailure, error) {
 	if err := b.design.RegisterExternalResources(ctx, orgID, projectID); err != nil {
 		return nil, err
 	}

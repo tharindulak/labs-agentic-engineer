@@ -58,10 +58,3 @@ func GetCorrelationID(ctx context.Context) string {
 	}
 	return ""
 }
-
-// WithCorrelationID returns a derived context carrying the given ID. Useful
-// for background workers that synthesize their own correlation ID before
-// calling outbound clients (which read the ID via GetCorrelationID).
-func WithCorrelationID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, correlationIDKey, id)
-}

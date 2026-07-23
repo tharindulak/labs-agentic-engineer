@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package agentfold is the Go half of the D14 fold-parity contract
-// (docs/design/shared-volume-clone-architecture.md): it re-implements the
+// Package agentfold is the Go half of the D14 fold-parity contract: it
+// re-implements the
 // TS FileBundle fold (packages/agent-stream/src/bundle.ts + change.ts) so
 // aep-api can reconstruct a turn's file mutations from the agent SSE stream
 // and commit them, gated by the terminal integrity manifest. Every op
@@ -141,22 +141,6 @@ func New(base BaseReader) *Fold {
 		baseCache: map[string]*string{},
 		overlay:   map[string]*string{},
 	}
-}
-
-// NewFromSnapshot builds a Fold whose base is an in-memory snapshot — the
-// exact seeding the TS `new FileBundle(files)` performs (goldens, tests).
-func NewFromSnapshot(seed map[string]string) *Fold {
-	files := make(map[string]string, len(seed))
-	for p, c := range seed {
-		files[p] = c
-	}
-	return New(func(_ context.Context, path string) ([]byte, bool, error) {
-		c, ok := files[path]
-		if !ok {
-			return nil, false, nil
-		}
-		return []byte(c), true, nil
-	})
 }
 
 // read returns the current LF-canonical content of path (overlay over base).
@@ -312,6 +296,8 @@ func (f *Fold) Touched() map[string]*string {
 // FullState overlays the fold's mutations onto a full seed snapshot —
 // the TS bundle.snapshot() equivalent, for golden comparison. The seed is
 // LF-canonicalized exactly like the FileBundle constructor.
+//
+//deadcode:keep test seam — full-snapshot readback for fold golden tests, incl. delivery/execution component test (cross-package).
 func (f *Fold) FullState(seed map[string]string) map[string]string {
 	out := make(map[string]string, len(seed))
 	for p, c := range seed {

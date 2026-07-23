@@ -69,6 +69,20 @@ let skills: SkillDetailBody[] = [];
 let skillUpdates: SkillUpdate[] = [];
 let initialized = false;
 
+// Persist the org's connection state (GitHub + Anthropic) across reloads so
+// completing onboarding sticks — otherwise a refresh (or a Vite HMR update)
+// drops the in-memory connection and the onboarding wizard re-gates every
+// route, leaving project pages like Builds unreachable.
+const CONNECTION_KEY = "aep:mock:connection";
+
+function persistConnection(): void {
+  try {
+    localStorage.setItem(CONNECTION_KEY, JSON.stringify({ gitProvider, llm }));
+  } catch {
+    /* quota — non-fatal in mock mode */
+  }
+}
+
 function ensureInitialized() {
   if (initialized) return;
   initialized = true;
@@ -79,6 +93,21 @@ function ensureInitialized() {
     // Onboarding resume-after-abandon (#102): GitHub landed, Anthropic
     // didn't — the wizard must open at its first incomplete step.
     gitProvider = { ...githubConnectedFixture };
+  }
+  // A persisted connection (the user onboarded in an earlier page load) wins
+  // over the scenario baseline so the wizard doesn't reappear on refresh.
+  try {
+    const raw = localStorage.getItem(CONNECTION_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw) as {
+        gitProvider: GitProviderProjection | null;
+        llm: LLMProjection | null;
+      };
+      gitProvider = saved.gitProvider;
+      llm = saved.llm;
+    }
+  } catch {
+    /* ignore malformed persisted state */
   }
   skills = seedSkills.map((s) => ({ ...s }));
   skillUpdates = seedSkillUpdates.map((u) => ({ ...u }));
@@ -208,12 +237,14 @@ export const settingsHandlers = [
       };
     }
 
+    persistConnection();
     return HttpResponse.json(configProjection());
   }),
 
   http.post("*/api/v1/config/git-provider/disconnect", () => {
     ensureInitialized();
     gitProvider = null;
+    persistConnection();
     return HttpResponse.json({ status: "disconnected" });
   }),
 

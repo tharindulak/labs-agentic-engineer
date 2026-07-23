@@ -14,9 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package gitfs is the git-object engine over the shared workspace volume
-// (docs/design/shared-volume-clone-architecture.md §5, §15): one bare mirror
-// per repo (`git clone --mirror`, never checked out), plumbing reads
+// Package gitfs is the git-object engine over the shared workspace volume: one
+// bare mirror per repo (`git clone --mirror`, never checked out), plumbing reads
 // (rev-parse / ls-tree / cat-file / archive), plumbing writes via a throwaway
 // index (read-tree / update-index / write-tree / commit-tree /
 // `push --force-with-lease`), annotated tags, local diffs, and immutable
@@ -25,7 +24,7 @@
 // This package is the single definition point for the Workspace and
 // SnapshotProvider ports, their DTOs, and the git sentinel errors. The domain
 // alias surface lives in internal/feature/gitrepo/workspace.go — consumers
-// import gitrepo.*, and the arch lock (internal/platform must stay
+// import sourcecontrol.*, and the arch lock (internal/platform must stay
 // feature-free) is honoured because the definitions live here.
 package gitfs
 
@@ -34,7 +33,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/credentials"
+	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // Sentinel errors. ErrRefNotFastForward and ErrTagAlreadyExists carry the
@@ -151,7 +150,7 @@ type RepoRef struct {
 	RepoSlug      string
 	CloneURL      string
 	DefaultBranch string
-	Cred          credentials.Credential
+	Cred          secrets.Credential
 }
 
 // Entry is one blob of a tree listing.
@@ -191,7 +190,7 @@ type TagSpec struct {
 
 // TagInfo describes a git tag: the peeled commit it points at and the tag
 // message subject (empty for lightweight tags). Field shape matches the
-// historical gitrepo.TagInfo (now an alias of this type).
+// historical sourcecontrol.TagInfo (now an alias of this type).
 type TagInfo struct {
 	Name       string `json:"name"`
 	CommitHash string `json:"commitHash"`
@@ -199,7 +198,7 @@ type TagInfo struct {
 }
 
 // GitIdentity is a git author/committer/tagger identity. Field names and
-// json tags are byte-identical to the historical gitrepo.GitIdentity (now an
+// json tags are byte-identical to the historical sourcecontrol.GitIdentity (now an
 // alias of this type) so the GitHub client's wire marshaling is unchanged.
 // Date is optional (git raw or RFC2822/ISO format accepted by git); empty
 // means "now".
@@ -237,7 +236,7 @@ func (p RetryPolicy) withDefaults() RetryPolicy {
 }
 
 // CompareResult is the per-file change summary between two refs. Field shape
-// matches the historical gitrepo.CompareResult (now an alias of this type),
+// matches the historical sourcecontrol.CompareResult (now an alias of this type),
 // which mirrored GitHub's GET /compare/{base}...{head} subset.
 type CompareResult struct {
 	// Status is the overall relationship of head to base: "ahead", "behind",

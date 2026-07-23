@@ -22,12 +22,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/api/apigen"
-	"github.com/wso2/aep/aep-api/internal/feature/artifacts"
-	"github.com/wso2/aep/aep-api/internal/feature/files"
-	"github.com/wso2/aep/aep-api/internal/feature/validation"
+	"github.com/wso2/aep/aep-api/internal/delivery"
+
+	"github.com/wso2/aep/aep-api/internal/delivery/validation"
+	"github.com/wso2/aep/aep-api/internal/gen"
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
-	"github.com/wso2/aep/aep-api/repositories"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // validationCriteriaPath is the acceptance-oracle file the validation minter
@@ -39,13 +39,13 @@ const validationCriteriaPath = "specs/validation/validation-criteria.json"
 // absent at HEAD as found=false with no error (the design agent has not authored
 // the oracle yet). Keeps the files feature out of the validation package.
 type validationCriteria struct {
-	files files.FilesService
+	files spec.FilesService
 }
 
 func (a validationCriteria) ReadValidationCriteria(ctx context.Context, orgID, projectID string) (raw []byte, found bool, err error) {
 	fc, rerr := a.files.Read(ctx, orgID, projectID, validationCriteriaPath)
 	if rerr != nil {
-		if errors.Is(rerr, files.ErrFileNotFound) {
+		if errors.Is(rerr, spec.ErrFileNotFound) {
 			return nil, false, nil
 		}
 		return nil, false, rerr
@@ -57,7 +57,7 @@ func (a validationCriteria) ReadValidationCriteria(ctx context.Context, orgID, p
 // ExecutionLocator port: it resolves a runner's execution id to its project,
 // org-fenced (GetByIDScoped returns nil for a different org — the tenant fence).
 type validationExecLocator struct {
-	repo repositories.ExecutionRepository
+	repo delivery.ExecutionRepository
 }
 
 func (l validationExecLocator) LookupExecutionProject(ctx context.Context, orgHandle, executionID string) (string, bool, error) {
@@ -74,7 +74,7 @@ func (l validationExecLocator) LookupExecutionProject(ctx context.Context, orgHa
 // componentDeployLister is the ListDeployments slice of ComponentService the
 // endpoint resolver needs (satisfied structurally by *component.componentService).
 type componentDeployLister interface {
-	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*apigen.DeploymentList, error)
+	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*gen.DeploymentList, error)
 }
 
 // validationEndpointResolver adapts the design read + ComponentService to
@@ -83,7 +83,7 @@ type componentDeployLister interface {
 // component with no resolved URL yet is skipped; a ListDeployments ERROR is
 // propagated (it is an infra failure, not "undeployed" — see ResolveEndpoints).
 type validationEndpointResolver struct {
-	store *artifacts.ArtifactStore
+	store *spec.ArtifactStore
 	comp  componentDeployLister
 }
 
@@ -119,7 +119,7 @@ func (r validationEndpointResolver) ResolveEndpoints(ctx context.Context, orgHan
 }
 
 // firstDeploymentURL returns the first non-empty deployed endpoint URL.
-func firstDeploymentURL(list *apigen.DeploymentList) string {
+func firstDeploymentURL(list *gen.DeploymentList) string {
 	if list == nil {
 		return ""
 	}
@@ -137,7 +137,7 @@ func firstDeploymentURL(list *apigen.DeploymentList) string {
 // validating phase, implemented — an independent OpenChoreo verification of
 // what the task outcomes already imply.
 type devflowValidator struct {
-	store *artifacts.ArtifactStore
+	store *spec.ArtifactStore
 	comp  componentDeployLister
 }
 
@@ -196,7 +196,7 @@ func (mockValidationCredentials) RequestCredentials(_ context.Context, _, _ stri
 // validation features.
 type devflowValidationResolver struct {
 	svc *validation.Service
-	art artifacts.ArtifactService
+	art spec.ArtifactService
 }
 
 func (r devflowValidationResolver) ResolveValidationTask(ctx context.Context, orgID, projectID string) (int, error) {

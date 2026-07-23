@@ -22,9 +22,6 @@ import (
 )
 
 func TestProvisionKindValidAndDerivesDeployed(t *testing.T) {
-	if !KindProvision.Valid() {
-		t.Fatalf("KindProvision must be a valid execution kind")
-	}
 	// A succeeded provision run derives deployed (no PR/build) so dependent
 	// coding tasks unblock — the ops arm, extended for provision.
 	execs := []ExecutionFact{{Kind: KindProvision, Status: ExecSucceeded, CreatedAt: time.Unix(1, 0)}}
@@ -49,9 +46,6 @@ func TestProvisionClassLabelAndParse(t *testing.T) {
 	}
 	if got := ClassLabel(ClassProvision); got != LabelProvision {
 		t.Fatalf("ClassLabel(ClassProvision) = %q, want %q", got, LabelProvision)
-	}
-	if got := Classify(LabelProvision); got != KindClass {
-		t.Fatalf("Classify(aep:provision) = %v, want KindClass", got)
 	}
 	p := ParseLabels([]string{LabelMarker, LabelProvision, OriginLabel(OriginSpecPlan)})
 	if !p.IsTask || p.Class != ClassProvision || p.ClassAmbiguous {

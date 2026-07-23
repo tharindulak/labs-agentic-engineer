@@ -22,19 +22,18 @@ import {
   Box,
   Button,
   CircularProgress,
-  IconButton,
   Stack,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { ArrowLeft, GitHub } from "@wso2/oxygen-ui-icons-react";
-import { createLink } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
+import { PageHeader } from "../../../components/PageHeader";
+import { StatusChip } from "../../../components/StatusChip";
 import { useTask } from "../api/queries";
+import { taskChip } from "../api/status";
 import { useTaskLog } from "../hooks/useTaskLog";
+import { GitHubIssueLink } from "./GitHubIssueLink";
 import { TaskLogView } from "./TaskLogView";
-import { TaskStatusChip } from "./TaskStatusChip";
-
-const LinkIconButton = createLink(IconButton);
 
 // Seconds elapsed since resetKey last changed, while `active`. Used to age the
 // waiting-state tail so a long, silent runner bootstrap (cold-start image pull
@@ -83,31 +82,47 @@ export function TaskPage({
     log.phase !== "ended" && (log.lines.length === 0 || anyRunning),
   );
 
+  // One back-link style (Task 5): a router Link, wrapped by PageHeader's
+  // shared PageTitle.BackButton — this replaces the old icon-only arrow.
+  const backTo = {
+    link: (
+      <Link to="/projects/$projectName/builds" params={{ projectName }} />
+    ),
+    label: "Back to Builds",
+  };
+
   if (detail.isPending) {
     return (
-      <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
-        <CircularProgress aria-label="Loading task" />
-      </Box>
+      <>
+        <PageHeader title={`Task #${issueNumber}`} backTo={backTo} />
+        <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
+          <CircularProgress aria-label="Loading task" />
+        </Box>
+      </>
     );
   }
 
   if (detail.isError) {
     return (
-      <Alert
-        severity="error"
-        action={<Button onClick={() => void detail.refetch()}>Retry</Button>}
-      >
-        Failed to load the task
-        {detail.error instanceof Error && detail.error.message
-          ? `: ${detail.error.message}`
-          : ""}
-      </Alert>
+      <>
+        <PageHeader title={`Task #${issueNumber}`} backTo={backTo} />
+        <Alert
+          severity="error"
+          action={<Button onClick={() => void detail.refetch()}>Retry</Button>}
+        >
+          Failed to load the task
+          {detail.error instanceof Error && detail.error.message
+            ? `: ${detail.error.message}`
+            : ""}
+        </Alert>
+      </>
     );
   }
 
   // The stream's view of the task is fresher than the initial fetch.
   const derivedStatus =
     log.settledStatus ?? log.task?.derivedStatus ?? detail.data.derivedStatus;
+  const chip = taskChip(derivedStatus);
   const title = log.task?.title ?? detail.data.title;
   const issueUrl = log.task?.issueUrl ?? detail.data.issueUrl;
   // TaskDetail (the get-task response) doesn't carry blockedBy — only the
@@ -136,63 +151,47 @@ export function TaskPage({
   }
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        flexDirection: "column",
-        // Fill the remaining page height so the log gets a real scroll area.
-        minHeight: 480,
-        height: "calc(100vh - 320px)",
-      }}
-    >
-      <Stack
-        direction="row"
-        spacing={1.5}
-        sx={{ alignItems: "center", mb: 2 }}
+    <>
+      <PageHeader
+        title={
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              #{issueNumber}
+            </Typography>
+            <span>{title}</span>
+            {derivedStatus === "on_hold" && blockedBy?.length ? (
+              <Tooltip title={`Waiting for ${blockedBy.join(", ")}`}>
+                {/* Box holds the ref Tooltip needs; hovering the pill shows
+                    the reason. */}
+                <Box sx={{ display: "inline-flex" }}>
+                  <StatusChip label={chip.label} tone={chip.tone} appearance="soft" />
+                </Box>
+              </Tooltip>
+            ) : (
+              <StatusChip label={chip.label} tone={chip.tone} appearance="soft" />
+            )}
+          </Stack>
+        }
+        backTo={backTo}
+        actions={
+          <GitHubIssueLink issueNumber={issueNumber} issueUrl={issueUrl} />
+        }
+      />
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          // Fill the remaining page height so the log gets a real scroll area.
+          minHeight: 480,
+          height: "calc(100vh - 320px)",
+        }}
       >
-        <Tooltip title="Back to the build">
-          <LinkIconButton
-            to="/projects/$projectName/builds"
-            params={{ projectName }}
-            aria-label="Back to the build"
-          >
-            <ArrowLeft size={18} />
-          </LinkIconButton>
-        </Tooltip>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontVariantNumeric: "tabular-nums" }}
-        >
-          #{issueNumber}
-        </Typography>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, minWidth: 0 }}>
-          {title}
-        </Typography>
-        {derivedStatus === "on_hold" && blockedBy?.length ? (
-          <Tooltip title={`Waiting for ${blockedBy.join(", ")}`}>
-            {/* Box holds the ref Tooltip needs; hovering the pill shows the reason. */}
-            <Box sx={{ display: "inline-flex" }}>
-              <TaskStatusChip derivedStatus={derivedStatus} />
-            </Box>
-          </Tooltip>
-        ) : (
-          <TaskStatusChip derivedStatus={derivedStatus} />
-        )}
-        <Box sx={{ flexGrow: 1 }} />
-        <Tooltip title="Open the GitHub issue">
-          <IconButton
-            component="a"
-            href={issueUrl}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={`GitHub issue #${issueNumber}`}
-          >
-            <GitHub size={18} />
-          </IconButton>
-        </Tooltip>
-      </Stack>
-      <TaskLogView lines={log.lines} {...(tail ? { tail } : {})} />
-    </Box>
+        <TaskLogView lines={log.lines} {...(tail ? { tail } : {})} />
+      </Box>
+    </>
   );
 }

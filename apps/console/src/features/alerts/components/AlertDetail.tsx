@@ -24,7 +24,6 @@ import {
   CircularProgress,
   Link,
   PageContent,
-  PageTitle,
   Step,
   StepContent,
   StepLabel,
@@ -35,11 +34,13 @@ import {
 import { ExternalLink } from "@wso2/oxygen-ui-icons-react";
 import { Link as RouterLink, useNavigate } from "@tanstack/react-router";
 import { useAlertReport } from "../api/queries";
-import { ClassificationChip } from "./ClassificationChip";
+import { classificationLabel, classificationTone } from "../classification";
 // The diagnosis is Markdown (headings / lists / code / timeline); render it as
-// a preview rather than raw text. SkillMarkdown is the console's shared
+// a preview rather than raw text. MarkdownView is the console's shared
 // theme-token-styled react-markdown renderer.
-import { SkillMarkdown } from "../../settings/components/SkillMarkdown";
+import { MarkdownView } from "../../../components/MarkdownView";
+import { PageHeader } from "../../../components/PageHeader";
+import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 
 type RcaAgentReport = components["schemas"]["RcaAgentReport"];
@@ -66,7 +67,13 @@ function AlertReceivedContent({ report }: { report: RcaAgentReport }) {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-        <ClassificationChip classification={report.classification} />
+        {report.classification && (
+          <StatusChip
+            label={classificationLabel(report.classification)}
+            tone={classificationTone(report.classification)}
+            variant="outlined"
+          />
+        )}
         {report.component && (
           <Chip label={report.component} size="small" variant="outlined" />
         )}
@@ -76,7 +83,7 @@ function AlertReceivedContent({ report }: { report: RcaAgentReport }) {
           </Typography>
         )}
       </Box>
-      {report.diagnosis && <SkillMarkdown body={report.diagnosis} />}
+      {report.diagnosis && <MarkdownView>{report.diagnosis}</MarkdownView>}
     </Box>
   );
 }
@@ -196,15 +203,11 @@ export function AlertDetail({ alertId }: { alertId: string }) {
 
   return (
     <PageContent>
-      <Box sx={{ mb: 3 }}>
-        <PageTitle>
-          <PageTitle.BackButton component={<RouterLink to="/alerts" />} />
-          <PageTitle.Header>{report?.title ?? "Alert"}</PageTitle.Header>
-          {report?.project && (
-            <PageTitle.SubHeader>{report.project}</PageTitle.SubHeader>
-          )}
-        </PageTitle>
-      </Box>
+      <PageHeader
+        title={report?.title ?? "Alert"}
+        {...(report?.project && { subtitle: report.project })}
+        backTo={{ link: <RouterLink to="/alerts" />, label: "Back to Alerts" }}
+      />
 
       {isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>

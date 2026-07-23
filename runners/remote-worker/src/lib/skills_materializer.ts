@@ -41,8 +41,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-// SkillKind mirrors the platform's frontmatter `metadata.aep.kind` vocabulary
-// (docs/design/skills-unified-library-migration.md §3.2); absent → "org".
+// SkillKind mirrors the platform's frontmatter `metadata.aep.kind` vocabulary;
+// absent → "org".
 export type SkillKind = "platform" | "org" | "custom" | "imported";
 
 // SkillResolution is one applied skill resolved from the org-skills clone,

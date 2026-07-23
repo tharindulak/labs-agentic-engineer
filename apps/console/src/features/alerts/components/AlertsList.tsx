@@ -23,28 +23,16 @@ import {
   CircularProgress,
   ListingTable,
   PageContent,
-  PageTitle,
   Typography,
   formatRelativeTime,
 } from "@wso2/oxygen-ui";
 import { BellOff } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { EmptyState } from "../../../components/EmptyState";
+import { PageHeader } from "../../../components/PageHeader";
+import { StatusChip } from "../../../components/StatusChip";
 import { useAlertsInfinite } from "../api/queries";
-import { ClassificationChip } from "./ClassificationChip";
-
-function EmptyState() {
-  return (
-    <Box sx={{ textAlign: "center", py: 8 }}>
-      <BellOff size={48} style={{ opacity: 0.3, marginBottom: 16 }} />
-      <Typography variant="h6" gutterBottom>
-        No alerts yet
-      </Typography>
-      <Typography variant="body2" color="text.secondary">
-        RCA reports from the SRE-agent handoff will show up here.
-      </Typography>
-    </Box>
-  );
-}
+import { classificationLabel, classificationTone } from "../classification";
 
 export function AlertsList() {
   const navigate = useNavigate();
@@ -63,13 +51,10 @@ export function AlertsList() {
 
   return (
     <PageContent>
-      <PageTitle>
-        <PageTitle.Header>Alerts</PageTitle.Header>
-        <PageTitle.SubHeader>
-          RCA reports from the OpenChoreo SRE-agent handoff, across every
-          project.
-        </PageTitle.SubHeader>
-      </PageTitle>
+      <PageHeader
+        title="Alerts"
+        subtitle="RCA reports from the OpenChoreo SRE-agent handoff, across every project."
+      />
 
       {isPending ? (
         <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
@@ -84,7 +69,11 @@ export function AlertsList() {
           {error instanceof Error && error.message ? `: ${error.message}` : ""}
         </Alert>
       ) : items.length === 0 ? (
-        <EmptyState />
+        <EmptyState
+          icon={<BellOff size={48} />}
+          title="No alerts yet"
+          description="RCA reports from the SRE-agent handoff will show up here."
+        />
       ) : (
         <>
           <ListingTable.Container sx={{ width: "100%" }} disablePaper>
@@ -115,7 +104,13 @@ export function AlertsList() {
                             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                               {report.title}
                             </Typography>
-                            <ClassificationChip classification={report.classification} />
+                            {report.classification && (
+                              <StatusChip
+                                label={classificationLabel(report.classification)}
+                                tone={classificationTone(report.classification)}
+                                variant="outlined"
+                              />
+                            )}
                           </Box>
                           <Typography
                             variant="body2"

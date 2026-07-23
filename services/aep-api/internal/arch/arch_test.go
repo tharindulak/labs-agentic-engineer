@@ -18,21 +18,18 @@
 // that keeps the vertical-slice layout from regressing. The invariants:
 //
 //   - no flat services/ or controllers/ layer exists or is imported;
-//   - the feature→feature import graph matches an explicit ALLOWLIST (Go's
-//     compiler already forbids cycles, so the value here is catching NEW
-//     coupling: an edge not on the list fails, and a stale allowlist entry
-//     also fails so the list can't rot);
 //   - every internal/platform/* package and internal/contracts is
-//     feature-free (componenttest is the one deliberate exception — it
+//     domain-free (componenttest is the one deliberate exception — it
 //     assembles the real app);
-//   - contracts imports nothing module-internal at all (models re-exports
-//     FROM contracts, never the reverse);
-//   - all Go code lives under internal/ except cmd/, skills/ (go:embed
-//     anchors), and the deliberately-flat models/ + repositories/ kernel.
+//   - contracts imports nothing module-internal at all;
+//   - all Go code lives under internal/ except cmd/ (mains). The flat models/ +
+//     repositories/ kernels are DISSOLVED, and internal/feature/ is GONE — every
+//     entity/repository/feature now lives in its owning domain (the
+//     domain-boundary rules are in domain_arch_test.go).
 //
-// The feature and platform package lists are discovered from disk
-// (os.ReadDir), so a new package is policed the moment it exists. Runs under
-// plain `go test` — no extra tooling.
+// The platform package list is discovered from disk (os.ReadDir), so a new
+// package is policed the moment it exists. Runs under plain `go test` — no
+// extra tooling.
 package arch
 
 import (
@@ -47,100 +44,6 @@ import (
 )
 
 const mod = "github.com/wso2/aep/aep-api"
-
-// featureEdgeAllowlist is the complete set of permitted DIRECT
-// feature→feature imports. Adding a cross-feature import is a design
-// decision: extend this list in the same PR and say why, or (usually better)
-// cut the edge with a consumer-side port per the house pattern.
-var featureEdgeAllowlist = map[string][]string{
-	"artifacts": {"gitrepo"},
-	// build is the public single-tag build surface (build-project /
-	// get-project-build). It deliberately composes the machinery it fronts:
-	// artifacts (SpecSaveResult + SpecValidationError — the 422 detail must
-	// survive errors.As across the port boundary), devflow (workflow name/id/
-	// status vocabulary + the Temporal runtime the runner wraps), task
-	// (TaskView for the status title join), gitrepo (typed repo errors).
-	// Heavy collaborators (SaveSpec, workflow_runs, repo lookup) stay behind
-	// consumer-side ports wired at the composition root.
-	"build": {"artifacts", "devflow", "gitrepo", "task"},
-	// codingagent is the funnel's one registered executor: it implements the
-	// execution.Executor port (hence the execution edge) and reaches every other
-	// service — identities, anthropic, repos, OC — through consumer ports wired
-	// at the composition root. It also holds the devflow signaler (nil-safe) so
-	// the coding/build/deploy watchers can signal a waiting TaskFlow workflow.
-	"codingagent": {"execution", "devflow"},
-	"component":   {"artifacts", "gitrepo"},
-	// dependencies is the dependency-management feature: the parent package (MCP
-	// discovery server + endpoints catalog) composes its own resources and
-	// endpoints subpackages (external/platform provisioner cores; the org
-	// endpoint catalog). ports.go's OrgEndpointLister.ListResolved return type is
-	// endpoints.OrgComponentEndpoint (A3's list_org_component_endpoints MCP
-	// tool), so the parent package names its own child package's type — the same
-	// shape as the resources edge below. endpoints/ and resources/ hold no
-	// cross-feature edges of their own — every other collaborator (OC client,
-	// external-resource repo, secret writer, design reader) is a consumer-side
-	// port wired at the composition root, keeping the feature edge surface minimal.
-	"dependencies": {"dependencies/resources", "dependencies/endpoints"},
-	// design imports dependencies/resources for the CRT metadata vocabulary
-	// (resources.TypeMarkers + the marker catalog port): design-save keys
-	// end-user-auth derivation on the PE-authored role marker instead of a
-	// hardcoded resourceType name (thunder-app generalization). This mirrors the
-	// runtimeconfig edge below — both features read the same single source of
-	// truth for CRT markers rather than re-deriving the vocabulary.
-	"design": {"artifacts", "dependencies/resources"},
-	// devflow hosts the Temporal dev/task workflows + activities. Its activity
-	// ports are all devflow-local (the funnel/genai/plan/issue adapters live at
-	// the composition root), so it holds NO cross-feature edge — other features
-	// depend on IT (the signaler), never the reverse.
-	"devflow": {},
-	// execution is the platform-owned half of the Task/Execution split: it reads
-	// GitHub Task facts (gitrepo) and, on PR events, signals a waiting devflow
-	// TaskFlow workflow (devflow, nil-safe). Design at HEAD is read through a
-	// consumer-side port, not a direct artifacts import. It NEVER imports
-	// feature/task — the §1 split is a package boundary.
-	"execution":    {"gitrepo", "devflow"},
-	"files":        {"gitrepo"},
-	"genai":        {"gitrepo"},
-	"gitrepo":      {},
-	"idp":          {"orgcreds"},
-	"organization": {},
-	// orgconfig is the consolidated /config surface (org-config-consolidation.md):
-	// one orchestrator over the reused Anthropic/GitHub (orgcreds) and IDP (idp)
-	// services. These two edges ARE the feature — it assembles GET /config and runs
-	// the atomic multi-section PATCH across both services — so the concrete edges
-	// are the deliberate design, not incidental coupling.
-	"orgconfig": {"idp", "orgcreds"},
-	"orgcreds":  {"gitrepo"},
-	"project":   {"artifacts", "gitrepo"},
-	// provisioning is the dependency-provisioning coordinator (dependency-management
-	// §3.6): it drives the provisioner cores (dependencies/resources) and GitHub gate
-	// issues (gitrepo). Every other collaborator — the executions store, the funnel
-	// Reevaluate hook, the design reader, the repo locator — is a consumer-side port
-	// wired at the composition root, so it holds only these two feature edges.
-	"provisioning": {"dependencies/resources", "gitrepo"},
-	// rcaagent (console issues #154, #155, BE handshake #156) is a
-	// self-contained CRUD feature — no cross-feature imports.
-	"rcaagent": {},
-	// requirements now holds only the collab-session/collab-validate surface
-	// (the requirements read/version/save-discard HTTP surface was removed —
-	// superseded by the Files API); it holds no cross-feature edges.
-	"requirements": {},
-	// runtimeconfig reads the thunder-app dependency's binding outputs (OIDC
-	// config) and patches its redirect URIs declaratively; it reuses the
-	// resources package's single source of truth for the per-env binding name
-	// (ExternalResourceBindingName) rather than re-deriving the convention.
-	"runtimeconfig": {"artifacts", "dependencies/resources"},
-	"skills":        {"artifacts", "gitrepo"},
-	// task is the GitHub-facing half: it never imports feature/execution (the §1
-	// split) — the funnel is reached through the task.Dispatcher consumer port.
-	"task": {"artifacts", "gitrepo"},
-	// validation mints the project's aep:validation Task issue on design approval
-	// (validation-phase). Its only feature edge is gitrepo (the issue wire types
-	// in its ports); the design-component and criteria-file reads are consumer-
-	// side ports wired at the composition root, so artifacts/files stay out.
-	"validation": {"gitrepo"},
-	"webhook":    {"gitrepo", "orgcreds"},
-}
 
 // depCache memoizes each package's transitive import set so the boundary
 // tests shell out to `go list -deps` once per distinct package.
@@ -208,16 +111,10 @@ func listDir(t *testing.T, rel string) []string {
 // feature, platform leaf, or wiring package imports the deleted services/ or
 // controllers/ packages.
 func TestNoFlatServicesOrControllers(t *testing.T) {
-	for _, f := range listDir(t, "../feature") {
-		pkg := mod + "/internal/feature/" + f
-		if imports(t, pkg, mod+"/services") {
-			t.Errorf("%s imports the flat services package (should be gone)", f)
-		}
-		if imports(t, pkg, mod+"/controllers") {
-			t.Errorf("%s imports the controllers package (forbidden — features own their controllers or use ports)", f)
-		}
-	}
-	for _, p := range []string{"/internal/app", "/cmd/aep-api", "/internal/api"} {
+	// internal/feature/ is GONE (every feature migrated into a domain), so the
+	// only remaining risk is a composition-root regression re-importing the
+	// deleted flat services/controllers packages.
+	for _, p := range []string{"/internal/app", "/cmd/aep-api", "/internal/edge"} {
 		pkg := mod + p
 		if imports(t, pkg, mod+"/controllers") {
 			t.Errorf("%s imports the controllers package — it is deleted; wire features directly", p)
@@ -239,74 +136,23 @@ func TestFlatPackagesDeleted(t *testing.T) {
 	}
 }
 
-// TestFeatureEdgeAllowlist asserts the feature→feature DIRECT import graph is
-// exactly featureEdgeAllowlist — new coupling fails loudly, and a stale
-// allowlist entry fails too so the list stays honest. This subsumes the old
-// 4-edge denylist (task↔codingagent, design→task/component are simply not on
-// the list).
-func TestFeatureEdgeAllowlist(t *testing.T) {
-	features := listDir(t, "../feature")
-
-	// Every on-disk feature must have an allowlist row (even an empty one) —
-	// a brand-new feature gets policed the moment it exists.
-	for _, f := range features {
-		if _, ok := featureEdgeAllowlist[f]; !ok {
-			t.Errorf("feature %q has no allowlist row — add one (empty is fine) and review its edges", f)
-		}
-	}
-	for f := range featureEdgeAllowlist {
-		found := false
-		for _, name := range features {
-			if name == f {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("allowlist names feature %q which no longer exists on disk — remove the row", f)
-		}
-	}
-
-	const featPrefix = mod + "/internal/feature/"
-	for _, f := range features {
-		allowed := map[string]bool{}
-		for _, e := range featureEdgeAllowlist[f] {
-			allowed[e] = true
-		}
-		var actual []string
-		for _, imp := range directImports(t, featPrefix+f) {
-			if strings.HasPrefix(imp, featPrefix) {
-				actual = append(actual, strings.TrimPrefix(imp, featPrefix))
-			}
-		}
-		for _, edge := range actual {
-			if !allowed[edge] {
-				t.Errorf("NEW feature edge %s → %s is not on the allowlist — prefer a consumer-side port; if the concrete edge is a deliberate design decision, add it to featureEdgeAllowlist with rationale in the PR", f, edge)
-			}
-			delete(allowed, edge)
-		}
-		for stale := range allowed {
-			t.Errorf("allowlist edge %s → %s no longer exists — remove it so the list stays honest", f, stale)
-		}
-	}
-}
-
 // TestTaskExecutionSplit asserts the §1 Task/Execution split is a package
-// boundary (docs/design/tasks-github-native.md §10): feature/task (the
-// GitHub-facing half) and feature/execution (the platform-owned half) never
+// boundary (docs/design/tasks-github-native.md §10): delivery/task (the
+// GitHub-facing half) and delivery/execution (the platform-owned half) never
 // import each other — they communicate only through the pure taskmeta encoding
 // and the executions rows (the shared kernel). task reaches the funnel through
-// the task.Dispatcher consumer port; execution never needs task at all. This
-// is subsumed by TestFeatureEdgeAllowlist but stated explicitly because the
-// split is the design's load-bearing invariant.
+// the task.Dispatcher consumer port; execution never needs task at all. Now that
+// both are delivery-domain sub-packages this is also enforced by slice⊥sibling,
+// but it is stated explicitly because the split is the design's load-bearing
+// invariant (§10.3.1).
 func TestTaskExecutionSplit(t *testing.T) {
-	const task = mod + "/internal/feature/task"
-	const execution = mod + "/internal/feature/execution"
+	const task = mod + "/internal/delivery/task"
+	const execution = mod + "/internal/delivery/execution"
 	if imports(t, task, execution) {
-		t.Error("feature/task imports feature/execution — the Task/Execution split is a package boundary; reach the funnel through the task.Dispatcher port")
+		t.Error("delivery/task imports delivery/execution — the Task/Execution split is a package boundary; reach the funnel through the task.Dispatcher port")
 	}
 	if imports(t, execution, task) {
-		t.Error("feature/execution imports feature/task — the Task/Execution split is a package boundary")
+		t.Error("delivery/execution imports delivery/task — the Task/Execution split is a package boundary")
 	}
 }
 
@@ -383,15 +229,91 @@ func TestTaskmetaIsPure(t *testing.T) {
 	}
 }
 
+// gormImporters is the frozen allowlist of module-internal LEGACY packages
+// permitted to import gorm.io/gorm directly. The DB seam is being migrated
+// feature-by-feature into repositories/ (the aep-api testability plan, step 11),
+// so this list may only SHRINK: a NEW direct gorm importer fails (route
+// persistence through a repository — the real repository over dbtest is the DB
+// test seam), and a STALE entry — a package that no longer imports gorm — also
+// fails, so every migration trims exactly one row and the list stays honest.
+//
+// The seven target domains are DELIBERATELY out of scope here: they are governed
+// by TestGormFencedToDomainRepository, which allows gorm in <domain>/repository.go
+// and nowhere else. Without that carve-out the two rules contradict — a domain
+// adding the sanctioned repository.go would be a "NEW direct gorm importer" and
+// force this shrink-only list to GROW once per domain, which would rot it
+// into a rubber stamp.
+var gormImporters = map[string]bool{
+	// Composition + kernel (structurally hold gorm; not feature slices).
+	"internal/edge": true,
+	"internal/app":  true,
+	// The secret kernel module (§10.4): its Postgres-backed store is one of the
+	// four backends it exists to own. Was internal/credentials.
+	"internal/platform/secrets": true,
+	// The migration MECHANISM (conn + Runner/Step) — domain-free by design.
+	"internal/platform/database": true,
+	// The ordered migration LIST — names domain-owned steps, so it sits beside
+	// edge rather than in the kernel (§7).
+	"internal/migrate":                true,
+	"internal/platform/dbtest":        true,
+	"internal/platform/componenttest": true,
+	// No feature packages remain: the migration is complete. Every domain's raw
+	// gorm now lives behind its <domain>/repository*.go and is governed by
+	// TestGormFencedToDomainRepository, not this list. This set is the PERMANENT
+	// kernel/edge gorm allowlist — it should stay exactly this size.
+}
+
+// TestGormImportAllowlist asserts the set of packages that DIRECTLY import
+// gorm.io/gorm is exactly gormImporters. It is the ratchet behind the raw-gorm
+// → repositories/ migration: coupling to the ORM cannot spread to a new package
+// without a failing test, and the list can only shrink as features move their
+// persistence behind repositories.
+func TestGormImportAllowlist(t *testing.T) {
+	out, err := exec.Command("go", "list", "-f",
+		`{{.ImportPath}}{{range .Imports}} {{.}}{{end}}`, mod+"/...").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list %s/...: %v\n%s", mod, err, out)
+	}
+	remaining := map[string]bool{}
+	for k := range gormImporters {
+		remaining[k] = true
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		short := strings.TrimPrefix(fields[0], mod+"/")
+		if inTargetDomain(short) {
+			continue // governed by TestGormFencedToDomainRepository instead
+		}
+		direct := false
+		for _, imp := range fields[1:] {
+			if imp == "gorm.io/gorm" {
+				direct = true
+				break
+			}
+		}
+		if !direct {
+			continue
+		}
+		if !gormImporters[short] {
+			t.Errorf("NEW direct gorm.io/gorm importer %q — route persistence through repositories/ (a repository over dbtest is the DB test seam); if this genuinely belongs in the kernel, add it to gormImporters with rationale in the PR", short)
+		}
+		delete(remaining, short)
+	}
+	for stale := range remaining {
+		t.Errorf("allowlist package %q no longer imports gorm.io/gorm — remove it from gormImporters (the list may only shrink)", stale)
+	}
+}
+
 // TestInternalOnlyLayout asserts no Go source lives outside the sanctioned
-// top-level roots: internal/ (everything), cmd/ (mains), skills/ (go:embed
-// must anchor to the source file), and the deliberately-flat models/ +
-// repositories/ shared kernel (their relocation is an explicitly gated,
-// separate decision — see aep-api-target-structure.md "What moves").
+// top-level roots: internal/ (everything) and cmd/ (mains). The flat models/
+// and repositories/ shared kernels are both DISSOLVED — every entity lives in
+// its owning <domain>/entity_*.go and each repository in <domain>/repository_*.go.
 func TestInternalOnlyLayout(t *testing.T) {
 	allowedRoots := map[string]bool{
-		"internal": true, "cmd": true, "skills": true,
-		"models": true, "repositories": true,
+		"internal": true, "cmd": true,
 	}
 	root := ".." + string(filepath.Separator) + ".." // module root from internal/arch
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -414,7 +336,7 @@ func TestInternalOnlyLayout(t *testing.T) {
 		}
 		top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
 		if !allowedRoots[top] {
-			t.Errorf("Go file outside the sanctioned roots: %s (allowed: internal/, cmd/, skills/, models/, repositories/)", rel)
+			t.Errorf("Go file outside the sanctioned roots: %s (allowed: internal/, cmd/, skills/, models/)", rel)
 		}
 		return nil
 	})

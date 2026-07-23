@@ -107,6 +107,14 @@ services:
       # helm release bindings.
       PLAYGROUND_TOKEN_ENABLED: "true"
 
+      # Auto-merge coding-agent PRs on open (removes the human review gate so the
+      # RCA→coding-agent→build fix loop runs end-to-end without a human, and the
+      # path-based build fan-out deploys every component the PR changed). Enabled
+      # for THIS local dev deployment by explicit opt-in; the aep-api source
+      # default is FALSE (secure default) since it auto-deploys unreviewed
+      # agent-authored code. Set to "false" to restore the human merge gate.
+      AUTO_MERGE_CODING_PRS: "true"
+
       # ── OpenChoreo platform API (reached via k3d loadbalancer + Host header)
       PLATFORM_API_SERVICE_BASE_URL: "${PLATFORM_API_SERVICE_BASE_URL}"
       PLATFORM_API_SERVICE_HOST: "${PLATFORM_API_SERVICE_HOST:-api.openchoreo.localhost}"

@@ -70,7 +70,7 @@ push it to a repo and let the platform's normal flow build/deploy it.
 | Divergence | Why | Parity path |
 |---|---|---|
 | `issues/` excluded from spec-turn snapshots | production spec turns never see tasks (they live in GitHub) | n/a — this IS parity in effect |
-| MCP off by default | no cluster; avoids a localhost mint attempt per turn | run aep-api locally + AEP_MCP_URL (playground-kit resolver) |
+| MCP off by default | no cluster; avoids a localhost mint attempt per turn | run aep-api locally + AEP_MCP_URL (its MCP resolver) |
 | `collabDepsSteer` present without a live MCP tool | kept for byte parity — all console turns carry it | MCP passthrough makes the named tool real |
 | No CRT-annotation append, no lineage diffs in replans | platform resources/tags don't exist locally | manual edit; replan is still files-based |
 | Issue `key` lineage constant `"local"`; no spec/design tags | no builds/tags locally | dedupe across replans still works |

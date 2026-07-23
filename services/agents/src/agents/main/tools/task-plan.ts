@@ -45,8 +45,6 @@ import { buildSkillTools } from "./skill-tools.js";
 import type { SkillSource } from "../skill-source.js";
 import type { TaskPlan } from "../task-plan-accumulator.js";
 
-export { PLAN_TASK, UPDATE_TASK };
-
 /**
  * Build the task-plan tool set bound to one accumulator for the turn. Registers
  * `planTask` + `updateTask` and (when skills are supplied) the shared skill

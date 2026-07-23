@@ -389,3 +389,32 @@ func TestSnapshotFilter(t *testing.T) {
 		t.Fatalf("filter: %v", got)
 	}
 }
+
+// NewFromSnapshot builds a Fold whose base is an in-memory snapshot — the
+// exact seeding the TS `new FileBundle(files)` performs (goldens, tests).
+func NewFromSnapshot(seed map[string]string) *Fold {
+	files := make(map[string]string, len(seed))
+	for p, c := range seed {
+		files[p] = c
+	}
+	return New(func(_ context.Context, path string) ([]byte, bool, error) {
+		c, ok := files[path]
+		if !ok {
+			return nil, false, nil
+		}
+		return []byte(c), true, nil
+	})
+}
+
+// FilterTurnSnapshot mirrors filterTurnSnapshot: apply the walk's PATH rules
+// to an in-memory map (values assumed text).
+func FilterTurnSnapshot(files map[string]string) map[string]string {
+	out := make(map[string]string, len(files))
+	for path, content := range files {
+		if !InTurnSnapshot(path, nil) {
+			continue
+		}
+		out[path] = content
+	}
+	return out
+}

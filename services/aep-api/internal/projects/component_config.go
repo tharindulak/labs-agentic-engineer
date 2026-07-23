@@ -1,0 +1,44 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package projects
+
+import "time"
+
+// EnvVar is a component environment variable. It lives here (not in the
+// generated gen package) because the gorm-persisted EnvVarSlice below embeds
+// it: keeping it hand-written keeps the dependency one-way (gen aliases this
+// type via `x-go-type: models.EnvVar`), avoiding a models↔gen import cycle.
+// The shape is byte-identical to the contract's EnvVar schema.
+type EnvVar struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// EnvVarSlice is a typed slice for JSONB storage in PostgreSQL.
+type EnvVarSlice []EnvVar
+
+// ComponentConfig stores environment variable configuration for a component.
+// Scoped by (OrgID, ProjectName, ComponentName) — one config record per component.
+type ComponentConfig struct {
+	ID            string      `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	OrgID         string      `gorm:"uniqueIndex:idx_component_config;not null" json:"-"`
+	ProjectName   string      `gorm:"uniqueIndex:idx_component_config;not null" json:"projectName"`
+	ComponentName string      `gorm:"uniqueIndex:idx_component_config;not null" json:"componentName"`
+	EnvVars       EnvVarSlice `gorm:"type:jsonb;serializer:json" json:"envVars"`
+	CreatedAt     time.Time   `json:"createdAt"`
+	UpdatedAt     time.Time   `json:"updatedAt"`
+}

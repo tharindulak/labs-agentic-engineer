@@ -272,3 +272,24 @@ coding-agent path).
 ### Proceed-gate
 `design/save` refuses (409) while any dependency is unresolved, naming the
 component, dependency, and reason.
+
+## aep-api platform concepts
+
+### Tenant gate
+The deny-by-default middleware in aep-api's `edge` that binds every request to an
+org taken ONLY from a verified JWT claim — never a path, query, or body — so one
+org can never address another's data. Domains read the bound org from context; a
+request carrying no verified org is refused. See `services/aep-api/README.md`
+(Platform invariants).
+
+### Phantom-OU (trust guard)
+A JWT can name an organizational unit (`ouId`) that does not exist. aep-api rejects
+an `ouId` ONLY when a wired validator positively reports it absent; an empty id, no
+validator, or a transient lookup error all fail OPEN. A phantom OU would otherwise
+poison `wc-` namespace derivation and the publisher OU binding.
+
+### Committed-truth
+aep-api's rule that a spec (requirements + design) is authoritative only once it is
+committed to git `main`. An agent turn's output is hash-parity checked by the fold
+(`platform/agentfold`) before commit; a mismatch rejects the turn and leaves `main`
+untouched. The git commit — not any draft buffer — is the source of truth.

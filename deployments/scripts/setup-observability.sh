@@ -72,8 +72,8 @@
 #       patterns then match analysed lowercase tokens — "ERROR" never matches).
 #
 # Knobs (env):
-#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: handoff-v14).
-#                   handoff-v14 makes every SRE-created issue a well-formed,
+#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: handoff-v16).
+#                   handoff-v14+ makes every SRE-created issue a well-formed,
 #                   dispatchable AE Task at creation (src/agent/handoff_logic.py):
 #                   it stamps the aep:task/aep:coding/aep:origin/incident labels
 #                   plus the taskmeta block, and normalises the component to AE's
@@ -85,7 +85,21 @@
 #                   aep:task marker → the funnel ignores it). Requires the
 #                   rca-agent component:create grant in setup-aep.sh (without it
 #                   the synchronous EnsureComponent pre-check 403s).
-#                   Falls back to anthropic-patched if not built or pullable.
+#                   handoff-v15 ADDS the external-skills loader: the handoff
+#                   'issue-fix' skill is no longer baked into the image — it is
+#                   owned by AEP (services/aep-mcp-server/skills/issue-fix) and
+#                   mounted at deploy time by step 3d below via EXTERNAL_SKILLS_DIR.
+#                   An older image (<= handoff-v14) IGNORES that mount and uses
+#                   its stale baked-in copy, so bump to v15+ to make AEP the real
+#                   source of truth. handoff-v16 makes the handoff MCP path
+#                   configurable (AE_MCP_PATH, default /mcp) so the agent reaches
+#                   the standalone aep-mcp-server on :3401 — v15 and earlier
+#                   hardcoded /sre-mcp and crash-loop at boot against a :3401
+#                   server that only serves /mcp. Falls back to anthropic-patched
+#                   if not built or pullable (RCA works, handoff stage ABSENT).
+#   AE_MCP_PATH     path of the handoff MCP endpoint under AE_API_URL
+#                   (default: /mcp = standalone aep-mcp-server; set /sre-mcp for
+#                   the in-process aep-api surface). handoff-v16+ only.
 #   AE_HANDOFF      enable the RCA→AEP coding-agent handoff (default: true)
 #   AE_AUTO_DISPATCH auto-dispatch the coding agent after issue creation
 #                   (default: true; false = issue-only, human dispatches)
@@ -185,17 +199,24 @@ echo "✅ ExternalSecrets applied"
 # loses imported images — this makes the import part of setup). Build once with
 # (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
 # picked up instead of a registry pull):
-#   docker build -t tharindulak/openchoreo-sre-agent:handoff-v14 <openchoreo-repo>/agents/sre-agent
+#   docker build -t tharindulak/openchoreo-sre-agent:handoff-v16 <openchoreo-repo>/agents/sre-agent
+# handoff-v16 must be built from the SRE branch that (a) adds the
+# EXTERNAL_SKILLS_DIR loader (src/agent/skills.py + src/config.py), (b) removes
+# the baked-in src/skills/issue-fix — without both, step 3d's mount is inert —
+# and (c) makes the handoff MCP path configurable (AE_MCP_PATH, default /mcp) so
+# the boot MCP test reaches the standalone aep-mcp-server on :3401.
 # The agent reads its LLM key + OAuth client secret from the rca-agent-secret
 # Secret (envFrom). RCA_LLM_API_KEY comes from ANTHROPIC_API_KEY in deployments/.env;
 # OAUTH_CLIENT_SECRET must equal the openchoreo-rca-agent client secret registered
 # by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `handoff-v14` (= RCA_IMAGE_TAG default below) carries the
-# Anthropic structured-output fix AND the AEP coding-agent handoff stage
-# (AE_HANDOFF). Resolution order:
-#   1. local build            docker build -t tharindulak/openchoreo-sre-agent:handoff-v14 \
+# Preferred tag `handoff-v16` (= RCA_IMAGE_TAG default below) carries the
+# Anthropic structured-output fix, the AEP coding-agent handoff stage
+# (AE_HANDOFF), the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted
+# issue-fix skill from step 3d, AND the configurable AE_MCP_PATH (default /mcp).
+# Resolution order:
+#   1. local build            docker build -t tharindulak/openchoreo-sre-agent:handoff-v16 \
 #                               <openchoreo-repo>/agents/sre-agent
 #      (preferred — developers iterating on the agent aren't surprised by a
 #       stale registry copy)
@@ -214,8 +235,8 @@ echo "1️⃣b RCA agent image + secret"
 # the fully-qualified name everywhere means a cache-evicted image can always
 # be re-pulled from the real registry — no more silent long-term fragility.
 RCA_IMAGE_REPO="tharindulak/openchoreo-sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-handoff-v14}"
-RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/openchoreo-sre-agent:handoff-v14}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-handoff-v16}"
+RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/openchoreo-sre-agent:handoff-v16}"
 if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; then
     echo "   ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} not built locally — trying registry ${RCA_IMAGE_PULL}..."
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
@@ -518,6 +539,68 @@ echo "   Once an org connects a key via the AE console, aep-api pushes an Extern
 echo "   automatically (refreshed every 5m) — no re-run of this script needed, then or on later"
 echo "   rotations. Until then, or if push isn't configured on aep-api, it falls back to the"
 echo "   static RCA_LLM_API_KEY from step 1b."
+
+# ── 3d. AEP-owned handoff skill (issue-fix) — deploy-time mount ───────────
+# The handoff sub-agent loads the 'issue-fix' skill (classify config-vs-code,
+# dedupe/search related issues, file one issue, dispatch). Its content IS
+# AEP's contract (aep:* / sre-agent labels, taskmeta block, dedupe keys,
+# unprefixed component names, dispatch rules), so AEP owns it — canonical
+# source: services/aep-mcp-server/skills/issue-fix/SKILL.md, right here in
+# this repo. The SRE agent does NOT bake it into its image and does NOT fetch
+# it at runtime; we materialize it into a ConfigMap and mount it, and the
+# agent's EXTERNAL_SKILLS_DIR points its loader at the mount (searched before
+# the built-in src/skills library). Same "patch the Deployment so it survives
+# a helm re-run" pattern as step 3c's volume wiring.
+#
+# Only wired when AE_HANDOFF=true — without the handoff stage the agent never
+# loads a skill, so there's nothing to mount.
+if [ "$AE_HANDOFF" = "true" ]; then
+    echo ""
+    echo "3️⃣d Handoff skill (issue-fix) — ConfigMap + mount"
+    ISSUE_FIX_SKILL="$SCRIPT_DIR/../../services/aep-mcp-server/skills/issue-fix/SKILL.md"
+    if [ ! -f "$ISSUE_FIX_SKILL" ]; then
+        echo "⚠️  issue-fix skill not found at $ISSUE_FIX_SKILL — skipping mount."
+        echo "    AE_HANDOFF is on, so ai-rca-agent will error 'Skill issue-fix not found'"
+        echo "    on the handoff stage (best-effort — RCA analysis still completes)."
+    else
+        # Render deterministically (create --dry-run) then apply, so re-runs are
+        # idempotent and the ConfigMap can be diffed. Key SKILL.md; ConfigMaps
+        # can't have '/' in keys, so the single file lands directly in the mount
+        # dir via items[].path.
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-skill-issue-fix \
+            --from-file=SKILL.md="$ISSUE_FIX_SKILL" \
+            --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
+        echo "✅ rca-agent-skill-issue-fix ConfigMap applied (from $ISSUE_FIX_SKILL)"
+
+        # Patch the Deployment: mount the skill at /etc/rca-agent/skills/issue-fix
+        # and point the loader at /etc/rca-agent/skills. A podSpec change here
+        # triggers a rolling update on its own.
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
+spec:
+  template:
+    spec:
+      volumes:
+        - name: issue-fix-skill
+          configMap:
+            name: rca-agent-skill-issue-fix
+            items:
+              - key: SKILL.md
+                path: SKILL.md
+      containers:
+        - name: ai-rca-agent
+          volumeMounts:
+            - name: issue-fix-skill
+              mountPath: /etc/rca-agent/skills/issue-fix
+              readOnly: true
+          env:
+            - name: EXTERNAL_SKILLS_DIR
+              value: /etc/rca-agent/skills
+'
+        echo "✅ ai-rca-agent volume/env wired for the handoff skill (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
+        echo "   Edit the skill in services/aep-mcp-server/skills/issue-fix/, re-run this script"
+        echo "   (or re-apply the ConfigMap) and restart the agent — no SRE image rebuild."
+    fi
+fi
 
 # ── 4. Cross-namespace HTTPRoute on the MAIN kgateway ────────────────────
 # The chart's own HTTPRoute attaches to a separate Gateway on port 11080.

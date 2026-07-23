@@ -1,0 +1,277 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package spec
+
+// SaveSpec = whole-spec hard gate (requirements + design) → single `v<N>`
+// annotated tag covering the specs/ tree. These run over the real gitfs
+// Workspace engine like the save tests.
+
+import (
+	"context"
+	"errors"
+	"testing"
+)
+
+// validSpecSeed is a buildable spec: requirements main doc + a valid design
+// bundle (root + one component with schema-valid design.json).
+func validSpecSeed() map[string]string {
+	return map[string]string{
+		"specs/requirements/requirements.md":      "the spec\n",
+		"specs/design/design.md":                  "# System\n",
+		"specs/design/components/svc/design.md":   "---\ntype: service\n---\n# svc\n",
+		"specs/design/components/svc/design.json": validComponentDesignJSON("svc"),
+	}
+}
+
+func specErrPaths(t *testing.T, err error) []string {
+	t.Helper()
+	var se *SpecValidationError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want *SpecValidationError", err)
+	}
+	paths := make([]string, 0, len(se.Files))
+	for _, f := range se.Files {
+		paths = append(paths, f.Path)
+	}
+	return paths
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, p := range paths {
+		if p == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSaveSpec_TagsAtHead(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	head := r.headSHA()
+
+	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{Message: "build v1"})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	if res.Status != "approved" || res.Tag != "v1" || res.Version != 1 {
+		t.Fatalf("result = %+v, want approved/v1/1", res)
+	}
+	if res.CommitHash != head {
+		t.Errorf("tag points at %s, want HEAD %s (no new commit on save)", res.CommitHash, head)
+	}
+	if r.headSHA() != head {
+		t.Errorf("HEAD moved to %s — save must NOT commit", r.headSHA())
+	}
+	if got := r.tags(); len(got) != 1 || got[0] != "v1" {
+		t.Errorf("tags = %v, want [v1]", got)
+	}
+}
+
+func TestSaveSpec_GateRequirementsMissing(t *testing.T) {
+	t.Parallel()
+	seed := validSpecSeed()
+	delete(seed, "specs/requirements/requirements.md")
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	paths := specErrPaths(t, err)
+	if !containsPath(paths, "specs/requirements/requirements.md") {
+		t.Fatalf("validation paths = %v, want specs/requirements/requirements.md", paths)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none (nothing may be tagged when the gate fails)", got)
+	}
+}
+
+func TestSaveSpec_GateDesignMissing(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, map[string]string{"specs/requirements/requirements.md": "the spec\n"})
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	paths := specErrPaths(t, err)
+	if !containsPath(paths, "specs/design/design.md") {
+		t.Fatalf("validation paths = %v, want specs/design/design.md", paths)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none", got)
+	}
+}
+
+func TestSaveSpec_GateDesignInvalid(t *testing.T) {
+	t.Parallel()
+	seed := validSpecSeed()
+	// design.json missing the required "description" → SCHEMA_VIOLATION.
+	seed["specs/design/components/svc/design.json"] = `{"name":"svc","type":"service","version":"1.0.0",` +
+		`"language":"go","buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet","dependencies":[]}`
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	paths := specErrPaths(t, err)
+	if !containsPath(paths, "specs/design/components/svc/design.json") {
+		t.Fatalf("validation paths = %v, want the invalid design.json (design-prefixed)", paths)
+	}
+	if got := r.tags(); len(got) != 0 {
+		t.Errorf("tags = %v, want none (malformed design never tagged)", got)
+	}
+}
+
+func TestSaveSpec_GateAggregatesRequirementsAndDesign(t *testing.T) {
+	t.Parallel()
+	// Both gates fail at once → ONE SpecValidationError carrying both entries.
+	r := newRig(t, map[string]string{
+		"specs/design/components/svc/design.json": validComponentDesignJSON("svc"), // no root design.md
+	})
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	paths := specErrPaths(t, err)
+	if !containsPath(paths, "specs/requirements/requirements.md") || !containsPath(paths, "specs/design/design.md") {
+		t.Fatalf("validation paths = %v, want both the requirements and design entries", paths)
+	}
+}
+
+func TestSaveSpec_Unchanged(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	ctx := context.Background()
+	if _, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{}); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	// A non-specs/ change must not count as spec movement.
+	r.seed(map[string]string{"README.md": "docs only\n"}, "readme edit")
+
+	res, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{})
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	if res.Status != "unchanged" || res.Tag != "v1" || res.Version != 1 {
+		t.Fatalf("result = %+v, want unchanged/v1/1", res)
+	}
+	if got := r.tags(); len(got) != 1 {
+		t.Errorf("tags = %v, want a single v1 (no duplicate tag)", got)
+	}
+}
+
+// The semantic fix over SaveRequirements: a design-only edit MUST cut a new
+// spec version (the requirements-only unchanged check would have reused v1,
+// pointing at the pre-edit commit).
+func TestSaveSpec_DesignOnlyChange_CutsNewTag(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	ctx := context.Background()
+	if _, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{}); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	r.seed(map[string]string{"specs/design/design.md": "# System — revised\n"}, "design-only edit")
+	head := r.headSHA()
+
+	res, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{})
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	if res.Status != "approved" || res.Tag != "v2" || res.Version != 2 {
+		t.Fatalf("result = %+v, want approved/v2/2 (design-only change bumps the spec version)", res)
+	}
+	if res.CommitHash != head {
+		t.Errorf("v2 points at %s, want the design-edit commit %s", res.CommitHash, head)
+	}
+}
+
+// Legacy `v<N>-<M>` design-revision tags are not part of the spec sequence:
+// they neither satisfy the unchanged check nor advance the next version.
+func TestSaveSpec_LegacyDesignTagsExcluded(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	r.tag("v1", "spec v1")
+	r.tag("v1-1", "legacy design rev")
+	r.tag("v1-2", "legacy design rev")
+	r.seed(map[string]string{"specs/requirements/requirements.md": "moved on\n"}, "spec edit")
+
+	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	if res.Tag != "v2" || res.Version != 2 {
+		t.Fatalf("result = %+v, want v2/2 (legacy design tags excluded from the sequence)", res)
+	}
+}
+
+func TestSaveSpec_AtProvidedCommit_TagsThatCommit(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	applied := r.headSHA()
+	// main moves on after the apply — the save must still pin the caller's commit.
+	r.seed(map[string]string{"specs/requirements/requirements.md": "newer draft\n"}, "later edit")
+
+	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{CommitSHA: applied})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	if res.Status != "approved" || res.Tag != "v1" {
+		t.Fatalf("result = %+v, want approved/v1", res)
+	}
+	if res.CommitHash != applied {
+		t.Errorf("tag points at %s, want the provided commit %s (not HEAD %s)",
+			res.CommitHash, applied, r.headSHA())
+	}
+}
+
+func TestValidateSpecAtTag(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	ctx := context.Background()
+	res, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{})
+	if err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+
+	if err := r.svc.ValidateSpecAtTag(ctx, r.org, r.proj, res.Tag); err != nil {
+		t.Errorf("ValidateSpecAtTag(%s) = %v, want nil", res.Tag, err)
+	}
+	if err := r.svc.ValidateSpecAtTag(ctx, r.org, r.proj, "v1-1"); !errors.Is(err, ErrInvalidVersionTag) {
+		t.Errorf("ValidateSpecAtTag(v1-1) = %v, want ErrInvalidVersionTag", err)
+	}
+}
+
+func TestValidateSpecAtTag_InvalidSpecAtTag(t *testing.T) {
+	t.Parallel()
+	// A tag cut externally over a design-less tree fails re-validation.
+	r := newRig(t, map[string]string{"specs/requirements/requirements.md": "the spec\n"})
+	r.tag("v1", "external tag over an unbuildable tree")
+
+	err := r.svc.ValidateSpecAtTag(context.Background(), r.org, r.proj, "v1")
+	var se *SpecValidationError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want *SpecValidationError", err)
+	}
+}
+
+func TestLatestSpecTag(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, validSpecSeed())
+	ctx := context.Background()
+	if got := r.svc.LatestSpecTag(ctx, r.org, r.proj); got != "" {
+		t.Errorf("LatestSpecTag with no tags = %q, want empty", got)
+	}
+	if _, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{}); err != nil {
+		t.Fatalf("SaveSpec: %v", err)
+	}
+	r.tag("v1-3", "legacy design rev — must not win")
+	if got := r.svc.LatestSpecTag(ctx, r.org, r.proj); got != "v1" {
+		t.Errorf("LatestSpecTag = %q, want v1", got)
+	}
+}

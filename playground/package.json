@@ -16,8 +16,11 @@
     "@aep/agent-stream": "workspace:*",
     "@aep/agents": "workspace:*",
     "@aep/contracts": "workspace:*",
+    "@aep/design-projection": "workspace:*",
+    "@aep/excalidraw-dsl": "workspace:*",
     "@clack/prompts": "^1.6.0",
     "ai": "^7.0.2",
+    "jose": "^5.9.0",
     "yaml": "^2.8.4"
   },
   "devDependencies": {

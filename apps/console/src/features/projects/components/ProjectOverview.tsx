@@ -19,12 +19,24 @@
 import { useEffect, useRef } from "react";
 import {
   Alert,
+  Avatar,
+  Box,
   Button,
+  Grid,
+  Link as MuiLink,
   Skeleton,
   Stack,
   Typography,
 } from "@wso2/oxygen-ui";
-import { useProjectComponents, useProjectStatus } from "../api/queries";
+import { Link as LinkIcon } from "@wso2/oxygen-ui-icons-react";
+import { Link } from "@tanstack/react-router";
+import { PageHeader } from "../../../components/PageHeader";
+import { SectionTitle } from "../../../components/SectionTitle";
+import { StatusChip } from "../../../components/StatusChip";
+import { useAllTasks } from "../../tasks/api/queries";
+import { useProject, useProjectComponents, useProjectStatus } from "../api/queries";
+import { phaseChip } from "../lib/phaseChip";
+import { AgentActivity } from "./AgentActivity";
 import { ComponentsList } from "./ComponentsList";
 import { OverviewPipeline } from "./OverviewPipeline";
 
@@ -50,8 +62,10 @@ function SectionError({
 // it refetches when the poll shows a build/deploy transition (the only times
 // components change).
 export function ProjectOverview({ projectName }: { projectName: string }) {
+  const project = useProject(projectName);
   const status = useProjectStatus(projectName);
   const componentsQuery = useProjectComponents(projectName);
+  const tasks = useAllTasks(projectName);
 
   const buildState = status.data?.build.status;
   const deployState = status.data?.deploy.status;
@@ -66,43 +80,105 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
     prev.current = key;
   }, [buildState, deployState, refetchComponents]);
 
-  return (
-    <Stack spacing={4}>
-      {status.isError ? (
-        <SectionError
-          what="project status"
-          message={status.error instanceof Error ? status.error.message : undefined}
-          onRetry={() => void status.refetch()}
-        />
-      ) : status.isPending ? (
-        <Skeleton variant="rounded" height={96} />
-      ) : (
-        <OverviewPipeline projectName={projectName} status={status.data} />
-      )}
+  const displayName = project.data?.displayName ?? project.data?.name ?? projectName;
+  const initial = (displayName.trim()[0] ?? "P").toUpperCase();
 
-      <div>
-        <Typography variant="h6" gutterBottom>
-          Components
-        </Typography>
-        {componentsQuery.isError ? (
+  return (
+    <>
+      {/* The project identity (Overview-only per Task 5; other sub-pages drop
+          it as redundant with the project switcher): a rounded-square avatar
+          leads a two-line column — title + phase chip on top, the GitHub repo
+          link indented directly beneath the title. No description subtitle —
+          that belongs on the project cards. */}
+      <PageHeader
+        title={
+          <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+            <Avatar
+              variant="rounded"
+              sx={{
+                bgcolor: "primary.main",
+                color: "primary.contrastText",
+                width: 52,
+                height: 52,
+                fontSize: "1.5rem",
+              }}
+            >
+              {initial}
+            </Avatar>
+            <Box>
+              <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                <Typography variant="h4" component="span">
+                  {displayName}
+                </Typography>
+                {status.data && (
+                  <StatusChip {...phaseChip(status.data)} appearance="soft" dot />
+                )}
+              </Stack>
+              {status.data?.repoUrl && (
+                <MuiLink
+                  href={status.data.repoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  variant="body2"
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    mt: 0.5,
+                  }}
+                >
+                  <LinkIcon size={14} />
+                  {status.data.repoUrl.replace(/^https?:\/\/(www\.)?/, "")}
+                </MuiLink>
+              )}
+            </Box>
+          </Stack>
+        }
+        backTo={{ link: <Link to="/" />, label: "Back to Projects" }}
+      />
+      <Stack spacing={3} sx={{ mt: 3 }}>
+        {status.isError ? (
           <SectionError
-            what="components"
-            message={
-              componentsQuery.error instanceof Error
-                ? componentsQuery.error.message
-                : undefined
-            }
-            onRetry={() => void componentsQuery.refetch()}
+            what="project status"
+            message={status.error instanceof Error ? status.error.message : undefined}
+            onRetry={() => void status.refetch()}
           />
-        ) : componentsQuery.isPending ? (
-          <Skeleton variant="rounded" height={120} />
+        ) : status.isPending ? (
+          <Skeleton variant="rounded" height={96} />
         ) : (
-          <ComponentsList
-            projectName={projectName}
-            items={componentsQuery.data.items ?? []}
-          />
+          <OverviewPipeline projectName={projectName} status={status.data} />
         )}
-      </div>
-    </Stack>
+
+        {/* Two-column body: the agent-activity feed (what the agents have
+            done) beside the component cards (what they're building). */}
+        <Grid container spacing={4}>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <AgentActivity projectName={projectName} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <SectionTitle>Components</SectionTitle>
+            {componentsQuery.isError ? (
+              <SectionError
+                what="components"
+                message={
+                  componentsQuery.error instanceof Error
+                    ? componentsQuery.error.message
+                    : undefined
+                }
+                onRetry={() => void componentsQuery.refetch()}
+              />
+            ) : componentsQuery.isPending ? (
+              <Skeleton variant="rounded" height={120} />
+            ) : (
+              <ComponentsList
+                projectName={projectName}
+                items={componentsQuery.data.items ?? []}
+                tasks={tasks.data ?? []}
+              />
+            )}
+          </Grid>
+        </Grid>
+      </Stack>
+    </>
   );
 }

@@ -61,16 +61,3 @@ func InTurnSnapshot(path string, content []byte) bool {
 	}
 	return !bytes.ContainsRune(content, 0)
 }
-
-// FilterTurnSnapshot mirrors filterTurnSnapshot: apply the walk's PATH rules
-// to an in-memory map (values assumed text).
-func FilterTurnSnapshot(files map[string]string) map[string]string {
-	out := make(map[string]string, len(files))
-	for path, content := range files {
-		if !InTurnSnapshot(path, nil) {
-			continue
-		}
-		out[path] = content
-	}
-	return out
-}

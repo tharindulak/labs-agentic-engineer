@@ -113,10 +113,6 @@ func ClassLabel(c ExecutorClass) string { return "aep:" + string(c) }
 // OriginLabel returns the origin label for an Origin ("aep:origin/spec-plan").
 func OriginLabel(o Origin) string { return LabelOriginPrefix + string(o) }
 
-// StatusLabel returns the projection label for a derived status
-// ("aep:status/ready_for_review"). Platform-written only.
-func StatusLabel(s DerivedStatus) string { return LabelStatusPrefix + string(s) }
-
 // SpecTagLabel returns the spec-version label for a spec/build tag
 // ("aep:spec/v3"). An empty tag yields "" (no label) so callers can append it
 // unconditionally.
@@ -148,28 +144,6 @@ const (
 	KindStatus
 	KindAttention
 )
-
-// Classify reports the role of a single label string.
-func Classify(label string) LabelKind {
-	switch {
-	case label == LabelMarker:
-		return KindMarker
-	case label == LabelCoding || label == LabelOps || label == LabelProvision || label == LabelValidation:
-		return KindClass
-	case label == LabelExecute:
-		return KindExecute
-	case label == LabelHold:
-		return KindHold
-	case label == LabelAttention:
-		return KindAttention
-	case strings.HasPrefix(label, LabelOriginPrefix):
-		return KindOrigin
-	case strings.HasPrefix(label, LabelStatusPrefix):
-		return KindStatus
-	default:
-		return KindOther
-	}
-}
 
 // ParsedLabels is the structured reading of an issue's whole label list — the
 // class/origin/command/flag facts the funnel and read path need in one pass.

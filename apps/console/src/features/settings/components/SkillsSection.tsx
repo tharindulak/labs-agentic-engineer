@@ -24,7 +24,6 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
   CircularProgress,
   Dialog,
   DialogActions,
@@ -38,6 +37,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Eye, FolderGit2, Pencil, Trash2, Upload } from "@wso2/oxygen-ui-icons-react";
+import { StatusChip } from "../../../components/StatusChip";
 import {
   useConfig,
   useDeleteSkill,
@@ -45,7 +45,7 @@ import {
   useSkills,
   useSyncSkills,
 } from "../api/queries";
-import { kindBlurb, kindChipColor, kindLabel, normalizeKind } from "../skillKind";
+import { kindBlurb, kindChipTone, kindLabel, normalizeKind } from "../skillKind";
 import { paginateSkills } from "../skillsList";
 import { EditSkillDialog } from "./EditSkillDialog";
 import { ImportSkillDialog } from "./ImportSkillDialog";
@@ -265,18 +265,17 @@ export function SkillsSection() {
                               including read-only-ness — there is no separate
                               read-only chip. */}
                           <Tooltip title={kindBlurb(kind)}>
-                            <Chip
-                              size="small"
-                              color={kindChipColor(kind)}
-                              label={kindLabel(kind)}
-                            />
+                            {/* Box holds the ref Tooltip needs — StatusChip
+                                doesn't forward one. */}
+                            <Box sx={{ display: "inline-flex" }}>
+                              <StatusChip
+                                label={kindLabel(kind)}
+                                tone={kindChipTone(kind)}
+                              />
+                            </Box>
                           </Tooltip>
                           {updatable.has(skill.name) && (
-                            <Chip
-                              size="small"
-                              color="warning"
-                              label="update available"
-                            />
+                            <StatusChip label="update available" tone="warning" />
                           )}
                         </Box>
                         <Typography

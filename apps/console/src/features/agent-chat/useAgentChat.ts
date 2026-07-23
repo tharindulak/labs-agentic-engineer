@@ -17,6 +17,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { projectKeys } from "../projects/api/keys.js";
 import {
   addMessage,
   chatKeyFor,
@@ -25,6 +27,7 @@ import {
   getMessages,
   replaceMessages,
   setTurnStatus,
+  startNewConversation,
   subscribe,
   type ChatMessage,
 } from "./chatStore.js";
@@ -34,6 +37,8 @@ import {
   startCollabTurn,
 } from "./api/turns.js";
 import { attachAndFoldTurn } from "./runTurn.js";
+import { projectableHistory } from "./history.js";
+import { useCurrentAuthor } from "./currentUser.js";
 
 // The panel's behavior hook (#130): per-project message log, send → collab
 // turn → stream fold, mount-time rehydrate + running-turn re-attach. The
@@ -43,7 +48,12 @@ import { attachAndFoldTurn } from "./runTurn.js";
 export interface AgentChat {
   messages: ChatMessage[];
   isSending: boolean;
+  /** The turn currently streaming into this log, if any (task 3: the
+   *  authoritative "running" signal for the feed, incl. re-attached turns). */
+  activeTurnId: string | undefined;
   send: (instruction: string) => void;
+  /** Clear the log + mint a fresh conversation id (header action). */
+  newConversation: () => void;
 }
 
 export function useAgentChat(org: string, projectName: string): AgentChat {
@@ -53,7 +63,18 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     () => getMessages(chatKey),
   );
   const [isSending, setIsSending] = useState(false);
+  const [activeTurnId, setActiveTurnId] = useState<string | undefined>(undefined);
   const abortRef = useRef<AbortController | null>(null);
+  const author = useCurrentAuthor();
+  const queryClient = useQueryClient();
+
+  // A committed turn changed spec files in git; refetch the project cache tree
+  // (spec file list included) so views keyed off committed truth — e.g. the
+  // Architecture tab's "Designing…" state — settle instead of serving the
+  // staleTime-Infinity snapshot until a reload.
+  const onTurnCommitted = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectName) });
+  }, [queryClient, projectName]);
 
   // Mount / project switch: rehydrate an empty log from the server history,
   // then re-attach to a still-running chat turn (replay from 0).
@@ -73,20 +94,25 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       if (ac.signal.aborted || !active || active.status !== "running") return;
       if (active.useCase !== "general") return; // another flow's turn
       setIsSending(true);
+      setActiveTurnId(active.turnId);
       dropTurnOutput(chatKey, active.turnId); // replay-from-0 re-adds it all
       try {
-        await attachAndFoldTurn(chatKey, projectName, active.turnId, ac.signal);
+        await attachAndFoldTurn(chatKey, projectName, active.turnId, ac.signal, onTurnCommitted);
       } catch {
         // surfaced by the fold's error handling; the view just settles
       } finally {
-        if (!ac.signal.aborted) setIsSending(false);
+        if (!ac.signal.aborted) {
+          setIsSending(false);
+          setActiveTurnId(undefined);
+        }
       }
     })();
     return () => {
       ac.abort();
       setIsSending(false);
+      setActiveTurnId(undefined);
     };
-  }, [chatKey, org, projectName]);
+  }, [chatKey, org, projectName, onTurnCommitted]);
 
   const send = useCallback(
     (instruction: string) => {
@@ -99,7 +125,13 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
         try {
           turnId = await startCollabTurn(projectName, convId, text);
         } catch (err) {
-          addMessage(chatKey, { role: "user", content: text, status: "failed" });
+          addMessage(chatKey, {
+            role: "user",
+            content: text,
+            status: "failed",
+            author,
+            createdAt: Date.now(),
+          });
           addMessage(chatKey, {
             role: "error",
             content: err instanceof Error ? err.message : "Failed to reach the agent.",
@@ -107,15 +139,18 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
           setIsSending(false);
           return;
         }
+        setActiveTurnId(turnId);
         addMessage(chatKey, {
           role: "user",
           content: text,
           turnId,
           status: "in_flight",
+          author,
+          createdAt: Date.now(),
         });
         const signal = abortRef.current?.signal ?? new AbortController().signal;
         try {
-          await attachAndFoldTurn(chatKey, projectName, turnId, signal);
+          await attachAndFoldTurn(chatKey, projectName, turnId, signal, onTurnCommitted);
         } catch {
           if (!signal.aborted) {
             setTurnStatus(chatKey, turnId, "failed");
@@ -125,44 +160,19 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
             });
           }
         } finally {
-          if (!signal.aborted) setIsSending(false);
+          if (!signal.aborted) {
+            setIsSending(false);
+            setActiveTurnId(undefined);
+          }
         }
       })();
     },
-    [chatKey, org, projectName, isSending],
+    [chatKey, org, projectName, isSending, author, onTurnCommitted],
   );
 
-  return { messages, isSending, send };
-}
+  const newConversation = useCallback(() => {
+    startNewConversation(org, projectName);
+  }, [org, projectName]);
 
-// Server history → display log: user/assistant text only (tool/system parts
-// don't reconstruct into cards — the doc already reflects them).
-function projectableHistory(
-  history: { role: string; content: unknown }[],
-): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  for (const m of history) {
-    const text = contentText(m.content);
-    if (!text) continue;
-    if (m.role === "user") {
-      out.push({ id: "", role: "user", content: text, status: "completed" });
-    } else if (m.role === "assistant") {
-      out.push({ id: "", role: "assistant", turnId: "history", content: text });
-    }
-  }
-  return out;
-}
-
-function contentText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((p) =>
-        typeof p === "object" && p !== null && (p as { type?: string }).type === "text"
-          ? ((p as { text?: string }).text ?? "")
-          : "",
-      )
-      .join("");
-  }
-  return "";
+  return { messages, isSending, activeTurnId, send, newConversation };
 }

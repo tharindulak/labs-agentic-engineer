@@ -51,6 +51,8 @@ func GetAuthToken(ctx context.Context) string {
 // NOT use it to inject a service token (that collides with the user-JWT path in
 // the OpenChoreo client and suppresses per-org impersonation). For orchestration
 // / async OC calls use WithServiceIdentity instead.
+//
+//deadcode:keep test seam — injects a bearer for componenttest + openchoreo transport tests (cross-package).
 func WithAuthToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, authTokenKey{}, token)
 }

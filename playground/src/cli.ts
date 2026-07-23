@@ -32,7 +32,7 @@ import { existsSync, statSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { stdout as output } from "node:process";
 import * as clack from "@clack/prompts";
-import { loadRepoSkills } from "@aep/agents/evals-kit";
+import { loadRepoSkills } from "./kit/skills.js";
 import { loadDotenv } from "@aep/agents/shared/env";
 import {
   chatTurn,

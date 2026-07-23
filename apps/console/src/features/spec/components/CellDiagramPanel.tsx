@@ -51,6 +51,12 @@ export function CellDiagramPanel({
   // An agent peer in the room means a design is actively being generated; show a
   // "waiting" cell rather than the generic "generate a design" empty state.
   const agentBusy = collab.peers.some((p) => p.kind === "agent");
+  // "Designing…" is true only while that agent is actually in the room. The
+  // live design.cell text alone can't carry it: it is re-seeded from git on
+  // every workspace load and the committed design.json can trail the session
+  // by the collab flush debounce, so `streaming` stays true long after the
+  // agent finished.
+  const designing = streaming && agentBusy;
 
   if (!streaming && isPending) {
     return (
@@ -70,7 +76,7 @@ export function CellDiagramPanel({
   // avoid.
   return (
     <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {streaming && (
+      {designing && (
         <Box
           sx={{
             px: 1.5,

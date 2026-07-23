@@ -19,92 +19,38 @@
 import { useState } from "react";
 import {
   Avatar,
-  Chip,
-  Link as MuiLink,
-  ListingTable,
+  Box,
+  Card,
+  CardContent,
+  Stack,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { ExternalLink, FileCode } from "@wso2/oxygen-ui-icons-react";
+import { Boxes } from "@wso2/oxygen-ui-icons-react";
+import { EmptyState } from "../../../components/EmptyState";
+import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
-import { useComponentEndpointUrl } from "../api/queries";
+import { componentStatus } from "../lib/projectActivity";
 import { ComponentOpenApiDialog } from "./ComponentOpenApiDialog";
 
 type Component = components["schemas"]["Component"];
+type TaskView = components["schemas"]["TaskView"];
 
 // The component type is OpenChoreo's own ComponentType name, end-to-end.
 const isWebApp = (c: Component) => c.type === "web-application";
 
-// A web app's "Open app" link (#196). The URL comes from the component's
-// deployments read (dev binding's resolved endpointUrl) — list-components
-// never fills Component.endpointUrl, though the field stays preferred here
-// in case the backend ever closes that drift. Until a URL exists (not yet
-// deployed, or fetch in flight/failed) the placeholder keeps its promise.
-function WebAppLink({
-  projectName,
-  component,
-}: {
-  projectName: string;
-  component: Component;
-}) {
-  const deployed = useComponentEndpointUrl(projectName, component.name);
-  const href = component.endpointUrl ?? deployed.data;
-  if (!href) {
-    return (
-      <Typography variant="caption" color="text.secondary">
-        URL appears once deployed
-      </Typography>
-    );
-  }
-  return (
-    <MuiLink
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      variant="body2"
-      sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}
-    >
-      Open app <ExternalLink size={14} />
-    </MuiLink>
-  );
-}
-
-// API/service rows open the component's OpenAPI contract in-app. It's a
-// button, not an <a href>: the /openapi endpoint is JWT-guarded and a raw
-// browser navigation carries no Bearer token (401). The dialog fetches
-// through the authenticated client instead.
-function ContractLink({
-  name,
-  onOpenContract,
-}: {
-  name: string;
-  onOpenContract: (name: string) => void;
-}) {
-  return (
-    <MuiLink
-      component="button"
-      type="button"
-      onClick={() => onOpenContract(name)}
-      variant="body2"
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 0.5,
-        verticalAlign: "baseline",
-      }}
-    >
-      API contract <FileCode size={14} />
-    </MuiLink>
-  );
-}
-
-// Card-variant listing per the oxygen-ui sample's ProjectOverview page:
-// header row floats above, each component renders as a full-width row card.
+// Component cards: one compact single-row card per component — avatar, name +
+// description, and a build-status chip rolled up from the component's tasks.
+// Services open their OpenAPI contract on click (JWT-guarded, so via the
+// authenticated dialog, not a raw link).
 export function ComponentsList({
   projectName,
   items,
+  tasks,
 }: {
   projectName: string;
   items: Component[];
+  tasks: TaskView[];
 }) {
   const [contractComponent, setContractComponent] = useState<string | null>(
     null,
@@ -112,83 +58,82 @@ export function ComponentsList({
 
   if (items.length === 0) {
     return (
-      <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
-        No components yet — the published design produces them, and they show
-        up here as agents build.
-      </Typography>
+      <EmptyState
+        bordered
+        icon={<Boxes size={28} />}
+        title="No components yet"
+        description="The published plan produces them — they appear here as agents build."
+      />
     );
   }
 
   return (
-    <ListingTable.Container sx={{ width: "100%" }} disablePaper>
-      <ListingTable variant="card" density="standard">
-        <ListingTable.Head>
-          <ListingTable.Row>
-            <ListingTable.Cell>Name</ListingTable.Cell>
-            <ListingTable.Cell>Description</ListingTable.Cell>
-            <ListingTable.Cell sx={{ maxWidth: 140 }}>Type</ListingTable.Cell>
-            <ListingTable.Cell sx={{ maxWidth: 200 }}>Link</ListingTable.Cell>
-          </ListingTable.Row>
-        </ListingTable.Head>
-        <ListingTable.Body>
-          {items.map((c) => (
-            <ListingTable.Row key={c.name} variant="card" hover>
-              <ListingTable.Cell>
-                <ListingTable.CellIcon
-                  icon={
-                    <Avatar
-                      sx={{
-                        width: 28,
-                        height: 28,
-                        bgcolor: "action.hover",
-                        color: "text.primary",
-                      }}
-                    >
-                      {((c.displayName ?? c.name).trim()[0] ?? "C").toUpperCase()}
-                    </Avatar>
+    <>
+      <Stack spacing={1.5}>
+        {items.map((c) => {
+          const st = componentStatus(c.name, tasks);
+          const initial = ((c.displayName ?? c.name).trim()[0] ?? "C").toUpperCase();
+          const openable = !isWebApp(c);
+          const card = (
+            <Card
+              key={c.name}
+              variant="outlined"
+              {...(openable
+                ? {
+                    onClick: () => setContractComponent(c.name),
+                    sx: {
+                      cursor: "pointer",
+                      transition: "border-color 120ms, box-shadow 120ms",
+                      "&:hover": { borderColor: "primary.main", boxShadow: 1 },
+                    },
                   }
-                  primary={c.displayName ?? c.name}
-                />
-              </ListingTable.Cell>
-              <ListingTable.Cell>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {c.description ?? "—"}
-                </Typography>
-              </ListingTable.Cell>
-              <ListingTable.Cell sx={{ maxWidth: 140 }}>
-                <Chip
-                  label={isWebApp(c) ? "Web app" : (c.type ?? "—")}
-                  size="small"
-                  variant="outlined"
-                />
-              </ListingTable.Cell>
-              <ListingTable.Cell sx={{ maxWidth: 200 }}>
-                {isWebApp(c) ? (
-                  <WebAppLink projectName={projectName} component={c} />
-                ) : (
-                  <ContractLink
-                    name={c.name}
-                    onOpenContract={setContractComponent}
-                  />
-                )}
-              </ListingTable.Cell>
-            </ListingTable.Row>
-          ))}
-        </ListingTable.Body>
-      </ListingTable>
+                : {})}
+            >
+              <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
+                <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+                  <Avatar
+                    variant="rounded"
+                    sx={{
+                      width: 36,
+                      height: 36,
+                      bgcolor: "action.hover",
+                      color: "text.primary",
+                    }}
+                  >
+                    {initial}
+                  </Avatar>
+                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    <Typography sx={{ fontWeight: 600 }} noWrap>
+                      {c.displayName ?? c.name}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      noWrap
+                      sx={{ display: "block" }}
+                    >
+                      {c.description ?? "—"}
+                    </Typography>
+                  </Box>
+                  <StatusChip label={st.label} tone={st.tone} appearance="soft" dot />
+                </Stack>
+              </CardContent>
+            </Card>
+          );
+          return openable ? (
+            <Tooltip key={c.name} title="View API contract" placement="left">
+              {card}
+            </Tooltip>
+          ) : (
+            card
+          );
+        })}
+      </Stack>
       <ComponentOpenApiDialog
         projectName={projectName}
         componentName={contractComponent}
         onClose={() => setContractComponent(null)}
       />
-    </ListingTable.Container>
+    </>
   );
 }

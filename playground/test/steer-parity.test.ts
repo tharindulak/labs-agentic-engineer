@@ -54,20 +54,20 @@ function joinedGoLiterals(goFile: string): string {
 }
 
 test("GENERAL_STEER + COLLAB_DEPS_STEER appear verbatim in genai/steering.go", () => {
-  const joined = joinedGoLiterals("services/aep-api/internal/feature/genai/steering.go");
+  const joined = joinedGoLiterals("services/aep-api/internal/spec/steering.go");
   assert.ok(joined.includes(GENERAL_STEER), "GENERAL_STEER drifted from steeringByUseCase[useCaseGeneral]");
   assert.ok(joined.includes(COLLAB_DEPS_STEER), "COLLAB_DEPS_STEER drifted from collabDepsSteer");
 });
 
 test("PLAN_INSTRUCTION appears verbatim in task/plan.go", () => {
-  const joined = joinedGoLiterals("services/aep-api/internal/feature/task/plan.go");
+  const joined = joinedGoLiterals("services/aep-api/internal/delivery/task/plan.go");
   assert.ok(joined.includes(PLAN_INSTRUCTION), "PLAN_INSTRUCTION drifted from planInstruction");
 });
 
 test("targetSuffix + renderPlanContext shapes appear in their Go sources", () => {
-  const genai = joinedGoLiterals("services/aep-api/internal/feature/genai/genai_service.go");
+  const genai = joinedGoLiterals("services/aep-api/internal/spec/genai_service.go");
   assert.ok(genai.includes("\n\n(target: "), "targetSuffix prefix drifted");
-  const plan = joinedGoLiterals("services/aep-api/internal/feature/task/plan.go");
+  const plan = joinedGoLiterals("services/aep-api/internal/delivery/task/plan.go");
   assert.ok(plan.includes("\n\n## Existing open Tasks and lineage diffs (reference)\n"), "renderPlanContext header drifted");
 });
 

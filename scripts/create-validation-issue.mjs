@@ -16,8 +16,8 @@
  * under the License.
  */
 
-// Interim VALIDATION-phase task creator for the LOCAL harness (see
-// docs/design/validation.md — in production the platform mints the issue).
+// Interim VALIDATION-phase task creator for the LOCAL harness (in production the
+// platform mints the issue — see services/aep-api/internal/delivery/README.md).
 //
 // Reads `specs/validation/validation-criteria.json` from a project repo
 // (authored there by the spec agent's `validation-criteria` skill) and

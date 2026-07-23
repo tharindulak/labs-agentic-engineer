@@ -23,11 +23,11 @@ import {
   AvatarGroup,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Divider,
   IconButton,
   PageContent,
+  Stack,
   TextField,
   Tooltip,
   Typography,
@@ -35,15 +35,18 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft, Hammer, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import {
   useBuildPreflight,
   useBuildProject,
-  useProject,
   useProjectStatus,
   useProjectTags,
 } from "../../projects/api/queries";
 import { useSpecFileContent, useSpecFiles } from "../api/queries";
+import { useProjectUsage } from "../../usage/api/queries";
+import { totalTokens } from "../../usage/lib/format";
+import { UsageChip } from "../../usage/components/UsageChip";
 import { toSpecEntry } from "../api/mapping";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { CollabTextArea } from "../collab/CollabTextArea";
@@ -61,29 +64,8 @@ import type { SpecSelection } from "../api/designTree";
 import { DESIGN_CELL_PATH } from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
 
-type ProjectStatus = components["schemas"]["ProjectStatus"];
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildInputItem = components["schemas"]["BuildInputItem"];
-
-// specStatus → header chip, same language as the overview's spec card.
-function specChip(status: ProjectStatus): {
-  label: string;
-  color: "default" | "info" | "success" | "warning" | "error";
-} | null {
-  switch (status.specStatus) {
-    case "draft":
-    case "in_progress":
-      return { label: "In collaboration", color: "info" };
-    case "ready":
-      return { label: "Awaiting your review", color: "warning" };
-    case "approved":
-      return { label: "Approved", color: "success" };
-    case "failed":
-      return { label: "Derivation failed", color: "error" };
-    default:
-      return null;
-  }
-}
 
 // Full-screen spec workspace (#80), per the oxygen-ui sample's
 // LoginEditorView pattern: fullWidth/noPadding page, own header bar,
@@ -91,7 +73,6 @@ function specChip(status: ProjectStatus): {
 export function SpecView({ projectName }: { projectName: string }) {
   const navigate = useNavigate();
   const { actions } = useAppShell();
-  const project = useProject(projectName);
   const status = useProjectStatus(projectName);
   const tags = useProjectTags(projectName);
   const spec = useSpecFiles(projectName);
@@ -99,6 +80,9 @@ export function SpecView({ projectName }: { projectName: string }) {
   // Rooms are org-scoped (`spec-<org>-<project>`); without an org claim fall
   // back to the collab mock BFF's default org so mock mode keeps working.
   const collab = useCollabSpec(projectName, user, orgHandle ?? "acme");
+  // Cost visibility (#245): the header's draft-cycle spend chip — spec/design
+  // turn usage since the last published tag, mirroring the version chips.
+  const usageQ = useProjectUsage(projectName);
   const [selection, setSelection] = useState<SpecSelection | null>(null);
   const [addArtifactOpen, setAddArtifactOpen] = useState(false);
   // Build (#162): commit-then-build. buildPhase drives the button label /
@@ -257,7 +241,6 @@ export function SpecView({ projectName }: { projectName: string }) {
     specStatus === "draft" ||
     specStatus === "in_progress";
   const failed = specStatus === "failed";
-  const chip = status.data ? specChip(status.data) : null;
   // The design gate: Build arms once design files are generated (#80).
   const hasDesignFiles = files.some((f) => f.group === "designs");
   // #159: design is derived FROM requirements, so its CTA needs them first.
@@ -353,7 +336,15 @@ export function SpecView({ projectName }: { projectName: string }) {
     }
   };
 
-  const displayName = project.data?.displayName ?? projectName;
+  // Version state rendered as SOFT status chips beside the title (like the
+  // builds/deployments headers), so the spec page reads as part of the same
+  // family instead of its own bespoke layout. Soft chips don't read as
+  // buttons, so this doesn't reintroduce the #117 "looks clickable" problem.
+  // No project-name subtitle: the top-bar project switcher already names the
+  // project, so repeating it here is redundant.
+  const publishedTag = tags.data?.latest;
+  const hasDraftChanges = Boolean(tags.data?.specDirty);
+  const isOffline = collab.status === "offline";
 
   return (
     // oxygen-ui's PageContentInner (the direct parent of these children) has
@@ -399,12 +390,43 @@ export function SpecView({ projectName }: { projectName: string }) {
             <ArrowLeft size={20} />
           </IconButton>
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-            <Typography variant="h4" noWrap>
-              Spec
-            </Typography>
-            <Typography variant="body2" color="text.secondary" noWrap>
-              {displayName}
-            </Typography>
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+              <Typography variant="h4" noWrap>
+                Spec
+              </Typography>
+              {publishedTag && (
+                <StatusChip
+                  label={`${publishedTag} · published`}
+                  tone="success"
+                  appearance="soft"
+                  dot
+                />
+              )}
+              {hasDraftChanges && (
+                <StatusChip
+                  label="draft changes"
+                  tone="warning"
+                  appearance="soft"
+                  dot
+                />
+              )}
+              {isOffline && (
+                <Tooltip title="Collaboration server unreachable — editing solo; edits aren't shared or saved.">
+                  <Box sx={{ display: "inline-flex" }}>
+                    <StatusChip label="solo session" tone="neutral" appearance="soft" />
+                  </Box>
+                </Tooltip>
+              )}
+              {/* Draft-cycle spend (#245): what this version-in-progress has
+                  cost in spec/design turns. Hidden until any spend exists. */}
+              {usageQ.data && totalTokens(usageQ.data.draftCycle) > 0 && (
+                <UsageChip
+                  usage={usageQ.data.draftCycle}
+                  label="spec"
+                  context="Spec & design agent spend — current draft cycle"
+                />
+              )}
+            </Stack>
           </Box>
 
           {collab.peers.length > 0 && (
@@ -431,33 +453,13 @@ export function SpecView({ projectName }: { projectName: string }) {
               ))}
             </AvatarGroup>
           )}
-          {collab.status === "offline" && (
-            <Tooltip title="Collaboration server unreachable — editing solo; edits aren't shared or saved.">
-              <Chip size="small" variant="outlined" label="solo" />
-            </Tooltip>
-          )}
-
-          {/* Version chips from the tag resource (#117): latest user tag +
-              whether specs/ moved on GitHub since. */}
-          {tags.data?.latest && (
-            <Chip
-              size="small"
-              variant="outlined"
-              color="success"
-              label={`${tags.data.latest} published`}
-            />
-          )}
-          {tags.data?.specDirty && (
-            <Chip size="small" color="warning" label="draft changes" />
-          )}
-          {chip && <Chip size="small" color={chip.color} label={chip.label} />}
-
           <Divider orientation="vertical" flexItem />
 
           {/* Phase-aware primary CTA (#159): the prominent action is always the
               next pipeline step — Generate design until a design exists, then
               Build. A dead disabled Build hid what to do next. */}
           {hasDesignFiles ? (
+            <>
             <Tooltip
               title={
                 agentBusy
@@ -484,7 +486,9 @@ export function SpecView({ projectName }: { projectName: string }) {
                 </Button>
               </span>
             </Tooltip>
+            </>
           ) : (
+            <>
             <Tooltip
               title={
                 agentBusy
@@ -506,6 +510,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                 </Button>
               </span>
             </Tooltip>
+            </>
           )}
         </Box>
 

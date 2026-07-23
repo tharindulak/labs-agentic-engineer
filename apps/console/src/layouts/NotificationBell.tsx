@@ -31,7 +31,7 @@ import { Bell } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useRecentAlerts } from "../features/alerts/api/queries";
 import { useAlertsUnread } from "../features/alerts/hooks/useAlertsUnread";
-import { classificationLabel } from "../features/alerts/components/ClassificationChip";
+import { classificationLabel } from "../features/alerts/classification";
 
 // Top-nav notification bell (#154) — global, read-only, client-tracked
 // unread state (no server read-state; see the issue's grilling decisions).

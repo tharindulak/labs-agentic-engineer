@@ -129,6 +129,50 @@ describe("chatStore", () => {
     expect(getMessages(key)).toHaveLength(4);
   });
 
+  it("round-trips author through append and in-memory persist", () => {
+    const key = freshKey();
+    addMessage(key, {
+      role: "user",
+      content: "hi team",
+      turnId: "t1",
+      status: "in_flight",
+      author: { id: "u-sarah", displayName: "Sarah Perera" },
+    });
+    expect(getMessages(key)[0]).toMatchObject({
+      author: { id: "u-sarah", displayName: "Sarah Perera" },
+    });
+  });
+
+  it("loads a persisted author back from localStorage on first read", () => {
+    const key = freshKey();
+    localStorage.setItem(
+      key,
+      JSON.stringify([
+        {
+          id: "m-1",
+          role: "user",
+          content: "hey",
+          status: "completed",
+          author: { id: "u-2", displayName: "Bo" },
+        },
+      ]),
+    );
+    expect(getMessages(key)[0]).toMatchObject({
+      author: { id: "u-2", displayName: "Bo" },
+    });
+  });
+
+  it("loads legacy persisted messages with no author field intact", () => {
+    const key = freshKey();
+    localStorage.setItem(
+      key,
+      JSON.stringify([{ id: "m-1", role: "user", content: "hey", status: "completed" }]),
+    );
+    const [msg] = getMessages(key);
+    expect(msg).toMatchObject({ role: "user", content: "hey" });
+    expect((msg as { author?: unknown } | undefined)?.author).toBeUndefined();
+  });
+
   it("mints one conversation id per project and persists it", () => {
     expect(conversationIdFor("o", "p", { create: false })).toBeNull();
     const id = conversationIdFor("o", "p", { create: true });

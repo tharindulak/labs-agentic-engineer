@@ -25,7 +25,7 @@
 
 import { randomUUID } from "node:crypto";
 import { stdout as output } from "node:process";
-import { renderPart, renderSummary } from "@aep/agents/playground-kit";
+import { renderPart, renderSummary } from "./kit/render.js";
 import type { StreamPart } from "@aep/agent-stream";
 import {
   composePlanInstruction,

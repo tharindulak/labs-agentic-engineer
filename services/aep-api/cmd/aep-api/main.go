@@ -28,9 +28,8 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/app"
 	"github.com/wso2/aep/aep-api/internal/config"
-	"github.com/wso2/aep/aep-api/internal/database"
+	"github.com/wso2/aep/aep-api/internal/platform/async"
 	"github.com/wso2/aep/aep-api/internal/platform/obs"
-	"github.com/wso2/aep/aep-api/models"
 )
 
 // main is the process entry point and owns only process lifecycle: load+validate
@@ -47,35 +46,24 @@ func main() {
 
 	setupLogger(cfg.LogLevel)
 
-	// Database. Executions + ComponentConfig + webhook tables. Tasks are GitHub
-	// issues now (no component_tasks table — dropped by the tasks-github-native
-	// migration). org_credentials lives in git-service — the BFF does not
-	// auto-migrate or read it locally.
-	db, err := database.Open(cfg.DatabaseURL,
-		&models.ComponentConfig{},
-		&models.WebhookDelivery{},
-		&models.WebhookPayload{},
-		&models.Organization{},
-		&models.Execution{},
-		&models.AgentTurn{},
-		&models.DevflowRun{},
-	)
+	// Resolve performs every boot side effect (DB open + migrations, OpenBao key
+	// loads, the dev seed, k8s in-cluster init, workspace fsck) and returns the
+	// resolved Infra bundle. Assemble then wires the service graph purely from
+	// config + that bundle — no I/O — so the same real handler is reachable from
+	// an assembly test with a faked Infra.
+	infra, err := app.Resolve(context.Background(), cfg)
 	if err != nil {
-		slog.Error("database init failed", "error", err)
+		slog.Error("infra resolve failed", "error", err)
 		os.Exit(1)
 	}
 
-	// Schema bootstrap + migrations (grants + RunAll). Kept out of Build so the
-	// composition root stays a pure assembly.
-	if err := app.Bootstrap(context.Background(), db, cfg); err != nil {
-		slog.Error("bootstrap failed", "error", err)
-		os.Exit(1)
-	}
-
-	application, err := app.Build(cfg, db)
+	application, err := app.Assemble(cfg, infra)
 	if err != nil {
 		slog.Error("app init failed", "error", err)
 		os.Exit(1)
+	}
+	for _, deg := range application.Degradations() {
+		slog.Warn("capability degraded", "capability", deg.Capability, "reason", deg.Reason)
 	}
 
 	server := &http.Server{
@@ -95,12 +83,13 @@ func main() {
 	}()
 
 	// Background watchers. State lives in Postgres, so a restart resumes from
-	// the next tick — a plain goroutine per watcher is enough. All share
-	// watcherCtx, cancelled on shutdown.
+	// the next tick. Each runs under async.Go's panic barrier so a panicking
+	// watcher is recovered + logged instead of taking down the whole process
+	// (a bare `go w.Run` used to). All share watcherCtx, cancelled on shutdown.
 	watcherCtx, cancelWatcher := context.WithCancel(context.Background())
 	defer cancelWatcher()
 	for _, w := range application.Watchers {
-		go w.Run(watcherCtx)
+		async.Go(watcherCtx, fmt.Sprintf("watcher:%T", w), w.Run)
 	}
 	slog.Info("background watchers started", "count", len(application.Watchers))
 

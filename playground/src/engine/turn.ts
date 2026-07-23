@@ -33,8 +33,9 @@
 import { FileBundle, applyToolCall, streamTurn, type StreamPart, type TurnRequest } from "@aep/agent-stream";
 import { filterTurnSnapshot } from "@aep/agents/conversation/load-workspace";
 import { sha256Hex } from "@aep/agents/shared/hash";
-import { loadRepoSkills, type RepoSkill } from "@aep/agents/evals-kit";
-import { reconcileDir, materializeDerived, type FileChange, type DerivedNote } from "@aep/agents/playground-kit";
+import { loadRepoSkills, type RepoSkill } from "../kit/skills.js";
+import { reconcileDir, type FileChange } from "../kit/project-fs.js";
+import { materializeDerived, type DerivedNote } from "../kit/derived.js";
 import { FsSpecWorkspace, hashFiles, playConversationId } from "../ports/spec-workspace.js";
 import type { ProjectState } from "../state/project.js";
 import { saveProjectState } from "../state/project.js";

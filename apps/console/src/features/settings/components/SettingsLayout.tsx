@@ -22,13 +22,13 @@ import {
   Card,
   CardContent,
   PageContent,
-  PageTitle,
   Tab,
   Tabs,
   useMediaQuery,
   useTheme,
 } from "@wso2/oxygen-ui";
 import { KeyRound, Sparkles } from "@wso2/oxygen-ui-icons-react";
+import { PageHeader } from "../../../components/PageHeader";
 
 // Each section is its own route (issue #143): deep-linkable and back/forward
 // correct, matching the legacy console's settings/<section> URLs.
@@ -51,12 +51,10 @@ export function SettingsLayout() {
 
   return (
     <PageContent>
-      <PageTitle>
-        <PageTitle.Header>Settings</PageTitle.Header>
-        <PageTitle.SubHeader>
-          Org-level GitHub and Anthropic credentials, and the skills catalogue
-        </PageTitle.SubHeader>
-      </PageTitle>
+      <PageHeader
+        title="Settings"
+        subtitle="Org-level GitHub and Anthropic credentials, and the skills catalogue"
+      />
 
       <Box
         sx={{

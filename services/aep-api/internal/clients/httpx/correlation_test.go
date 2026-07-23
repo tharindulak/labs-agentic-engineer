@@ -31,9 +31,19 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+// newContextWithCorrelationID returns a context carrying id under the same key
+// the inbound middleware uses, by running the request through the real
+// obs.AddCorrelationID middleware (the only public writer of the key).
 func newContextWithCorrelationID(t *testing.T, ctx context.Context, id string) context.Context {
 	t.Helper()
-	return obs.WithCorrelationID(ctx, id)
+	var out context.Context
+	h := obs.AddCorrelationID()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		out = r.Context()
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	req.Header.Set(obs.CorrelationIDHeader, id)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	return out
 }
 
 func TestCorrelationTransport_AddsHeaderFromContext(t *testing.T) {

@@ -1,4 +1,4 @@
-.PHONY: build test test-db cover check-no-legacy-creds gen-api gen-api-check gen-oc-client gen-oc-client-check gen-mocks
+.PHONY: build test test-db cover check-no-legacy-creds gen-api gen-api-check gen-oc-client gen-oc-client-check gen-mocks deadcode deadcode-check
 
 build:
 	go build ./...
@@ -7,6 +7,21 @@ build:
 # plain unit/component runs need no Docker.
 test: check-no-legacy-creds
 	go test -short ./...
+
+# ── Dead-code gate ───────────────────────────────────────────────────────────
+# Whole-program reachability from the cmd/aep-api main via
+# golang.org/x/tools/cmd/deadcode (RTA). Run WITHOUT -test: tests do NOT count
+# as consumers, so a function only a test calls is dead. Generated files are
+# excluded by deadcode; test-support packages and //deadcode:keep-marked seams
+# are excluded by the script. See design/deadcode.md.
+#
+#   make deadcode        human audit (prints findings, never fails)
+#   make deadcode-check  CI gate (fails the build on any surviving finding)
+deadcode:
+	@bash scripts/deadcode.sh report
+
+deadcode-check:
+	@bash scripts/deadcode.sh check
 
 # ── Coverage (local convenience; no CI exists) ───────────────────────────────
 # Fast lane (-short skips the DB tier, so no Docker needed). Writes coverage.out
@@ -39,7 +54,7 @@ test-db:
 # ── Contract-first public API codegen ────────────────────────────────────────
 # The committed contract (packages/contracts/api/v1/openapi.yaml — schemas and
 # paths in ONE document) is the SOURCE OF TRUTH; gen-api regenerates what serves
-# it into internal/api/apigen (package apigen): the schema types + operation Params
+# it into internal/gen (package gen): the schema types + operation Params
 # (models_gen.go) and the strict server that references them, plus the contract
 # baked in as GetSpec() for the request validator (server_gen.go, embedded-spec
 # — no vendored YAML copy needed). Generated files are committed; gen-api-check
@@ -47,17 +62,17 @@ test-db:
 CONTRACT_DIR          = ../../packages/contracts/api/v1
 INTERNAL_CONTRACT_DIR = ../../packages/contracts/api/internal/v1
 gen-api:
-	@$(OAPI_CODEGEN) -config internal/api/apigen/oapi-codegen-models.yaml $(CONTRACT_DIR)/openapi.yaml
-	@$(OAPI_CODEGEN) -config internal/api/apigen/oapi-codegen-server.yaml $(CONTRACT_DIR)/openapi.yaml
-	@$(OAPI_CODEGEN) -config internal/api/igen/oapi-codegen.yaml $(INTERNAL_CONTRACT_DIR)/openapi.yaml
-	@gofmt -w internal/api/apigen/models_gen.go internal/api/apigen/server_gen.go internal/api/igen/igen_gen.go
+	@$(OAPI_CODEGEN) -config internal/gen/oapi-codegen-models.yaml $(CONTRACT_DIR)/openapi.yaml
+	@$(OAPI_CODEGEN) -config internal/gen/oapi-codegen-server.yaml $(CONTRACT_DIR)/openapi.yaml
+	@$(OAPI_CODEGEN) -config internal/igen/oapi-codegen.yaml $(INTERNAL_CONTRACT_DIR)/openapi.yaml
+	@gofmt -w internal/gen/models_gen.go internal/gen/server_gen.go internal/igen/igen_gen.go
 	@echo "API types + strict server (with embedded spec) regenerated"
 
 # CI freshness gate: regenerate, then fail if anything tracked drifted — a
 # contract edit without `make gen-api`, or a hand-edit of generated output.
 gen-api-check: gen-api
-	@if ! git diff --exit-code --quiet -- internal/api/apigen/ internal/api/igen/; then \
-		git diff --stat -- internal/api/apigen/ internal/api/igen/ | cat; \
+	@if ! git diff --exit-code --quiet -- internal/gen/ internal/igen/; then \
+		git diff --stat -- internal/gen/ internal/igen/ | cat; \
 		echo ""; \
 		echo "Generated API code is stale w.r.t. packages/contracts/api/v1."; \
 		echo "Run 'make gen-api' in services/aep-api and commit the changes."; \

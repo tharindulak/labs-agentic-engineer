@@ -30,7 +30,7 @@ import { createApp } from "@aep/agents/server";
 import { createModel } from "@aep/agents/shared/model";
 import { listen0 } from "@aep/agents/shared/listen";
 import type { ConversationStore } from "@aep/agents/store/conversation-store";
-import { EVAL_AUTH, evalTurnHeaders } from "@aep/agents/evals-kit";
+import { EVAL_AUTH, evalTurnHeaders } from "../kit/auth.js";
 import { PLAY_ORG } from "../ports/spec-workspace.js";
 
 export interface AgentsApp {

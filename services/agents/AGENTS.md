@@ -11,11 +11,11 @@ The client-side consumption surface — wire types (SSE events, `OpResult`,
 `*Input`, `Change`, `TurnRequest`), the `FileBundle` fold (`applyToolCall`,
 `toChange`) with the component `design.json` write-gate, the SSE reader
 (`streamTurn`), and the published JSON Schema — lives in the workspace package
-**`@aep/agent-stream`** (moved there so the console/evals/playground fold one
+**`@aep/agent-stream`** (moved there so the console/playground fold one
 definition). This service imports it; `tool.ts`'s Zod schemas are drift-guarded
 against the wire `*Input` types there. See `design/`
 (`ADR-0001-anchored-file-edits.md`, `ADR-0002-skills-progressive-disclosure.md`,
-`agent-loop-and-eval-framework.md`).
+`agent-loop.md`).
 
 **Skills** are guidance (not code): the service shows a name+description **catalog**
 at the end of the system prompt, and the agent pulls a body on demand via the
@@ -58,22 +58,25 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 - **Store**: Postgres when `DATABASE_URL` is set (idempotent bootstrap + TTL
   sweep, `CONVERSATIONS_TTL_MS` / `CONVERSATIONS_SWEEP_MS`), else in-memory.
 - Keep-alives every `AGENT_KEEPALIVE_MS` (default 15s) while a turn streams.
-- The evals/playground read `ANTHROPIC_API_KEY` themselves and send it (plus an
-  HS256 M2M token) as headers, like any caller.
-- **Playground MCP discovery (local dev)**: the caller (not the service) pushes an
-  `mcp: { url, token }` bundle on the turn. Set `AEP_MCP_URL` to a local aep-api's
-  `/internal/v1/mcp` to let the playground agent call the dependency-discovery
-  tools; with `AEP_MCP_TOKEN` empty it auto-mints a fresh token per turn via that
-  aep-api's `playground-token` endpoint (needs `PLAYGROUND_TOKEN_ENABLED=true`,
-  which the repo compose sets). `AEP_MCP_ORG` selects the org (defaults `default`);
-  leave `AEP_MCP_URL` unset to run without discovery. See `.env.example`.
+- Callers (e.g. the `@aep/playground` CLI) read `ANTHROPIC_API_KEY` themselves and
+  send it (plus an HS256 M2M token) as headers — the service holds no key.
+- **MCP dependency-discovery** (optional): the caller — not the service — pushes an
+  `mcp: { url, token }` bundle on the turn (aep-api in production; the playground in
+  local dev). Absent → no discovery tools (byte-identical to today); malformed → a
+  clean pre-stream 400.
 
 ## Test
 
-- `test` — source unit tests (`src/**/*.test.ts`), no tokens.
-- `test:eval` — deterministic eval-tree tests (`evals/**/*.test.ts`), no tokens.
-- `eval` — model suite over the live route; report-not-gate, skips without a key.
-- `typecheck:eval` — typecheck the eval tree (`tsconfig.eval.json`).
+- `test` — unit tests (`test/**/*.test.ts`), no tokens. Tests and their shared
+  fixtures live in `test/` (never in the shipped `src/` tree), mirroring
+  `@aep/agent-stream` and `@aep/playground`. Fixtures/doubles are flat siblings:
+  `test/seed-files.ts` (the spec-bundle fixture), `test/skill-source.ts` (the
+  `SkillSource` double). Cross-package test-support that must be importable (the
+  `mock-model`) stays in `src/shared/` and is published via `exports`.
+
+The local-filesystem playground and the model-eval harness live in the root
+`@aep/playground` package (they drive this service over HTTP like any caller);
+this service ships only the runtime + its unit tests.
 
 ## Conventions
 
@@ -82,5 +85,4 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 - Latest Claude models by default (see the `claude-api` skill for model ids).
 - One agent per `src/agents/<name>/`; the loop (`run-turn.ts`) is shared.
 - `src/` writes no files; its only filesystem READS are the §12 snapshot dirs
-  (`load-workspace.ts`, paths derived solely by `snapshot-path.ts`). Only
-  `evals/` writes to the filesystem (fixture mounts/previews).
+  (`load-workspace.ts`, paths derived solely by `snapshot-path.ts`).

@@ -5,6 +5,13 @@ linters:
   default: none
   enable:
     - goheader
+    # unused (staticcheck U1000) is the Tier-2 complement to the deadcode gate
+    # (make deadcode-check): it catches unused UNEXPORTED types, vars, consts and
+    # fields that deadcode (functions-only) does not. Scoped to production code —
+    # _test.go is excluded below because the reflection-based method-origin gate
+    # (edge/method_origin_test.go) references fixtures in ways U1000 cannot see,
+    # which would be false positives. See scripts/deadcode.sh.
+    - unused
   settings:
     goheader:
       values:
@@ -31,6 +38,13 @@ linters:
         under the License.
   exclusions:
     generated: lax
+    rules:
+      # unused is unreliable on test files (reflection-driven fixtures read as
+      # dead) — police production code only. Dead test helpers are a one-time
+      # sweep, not a standing gate.
+      - path: _test\.go
+        linters:
+          - unused
     paths:
       - internal/clients/openchoreo/gen
       - internal/clients/openchoreo/mocks

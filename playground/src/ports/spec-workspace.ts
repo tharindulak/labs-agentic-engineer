@@ -38,8 +38,9 @@ import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { WorkspaceRef } from "@aep/agent-stream";
-import { readProjectFiles, resolveWithin } from "@aep/agents/playground-kit";
-import { filesSnapshotSha, renderSkillFiles, skillsSnapshotSha, type RepoSkill } from "@aep/agents/evals-kit";
+import { readProjectFiles, resolveWithin } from "../kit/project-fs.js";
+import { filesSnapshotSha, renderSkillFiles, skillsSnapshotSha } from "../kit/snapshot.js";
+import type { RepoSkill } from "../kit/skills.js";
 
 /** The playground's fixed tenant — fence values only; they never reach the model. */
 export const PLAY_ORG = "play";

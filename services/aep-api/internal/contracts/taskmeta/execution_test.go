@@ -18,35 +18,20 @@ package taskmeta
 
 import "testing"
 
-func TestExecutionKindValid(t *testing.T) {
-	for _, k := range []ExecutionKind{KindCoding, KindBuild, KindOps} {
-		if !k.Valid() {
-			t.Errorf("%q should be valid", k)
-		}
-	}
-	if ExecutionKind("nonsense").Valid() {
-		t.Errorf("nonsense kind should be invalid")
-	}
-}
-
 func TestExecutionStatusPredicates(t *testing.T) {
 	tests := []struct {
 		s        ExecutionStatus
-		valid    bool
 		terminal bool
 		active   bool
 	}{
-		{ExecQueued, true, false, true},
-		{ExecRunning, true, false, true},
-		{ExecSucceeded, true, true, false},
-		{ExecFailed, true, true, false},
-		{ExecCanceled, true, true, false},
-		{"bogus", false, false, false},
+		{ExecQueued, false, true},
+		{ExecRunning, false, true},
+		{ExecSucceeded, true, false},
+		{ExecFailed, true, false},
+		{ExecCanceled, true, false},
+		{"bogus", false, false},
 	}
 	for _, tt := range tests {
-		if got := tt.s.Valid(); got != tt.valid {
-			t.Errorf("%q.Valid() = %v; want %v", tt.s, got, tt.valid)
-		}
 		if got := tt.s.IsTerminal(); got != tt.terminal {
 			t.Errorf("%q.IsTerminal() = %v; want %v", tt.s, got, tt.terminal)
 		}

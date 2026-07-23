@@ -17,24 +17,13 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { CircleAlert } from "@wso2/oxygen-ui-icons-react";
-import { SectionPlaceholder } from "../features/projects/components/SectionPlaceholder";
+import { IssuesPage } from "../features/projects/components/IssuesPage";
 
 export const Route = createFileRoute("/projects/$projectName/issues")({
-  component: IssuesPlaceholderRoute,
+  component: IssuesRoute,
 });
 
-// Placeholder by decision (#173): Issues is the future surface for issues
-// the SRE agent raises against the running project; its own feature will
-// land the content.
-function IssuesPlaceholderRoute() {
+function IssuesRoute() {
   const { projectName } = Route.useParams();
-  return (
-    <SectionPlaceholder
-      icon={<CircleAlert size={48} />}
-      title="Issues is on its way"
-      description="Issues the SRE agent raises against the running project will land here — triage them and follow their fixes."
-      projectName={projectName}
-    />
-  );
+  return <IssuesPage projectName={projectName} />;
 }

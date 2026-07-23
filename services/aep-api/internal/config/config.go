@@ -51,12 +51,21 @@ type Config struct {
 
 	// PlaygroundTokenEnabled gates POST /internal/v1/mcp/playground-token — a
 	// caller-auth-free endpoint that mints a short-lived MCP token so a human
-	// can drive the services/agents playground CLI against a live aep-api
+	// can drive the @aep/playground CLI against a live aep-api
 	// without a caller-auth story (an open decision this endpoint deliberately
 	// does not prejudge). Defaults false, so the route is ABSENT (404, not
 	// 403) everywhere except deployments/docker-compose.yml, which opts in for
 	// local dev. Read from PLAYGROUND_TOKEN_ENABLED.
 	PlaygroundTokenEnabled bool
+
+	// AutoMergeCodingPRs gates auto-merge of coding-agent pull requests: when
+	// true, a coding-agent PR is squash-merged the moment it opens, removing the
+	// human review gate and letting the path-based build fan-out deploy the fix
+	// end-to-end without a human. Defaults FALSE (secure default): auto-merge
+	// deploys UNREVIEWED agent-authored code, which is not guaranteed correct, so
+	// a deployment must opt in explicitly (set it in that deployment's config,
+	// e.g. docker-compose). Read from AUTO_MERGE_CODING_PRS.
+	AutoMergeCodingPRs bool
 
 	// TenantGateMode controls the central per-route tenant gate (§6.1b).
 	// ENFORCE BY DEFAULT (zero-config): "enforce" 404s a path-vs-JWT org
@@ -239,6 +248,19 @@ func (c Config) Validate() error {
 	if c.GitProvider != "github" {
 		errs = append(errs, fmt.Sprintf("unknown GIT_PROVIDER %q — supported: github", c.GitProvider))
 	}
+	// Required config — fail fast at boot instead of soft-warning and surfacing
+	// the failure later at runtime. Both planes (docker-compose + Helm) always set
+	// these; an empty value means a misconfigured deployment, not a valid mode.
+	if c.JWKSURL == "" {
+		// Without JWKS the inbound verifier rejects every /api/ request (401);
+		// there is no unsigned-claim fallback.
+		errs = append(errs, "JWKS_URL is required — the inbound JWT verifier cannot start without it")
+	}
+	if c.TaskTokenSigningKey == "" {
+		// Without the RS256 signing key every task dispatch (and the runner
+		// callbacks that verify against the published JWKS) fails.
+		errs = append(errs, "BFF_TASK_SIGNING_KEY (or _PATH) is required — task dispatch cannot start without it")
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
 	}
@@ -286,8 +308,7 @@ type AgentsSvcConfig struct {
 	JWTIssuer   string
 }
 
-// WorkspaceConfig holds the shared git-workspaces mount settings
-// (docs/design/shared-volume-clone-architecture.md §13–§14): the mount root
+// WorkspaceConfig holds the shared git-workspaces mount settings: the mount root
 // where bare repo mirrors + per-SHA snapshots live, plus the disk-lifecycle
 // (reaper) knobs. aep-api is the sole writer of the mount; the agents service
 // consumes read-only snapshots from the same volume.
@@ -337,7 +358,7 @@ type PlatformAPIConfig struct {
 }
 
 // TemporalConfig holds connection settings for the Temporal server that
-// drives the devflow workflows (internal/feature/devflow). HostPort empty ⇒
+// drives the devflow workflows (internal/delivery/devflow). HostPort empty ⇒
 // the feature is disabled: no worker starts and the devflow endpoints
 // return 503 temporal_unavailable.
 type TemporalConfig struct {

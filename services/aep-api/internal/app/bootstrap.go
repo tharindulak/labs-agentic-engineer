@@ -21,9 +21,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/config"
-	"github.com/wso2/aep/aep-api/internal/database/migrations"
 	"gorm.io/gorm"
+
+	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/internal/migrate"
 )
 
 // Bootstrap runs the imperative first-boot schema steps that must complete
@@ -38,10 +39,10 @@ import (
 //     context-taking step gets its own timeout internally).
 func Bootstrap(ctx context.Context, db *gorm.DB, cfg config.Config) error {
 	grantCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	_ = migrations.RunBootstrapGrants(grantCtx, db)
+	_ = migrate.RunBootstrapGrants(grantCtx, db)
 	cancel()
 
-	if err := migrations.RunAll(ctx, db, cfg.DeploymentTier); err != nil {
+	if err := migrate.RunAll(ctx, db, cfg.DeploymentTier); err != nil {
 		return fmt.Errorf("migrations: %w", err)
 	}
 	return nil

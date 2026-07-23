@@ -26,7 +26,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 // newTestResourceClient builds a resourceClient pointed at srv with no auth
@@ -701,111 +700,6 @@ func TestListWorkloadEndpoints_EmptyList(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected empty slice, got %+v", got)
-	}
-}
-
-// ---- WaitForLatestRelease ---------------------------------------------------------
-
-func TestWaitForLatestRelease_ImmediateHit(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, Resource{
-			Metadata: OCObjectMeta{Name: "proj-conn1"},
-			Status:   &ResourceStatus{LatestRelease: &ResourceLatestRelease{Name: "rel-1"}},
-		})
-	}))
-	defer srv.Close()
-
-	c := newTestResourceClient(t, srv)
-	got, err := WaitForLatestRelease(context.Background(), c, "wc-abc", "proj-conn1", 10*time.Millisecond, time.Second)
-	if err != nil {
-		t.Fatalf("WaitForLatestRelease: %v", err)
-	}
-	if got != "rel-1" {
-		t.Errorf("expected rel-1, got %q", got)
-	}
-}
-
-func TestWaitForLatestRelease_PollThenHit(t *testing.T) {
-	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&calls, 1)
-		if n < 3 {
-			writeJSON(t, w, http.StatusOK, Resource{Metadata: OCObjectMeta{Name: "proj-conn1"}})
-			return
-		}
-		writeJSON(t, w, http.StatusOK, Resource{
-			Metadata: OCObjectMeta{Name: "proj-conn1"},
-			Status:   &ResourceStatus{LatestRelease: &ResourceLatestRelease{Name: "rel-9"}},
-		})
-	}))
-	defer srv.Close()
-
-	c := newTestResourceClient(t, srv)
-	got, err := WaitForLatestRelease(context.Background(), c, "wc-abc", "proj-conn1", 5*time.Millisecond, time.Second)
-	if err != nil {
-		t.Fatalf("WaitForLatestRelease: %v", err)
-	}
-	if got != "rel-9" {
-		t.Errorf("expected rel-9, got %q", got)
-	}
-	if calls < 3 {
-		t.Errorf("expected at least 3 polls, got %d", calls)
-	}
-}
-
-func TestWaitForLatestRelease_Timeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, Resource{Metadata: OCObjectMeta{Name: "proj-conn1"}})
-	}))
-	defer srv.Close()
-
-	c := newTestResourceClient(t, srv)
-	_, err := WaitForLatestRelease(context.Background(), c, "wc-abc", "proj-conn1", 5*time.Millisecond, 20*time.Millisecond)
-	if err == nil {
-		t.Fatal("expected timeout error")
-	}
-}
-
-// TestWaitForLatestRelease_ContextCanceled exercises the loop's
-// `case <-ctx.Done()` branch specifically: the first poll succeeds (no
-// latestRelease yet), then the context is canceled well before the poll
-// interval elapses, so the wait must return promptly with ctx.Err() rather
-// than blocking until the (much longer) timeout.
-func TestWaitForLatestRelease_ContextCanceled(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, Resource{Metadata: OCObjectMeta{Name: "proj-conn1"}})
-	}))
-	defer srv.Close()
-
-	c := newTestResourceClient(t, srv)
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(15*time.Millisecond, cancel)
-
-	start := time.Now()
-	_, err := WaitForLatestRelease(ctx, c, "wc-abc", "proj-conn1", 200*time.Millisecond, time.Minute)
-	elapsed := time.Since(start)
-
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled, got %v", err)
-	}
-	if elapsed > 150*time.Millisecond {
-		t.Errorf("expected prompt return on ctx cancellation, took %s", elapsed)
-	}
-}
-
-func TestWaitForLatestRelease_GetResourceErrorPropagates(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusInternalServerError, map[string]string{"error": "boom"})
-	}))
-	defer srv.Close()
-
-	c := newTestResourceClient(t, srv)
-	_, err := WaitForLatestRelease(context.Background(), c, "wc-abc", "proj-conn1", 5*time.Millisecond, 50*time.Millisecond)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !errors.Is(err, ErrInternalServerError) {
-		t.Errorf("expected ErrInternalServerError, got %v", err)
 	}
 }
 

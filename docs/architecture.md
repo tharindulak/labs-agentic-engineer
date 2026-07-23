@@ -1,7 +1,7 @@
 # AEP — Architecture
 
-> **Note:** this describes the *target* architecture. Components land as they are
-> built.
+> Repo-wide map. Each service's README is the source of truth for its own
+> current architecture — start with [`aep-api`](../services/aep-api/README.md).
 
 ## Overview
 
@@ -40,9 +40,10 @@ The build graph (`turbo` + `go.work`) wires every consumer's `build`/`typecheck`
 behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
 `docs/decisions/ADR-0001-tooling-and-naming.md`.
 
-## Service map (target — populated during migration)
+## Service map
 
-- `aep-api` — Go BFF + GitHub webhook receiver (git ops folded in).
+- [`aep-api`](../services/aep-api/README.md) — Go BFF + GitHub webhook receiver
+  (git ops folded in); domain-oriented modules + vertical slices.
 - `database` — Go data service.
 - `agents` — TS interactive spec agents (Vercel AI SDK).
 - `collab` — TS Yjs collaboration server.

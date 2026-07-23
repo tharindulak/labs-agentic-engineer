@@ -18,10 +18,16 @@
 
 import { createRouter } from "@tanstack/react-router";
 import { routeTree } from "./generated/routeTree.gen";
+import { NotFound } from "./components/NotFound";
 
 // Module-scoped so non-component code (the OIDC signin callback) can
 // navigate without a hook.
-export const router = createRouter({ routeTree });
+export const router = createRouter({
+  routeTree,
+  // Any unmatched URL (Task 4) — renders inside the root route's outlet, so
+  // it stays within the signed-in app shell rather than a bare page.
+  defaultNotFoundComponent: NotFound,
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

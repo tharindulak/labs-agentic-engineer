@@ -1,0 +1,121 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package spec
+
+import (
+	"fmt"
+	"strconv"
+
+	"gopkg.in/yaml.v3"
+)
+
+// NormalizeOpenAPIYAML applies the rules from design doc §10 to a single
+// OpenAPI spec.
+func NormalizeOpenAPIYAML(in string) (string, error) {
+	var raw any
+	if err := yaml.Unmarshal([]byte(in), &raw); err != nil {
+		return "", err
+	}
+	cleaned := canonicalize(raw)
+	out, err := yaml.Marshal(cleaned)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// emptyDropKeys lists keys whose value is dropped from the parent mapping
+// when the value is an empty array. These are the OpenAPI "noise" keys —
+// authors emit them inconsistently, but they carry no semantic content.
+var emptyDropKeys = map[string]struct{}{
+	"required":   {},
+	"parameters": {},
+	"tags":       {},
+	"security":   {},
+}
+
+// canonicalize walks the parsed-YAML tree and returns a tree where:
+//   - All maps are map[string]any (status-code int keys coerced to "200" form).
+//   - Pairs whose value is an empty array AND whose key is in emptyDropKeys are removed.
+//
+// yaml.v3's Marshal sorts map keys alphabetically by default, so we don't
+// need an explicit sort pass — the marshaler does it for us.
+func canonicalize(node any) any {
+	switch n := node.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(n))
+		for k, v := range n {
+			cv := canonicalize(v)
+			if shouldDrop(k, cv) {
+				continue
+			}
+			out[k] = cv
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(n))
+		for k, v := range n {
+			ks := keyToString(k)
+			cv := canonicalize(v)
+			if shouldDrop(ks, cv) {
+				continue
+			}
+			out[ks] = cv
+		}
+		return out
+	case []any:
+		// Preserve element order (semantic in OpenAPI for tags/parameters/etc.).
+		out := make([]any, len(n))
+		for i, v := range n {
+			out[i] = canonicalize(v)
+		}
+		return out
+	default:
+		return n
+	}
+}
+
+func shouldDrop(key string, val any) bool {
+	if _, ok := emptyDropKeys[key]; !ok {
+		return false
+	}
+	arr, ok := val.([]any)
+	return ok && len(arr) == 0
+}
+
+func keyToString(k any) string {
+	switch v := k.(type) {
+	case string:
+		return v
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case float64:
+		// Only happens for integer-looking floats; OpenAPI status codes are integers.
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}

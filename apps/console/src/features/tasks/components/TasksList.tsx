@@ -29,8 +29,11 @@ import {
 } from "@wso2/oxygen-ui";
 import { GitHub } from "@wso2/oxygen-ui-icons-react";
 import { useNavigate } from "@tanstack/react-router";
+import { StatusChip } from "../../../components/StatusChip";
 import { useAllTasks } from "../api/queries";
-import { TaskStatusChip } from "./TaskStatusChip";
+import { taskChip } from "../api/status";
+import { UsageBreakdown } from "../../usage/components/UsageBreakdown";
+import { formatTokens, formatUsd, totalTokens } from "../../usage/lib/format";
 
 // The flat task list (#173): one row per task, status chip inline — the user
 // watches chips go green. Card-variant listing per the components list /
@@ -132,6 +135,33 @@ export function TasksList({
                     </Typography>
                   }
                   primary={t.title}
+                  // Per-task cost (#245): deliberately quiet — a small caption
+                  // under the title, never a column of highlighted figures.
+                  // USD only (tokens live in the hover breakdown); absent
+                  // until an execution has run.
+                  secondary={
+                    t.usage && totalTokens(t.usage) > 0 ? (
+                      <Tooltip
+                        title={
+                          <UsageBreakdown
+                            usage={t.usage}
+                            context="This task's agent spend"
+                          />
+                        }
+                      >
+                        <Typography
+                          component="span"
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {t.usage.costUsd !== null
+                            ? formatUsd(t.usage.costUsd)
+                            : `${formatTokens(totalTokens(t.usage))} tok`}
+                        </Typography>
+                      </Tooltip>
+                    ) : undefined
+                  }
                 />
               </ListingTable.Cell>
               <ListingTable.Cell sx={{ maxWidth: 160 }}>
@@ -144,16 +174,24 @@ export function TasksList({
                 )}
               </ListingTable.Cell>
               <ListingTable.Cell sx={{ maxWidth: 120 }}>
-                {t.derivedStatus === "on_hold" && t.blockedBy?.length ? (
-                  <Tooltip title={`Waiting for ${t.blockedBy.join(", ")}`}>
-                    {/* Box holds the ref Tooltip needs; hovering the pill shows the reason. */}
-                    <Box sx={{ display: "inline-flex" }}>
-                      <TaskStatusChip derivedStatus={t.derivedStatus} />
-                    </Box>
-                  </Tooltip>
-                ) : (
-                  <TaskStatusChip derivedStatus={t.derivedStatus} />
-                )}
+                {(() => {
+                  const chip = taskChip(t.derivedStatus);
+                  const pill = (
+                    <StatusChip
+                      label={chip.label}
+                      tone={chip.tone}
+                      appearance="soft"
+                    />
+                  );
+                  return t.derivedStatus === "on_hold" && t.blockedBy?.length ? (
+                    <Tooltip title={`Waiting for ${t.blockedBy.join(", ")}`}>
+                      {/* Box holds the ref Tooltip needs; hovering the pill shows the reason. */}
+                      <Box sx={{ display: "inline-flex" }}>{pill}</Box>
+                    </Tooltip>
+                  ) : (
+                    pill
+                  );
+                })()}
               </ListingTable.Cell>
               <ListingTable.Cell sx={{ maxWidth: 64 }}>
                 <Tooltip title="Open the GitHub issue">

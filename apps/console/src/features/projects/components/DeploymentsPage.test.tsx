@@ -24,7 +24,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
 // Router replaced so the internal-link chip renders as a plain anchor whose
-// href is the resolved route path — no RouterProvider needed.
+// href is the resolved route path, and the PageHeader back-link as a plain
+// anchor — no RouterProvider needed (mirrors NotFound.test.tsx).
 vi.mock("@tanstack/react-router", () => ({
   createLink: (Component: ElementType) =>
     function MockLink({
@@ -41,6 +42,7 @@ vi.mock("@tanstack/react-router", () => ({
       }
       return <Component component="a" href={href} {...rest} />;
     },
+  Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
 }));
 
 import { DeploymentsPage } from "./DeploymentsPage";

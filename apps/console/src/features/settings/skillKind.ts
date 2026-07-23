@@ -16,6 +16,8 @@
  * under the License.
  */
 
+import type { StatusTone } from "../../components/StatusChip";
+
 // The BE's canonical skill-kind vocabulary (`skills/skill_service.go`,
 // `frontmatterKind`). `builtin` and `flow` are RETIRED: `repo_store.go`'s
 // `legacyKindDirs` maps builtin→org and flow→platform for repos that predate
@@ -45,13 +47,11 @@ export function kindLabel(kind: SkillKind): string {
   }
 }
 
-// Chip colour per kind — from the Oxygen UI Chip colour enum. Two colours are
-// deliberately avoided: `warning` belongs to the "update available" chip (a
-// kind must not read as a state), and `secondary` resolves to a near-white
-// (#e8e8e8) that is unreadable on a light surface.
-export function kindChipColor(
-  kind: SkillKind,
-): "primary" | "default" | "success" | "info" {
+// Chip tone per kind (StatusChip). Two Oxygen Chip colours are deliberately
+// avoided: `warning` belongs to the "update available" chip (a kind must not
+// read as a state), and `secondary` resolves to a near-white (#e8e8e8) that
+// is unreadable on a light surface.
+export function kindChipTone(kind: SkillKind): StatusTone {
   switch (kind) {
     case "org":
       return "primary";
@@ -60,7 +60,7 @@ export function kindChipColor(
     case "custom":
       return "success";
     case "imported":
-      return "default";
+      return "neutral";
   }
 }
 

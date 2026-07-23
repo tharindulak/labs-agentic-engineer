@@ -14,16 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package httpkit holds the shared HTTP response writers (§4.0): the
-// WriteSuccessResponse/WriteErrorResponse base writers plus the Write40x
-// helpers the central tenant gate uses, and the UUID path-param validator.
+// Package httpkit holds the shared HTTP response primitives: the
+// WriteErrorResponse JSON error writer (response.go) used across the edge
+// layer, and the APIV1 version prefix the contract-first router mounts every
+// operation under.
 package httpkit
-
-import (
-	"net/http"
-
-	"github.com/wso2/aep/aep-api/internal/platform/validate"
-)
 
 // APIV1 is the client-facing edge's version prefix, declared ONCE. The
 // contract-first router mounts every public operation under it (it is the
@@ -32,35 +27,3 @@ import (
 // A v2 is a one-edit change here. The internal S2S surface uses a separate
 // /internal/v1 root (api.internalV1).
 const APIV1 = "/api/v1"
-
-// Write400 writes a 400 Bad Request with the given client-facing message.
-func Write400(w http.ResponseWriter, msg string) {
-	WriteErrorResponse(w, http.StatusBadRequest, msg)
-}
-
-// Write401 writes a 401 Unauthorized.
-func Write401(w http.ResponseWriter) {
-	WriteErrorResponse(w, http.StatusUnauthorized, "authentication required")
-}
-
-// Write404 writes a 404 Not Found. The gate uses the SAME body for wrong-org
-// and no-such-org so cross-org existence is never leaked (§6.1a).
-func Write404(w http.ResponseWriter, msg string) {
-	WriteErrorResponse(w, http.StatusNotFound, msg)
-}
-
-// Write500 writes a 500 Internal Server Error with a generic message.
-func Write500(w http.ResponseWriter) {
-	WriteErrorResponse(w, http.StatusInternalServerError, "internal error")
-}
-
-// RequireUUID validates a canonical UUID path param. On failure it writes a
-// 400 to w (with paramName surfaced in the message) and returns false;
-// otherwise returns true.
-func RequireUUID(w http.ResponseWriter, paramName, v string) bool {
-	if err := validate.UUID(v); err != nil {
-		Write400(w, paramName+": "+err.Error())
-		return false
-	}
-	return true
-}

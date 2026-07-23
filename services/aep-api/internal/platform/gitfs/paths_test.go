@@ -31,11 +31,9 @@ func TestPathDerivation(t *testing.T) {
 	if err != nil || repoDir != "/workspaces/repos/org-1/_skills/org-skills" {
 		t.Fatalf("RepoDir = (%q, %v)", repoDir, err)
 	}
-	gitDir, _ := gitfs.GitDir(root, ref)
-	lockPath, _ := gitfs.LockPath(root, ref)
 	snapsDir, _ := gitfs.SnapshotsDir(root, ref)
-	if gitDir != repoDir+"/git" || lockPath != repoDir+"/repo.lock" || snapsDir != repoDir+"/snapshots" {
-		t.Fatalf("derived paths = %q %q %q", gitDir, lockPath, snapsDir)
+	if snapsDir != repoDir+"/snapshots" {
+		t.Fatalf("derived snapshots dir = %q", snapsDir)
 	}
 	sha := strings.Repeat("ab", 20)
 	snapDir, err := gitfs.SnapshotDir(root, ref, sha)

@@ -20,11 +20,28 @@
 // (204), and a scripted SSE stream — narration, one tool result, terminal —
 // so the panel is fully drivable in mock mode. Error scenario: instruction
 // containing "fail" streams a turn-failed terminal.
+//
+// Multi-user scenarios (task 2, `aep:mock:chat` — see fixtures/chat.ts):
+//   "multiuser"      — settled history, two authors, no running turn.
+//   "teammate-turn"  — same history, plus a running turn a teammate started
+//                      (its triggering message is in the history; the reply
+//                      streams from the same scripted SSE builder below).
+//   unset            — unchanged: empty rehydrate, no active turn.
 
 import { http, HttpResponse } from "msw";
+import {
+  activeTeammateTurn,
+  multiuserHistory,
+  teammateTurnHistory,
+  type ChatScenario,
+} from "../fixtures/chat";
 
 let turnCounter = 0;
 const turnInstruction = new Map<string, string>();
+
+function chatScenario(): ChatScenario | null {
+  return localStorage.getItem("aep:mock:chat") as ChatScenario | null;
+}
 
 function sse(frames: unknown[]): Response {
   const encoder = new TextEncoder();
@@ -56,13 +73,23 @@ export const agentChatHandlers = [
     return HttpResponse.json({ turnId }, { status: 202 });
   }),
 
-  http.get("*/api/v1/projects/:projectName/agents/:conversationId/messages", () =>
-    HttpResponse.json({ status: "done", messages: [] }),
-  ),
+  http.get("*/api/v1/projects/:projectName/agents/:conversationId/messages", () => {
+    const scenario = chatScenario();
+    if (scenario === "multiuser") {
+      return HttpResponse.json({ status: "done", messages: multiuserHistory });
+    }
+    if (scenario === "teammate-turn") {
+      return HttpResponse.json({ status: "done", messages: teammateTurnHistory });
+    }
+    return HttpResponse.json({ status: "done", messages: [] });
+  }),
 
-  http.get("*/api/v1/projects/:projectName/turns/active", () =>
-    new HttpResponse(null, { status: 204 }),
-  ),
+  http.get("*/api/v1/projects/:projectName/turns/active", () => {
+    if (chatScenario() === "teammate-turn") {
+      return HttpResponse.json(activeTeammateTurn());
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
 
   http.get("*/api/v1/projects/:projectName/turns/:turnId/stream", ({ params }) => {
     const turnId = String(params.turnId);

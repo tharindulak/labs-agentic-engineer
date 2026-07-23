@@ -7,10 +7,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/wso2/aep/aep-api/internal/api/apigen"
-
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
-	"github.com/wso2/aep/aep-api/models"
+	"github.com/wso2/aep/aep-api/internal/gen"
 )
 
 // Ensure, that ComponentClientMock does implement openchoreo.ComponentClient.
@@ -23,49 +21,49 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //
 //		// make and configure a mocked openchoreo.ComponentClient
 //		mockedComponentClient := &ComponentClientMock{
-//			CreateComponentFunc: func(ctx context.Context, orgName string, projectName string, req *models.CreateComponentRequest) (*apigen.Component, error) {
+//			CreateComponentFunc: func(ctx context.Context, orgName string, projectName string, req *openchoreo.CreateComponentRequest) (*gen.Component, error) {
 //				panic("mock out the CreateComponent method")
 //			},
 //			DeleteComponentFunc: func(ctx context.Context, orgName string, projectName string, componentName string) error {
 //				panic("mock out the DeleteComponent method")
 //			},
-//			GetComponentFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (*apigen.Component, error) {
+//			GetComponentFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.Component, error) {
 //				panic("mock out the GetComponent method")
 //			},
-//			GetWorkflowRunFunc: func(ctx context.Context, orgName string, runName string) (*apigen.WorkflowRun, error) {
+//			GetWorkflowRunFunc: func(ctx context.Context, orgName string, runName string) (*gen.WorkflowRun, error) {
 //				panic("mock out the GetWorkflowRun method")
 //			},
-//			ListComponentsFunc: func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*apigen.ComponentList, error) {
+//			ListComponentsFunc: func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*gen.ComponentList, error) {
 //				panic("mock out the ListComponents method")
 //			},
-//			ListDeploymentsFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (*apigen.DeploymentList, error) {
+//			ListDeploymentsFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.DeploymentList, error) {
 //				panic("mock out the ListDeployments method")
 //			},
-//			ListProjectReleaseBindingsFunc: func(ctx context.Context, orgName string, projectName string) ([]models.ReleaseBindingSummary, error) {
+//			ListProjectReleaseBindingsFunc: func(ctx context.Context, orgName string, projectName string) ([]openchoreo.ReleaseBindingSummary, error) {
 //				panic("mock out the ListProjectReleaseBindings method")
 //			},
-//			ListWorkflowRunsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*apigen.WorkflowRunList, error) {
+//			ListWorkflowRunsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*gen.WorkflowRunList, error) {
 //				panic("mock out the ListWorkflowRuns method")
 //			},
-//			TriggerBuildFunc: func(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*apigen.WorkflowRun, error) {
+//			TriggerBuildFunc: func(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*gen.WorkflowRun, error) {
 //				panic("mock out the TriggerBuild method")
 //			},
-//			TriggerBuildAtCommitFunc: func(ctx context.Context, orgName string, projectName string, componentName string, commitSHA string, secretRef string, runName string) (*apigen.WorkflowRun, error) {
+//			TriggerBuildAtCommitFunc: func(ctx context.Context, orgName string, projectName string, componentName string, commitSHA string, secretRef string, runName string) (*gen.WorkflowRun, error) {
 //				panic("mock out the TriggerBuildAtCommit method")
 //			},
-//			TriggerCodingAgentFunc: func(ctx context.Context, params openchoreo.CodingAgentParams) (*apigen.WorkflowRun, error) {
+//			TriggerCodingAgentFunc: func(ctx context.Context, params openchoreo.CodingAgentParams) (*gen.WorkflowRun, error) {
 //				panic("mock out the TriggerCodingAgent method")
 //			},
 //			UpdateComponentTraitEnvironmentConfigsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, configs map[string]map[string]interface{}) error {
 //				panic("mock out the UpdateComponentTraitEnvironmentConfigs method")
 //			},
-//			UpdateComponentTraitsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, traits []models.ComponentTrait) error {
+//			UpdateComponentTraitsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, traits []openchoreo.ComponentTrait) error {
 //				panic("mock out the UpdateComponentTraits method")
 //			},
-//			UpdateComponentWorkflowEnvVarsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, envVars []models.WorkflowEnvVarRef) error {
+//			UpdateComponentWorkflowEnvVarsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, envVars []openchoreo.WorkflowEnvVarRef) error {
 //				panic("mock out the UpdateComponentWorkflowEnvVars method")
 //			},
-//			UpdateComponentWorkflowFilesFunc: func(ctx context.Context, orgName string, projectName string, componentName string, files []models.WorkflowFileVar) error {
+//			UpdateComponentWorkflowFilesFunc: func(ctx context.Context, orgName string, projectName string, componentName string, files []openchoreo.WorkflowFileVar) error {
 //				panic("mock out the UpdateComponentWorkflowFiles method")
 //			},
 //		}
@@ -76,49 +74,49 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //	}
 type ComponentClientMock struct {
 	// CreateComponentFunc mocks the CreateComponent method.
-	CreateComponentFunc func(ctx context.Context, orgName string, projectName string, req *models.CreateComponentRequest) (*apigen.Component, error)
+	CreateComponentFunc func(ctx context.Context, orgName string, projectName string, req *openchoreo.CreateComponentRequest) (*gen.Component, error)
 
 	// DeleteComponentFunc mocks the DeleteComponent method.
 	DeleteComponentFunc func(ctx context.Context, orgName string, projectName string, componentName string) error
 
 	// GetComponentFunc mocks the GetComponent method.
-	GetComponentFunc func(ctx context.Context, orgName string, projectName string, componentName string) (*apigen.Component, error)
+	GetComponentFunc func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.Component, error)
 
 	// GetWorkflowRunFunc mocks the GetWorkflowRun method.
-	GetWorkflowRunFunc func(ctx context.Context, orgName string, runName string) (*apigen.WorkflowRun, error)
+	GetWorkflowRunFunc func(ctx context.Context, orgName string, runName string) (*gen.WorkflowRun, error)
 
 	// ListComponentsFunc mocks the ListComponents method.
-	ListComponentsFunc func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*apigen.ComponentList, error)
+	ListComponentsFunc func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*gen.ComponentList, error)
 
 	// ListDeploymentsFunc mocks the ListDeployments method.
-	ListDeploymentsFunc func(ctx context.Context, orgName string, projectName string, componentName string) (*apigen.DeploymentList, error)
+	ListDeploymentsFunc func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.DeploymentList, error)
 
 	// ListProjectReleaseBindingsFunc mocks the ListProjectReleaseBindings method.
-	ListProjectReleaseBindingsFunc func(ctx context.Context, orgName string, projectName string) ([]models.ReleaseBindingSummary, error)
+	ListProjectReleaseBindingsFunc func(ctx context.Context, orgName string, projectName string) ([]openchoreo.ReleaseBindingSummary, error)
 
 	// ListWorkflowRunsFunc mocks the ListWorkflowRuns method.
-	ListWorkflowRunsFunc func(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*apigen.WorkflowRunList, error)
+	ListWorkflowRunsFunc func(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*gen.WorkflowRunList, error)
 
 	// TriggerBuildFunc mocks the TriggerBuild method.
-	TriggerBuildFunc func(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*apigen.WorkflowRun, error)
+	TriggerBuildFunc func(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*gen.WorkflowRun, error)
 
 	// TriggerBuildAtCommitFunc mocks the TriggerBuildAtCommit method.
-	TriggerBuildAtCommitFunc func(ctx context.Context, orgName string, projectName string, componentName string, commitSHA string, secretRef string, runName string) (*apigen.WorkflowRun, error)
+	TriggerBuildAtCommitFunc func(ctx context.Context, orgName string, projectName string, componentName string, commitSHA string, secretRef string, runName string) (*gen.WorkflowRun, error)
 
 	// TriggerCodingAgentFunc mocks the TriggerCodingAgent method.
-	TriggerCodingAgentFunc func(ctx context.Context, params openchoreo.CodingAgentParams) (*apigen.WorkflowRun, error)
+	TriggerCodingAgentFunc func(ctx context.Context, params openchoreo.CodingAgentParams) (*gen.WorkflowRun, error)
 
 	// UpdateComponentTraitEnvironmentConfigsFunc mocks the UpdateComponentTraitEnvironmentConfigs method.
 	UpdateComponentTraitEnvironmentConfigsFunc func(ctx context.Context, orgName string, projectName string, componentName string, configs map[string]map[string]interface{}) error
 
 	// UpdateComponentTraitsFunc mocks the UpdateComponentTraits method.
-	UpdateComponentTraitsFunc func(ctx context.Context, orgName string, projectName string, componentName string, traits []models.ComponentTrait) error
+	UpdateComponentTraitsFunc func(ctx context.Context, orgName string, projectName string, componentName string, traits []openchoreo.ComponentTrait) error
 
 	// UpdateComponentWorkflowEnvVarsFunc mocks the UpdateComponentWorkflowEnvVars method.
-	UpdateComponentWorkflowEnvVarsFunc func(ctx context.Context, orgName string, projectName string, componentName string, envVars []models.WorkflowEnvVarRef) error
+	UpdateComponentWorkflowEnvVarsFunc func(ctx context.Context, orgName string, projectName string, componentName string, envVars []openchoreo.WorkflowEnvVarRef) error
 
 	// UpdateComponentWorkflowFilesFunc mocks the UpdateComponentWorkflowFiles method.
-	UpdateComponentWorkflowFilesFunc func(ctx context.Context, orgName string, projectName string, componentName string, files []models.WorkflowFileVar) error
+	UpdateComponentWorkflowFilesFunc func(ctx context.Context, orgName string, projectName string, componentName string, files []openchoreo.WorkflowFileVar) error
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -131,7 +129,7 @@ type ComponentClientMock struct {
 			// ProjectName is the projectName argument value.
 			ProjectName string
 			// Req is the req argument value.
-			Req *models.CreateComponentRequest
+			Req *openchoreo.CreateComponentRequest
 		}
 		// DeleteComponent holds details about calls to the DeleteComponent method.
 		DeleteComponent []struct {
@@ -275,7 +273,7 @@ type ComponentClientMock struct {
 			// ComponentName is the componentName argument value.
 			ComponentName string
 			// Traits is the traits argument value.
-			Traits []models.ComponentTrait
+			Traits []openchoreo.ComponentTrait
 		}
 		// UpdateComponentWorkflowEnvVars holds details about calls to the UpdateComponentWorkflowEnvVars method.
 		UpdateComponentWorkflowEnvVars []struct {
@@ -288,7 +286,7 @@ type ComponentClientMock struct {
 			// ComponentName is the componentName argument value.
 			ComponentName string
 			// EnvVars is the envVars argument value.
-			EnvVars []models.WorkflowEnvVarRef
+			EnvVars []openchoreo.WorkflowEnvVarRef
 		}
 		// UpdateComponentWorkflowFiles holds details about calls to the UpdateComponentWorkflowFiles method.
 		UpdateComponentWorkflowFiles []struct {
@@ -301,7 +299,7 @@ type ComponentClientMock struct {
 			// ComponentName is the componentName argument value.
 			ComponentName string
 			// Files is the files argument value.
-			Files []models.WorkflowFileVar
+			Files []openchoreo.WorkflowFileVar
 		}
 	}
 	lockCreateComponent                        sync.RWMutex
@@ -322,7 +320,7 @@ type ComponentClientMock struct {
 }
 
 // CreateComponent calls CreateComponentFunc.
-func (mock *ComponentClientMock) CreateComponent(ctx context.Context, orgName string, projectName string, req *models.CreateComponentRequest) (*apigen.Component, error) {
+func (mock *ComponentClientMock) CreateComponent(ctx context.Context, orgName string, projectName string, req *openchoreo.CreateComponentRequest) (*gen.Component, error) {
 	if mock.CreateComponentFunc == nil {
 		panic("ComponentClientMock.CreateComponentFunc: method is nil but ComponentClient.CreateComponent was just called")
 	}
@@ -330,7 +328,7 @@ func (mock *ComponentClientMock) CreateComponent(ctx context.Context, orgName st
 		Ctx         context.Context
 		OrgName     string
 		ProjectName string
-		Req         *models.CreateComponentRequest
+		Req         *openchoreo.CreateComponentRequest
 	}{
 		Ctx:         ctx,
 		OrgName:     orgName,
@@ -351,13 +349,13 @@ func (mock *ComponentClientMock) CreateComponentCalls() []struct {
 	Ctx         context.Context
 	OrgName     string
 	ProjectName string
-	Req         *models.CreateComponentRequest
+	Req         *openchoreo.CreateComponentRequest
 } {
 	var calls []struct {
 		Ctx         context.Context
 		OrgName     string
 		ProjectName string
-		Req         *models.CreateComponentRequest
+		Req         *openchoreo.CreateComponentRequest
 	}
 	mock.lockCreateComponent.RLock()
 	calls = mock.calls.CreateComponent
@@ -410,7 +408,7 @@ func (mock *ComponentClientMock) DeleteComponentCalls() []struct {
 }
 
 // GetComponent calls GetComponentFunc.
-func (mock *ComponentClientMock) GetComponent(ctx context.Context, orgName string, projectName string, componentName string) (*apigen.Component, error) {
+func (mock *ComponentClientMock) GetComponent(ctx context.Context, orgName string, projectName string, componentName string) (*gen.Component, error) {
 	if mock.GetComponentFunc == nil {
 		panic("ComponentClientMock.GetComponentFunc: method is nil but ComponentClient.GetComponent was just called")
 	}
@@ -454,7 +452,7 @@ func (mock *ComponentClientMock) GetComponentCalls() []struct {
 }
 
 // GetWorkflowRun calls GetWorkflowRunFunc.
-func (mock *ComponentClientMock) GetWorkflowRun(ctx context.Context, orgName string, runName string) (*apigen.WorkflowRun, error) {
+func (mock *ComponentClientMock) GetWorkflowRun(ctx context.Context, orgName string, runName string) (*gen.WorkflowRun, error) {
 	if mock.GetWorkflowRunFunc == nil {
 		panic("ComponentClientMock.GetWorkflowRunFunc: method is nil but ComponentClient.GetWorkflowRun was just called")
 	}
@@ -494,7 +492,7 @@ func (mock *ComponentClientMock) GetWorkflowRunCalls() []struct {
 }
 
 // ListComponents calls ListComponentsFunc.
-func (mock *ComponentClientMock) ListComponents(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*apigen.ComponentList, error) {
+func (mock *ComponentClientMock) ListComponents(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*gen.ComponentList, error) {
 	if mock.ListComponentsFunc == nil {
 		panic("ComponentClientMock.ListComponentsFunc: method is nil but ComponentClient.ListComponents was just called")
 	}
@@ -542,7 +540,7 @@ func (mock *ComponentClientMock) ListComponentsCalls() []struct {
 }
 
 // ListDeployments calls ListDeploymentsFunc.
-func (mock *ComponentClientMock) ListDeployments(ctx context.Context, orgName string, projectName string, componentName string) (*apigen.DeploymentList, error) {
+func (mock *ComponentClientMock) ListDeployments(ctx context.Context, orgName string, projectName string, componentName string) (*gen.DeploymentList, error) {
 	if mock.ListDeploymentsFunc == nil {
 		panic("ComponentClientMock.ListDeploymentsFunc: method is nil but ComponentClient.ListDeployments was just called")
 	}
@@ -586,7 +584,7 @@ func (mock *ComponentClientMock) ListDeploymentsCalls() []struct {
 }
 
 // ListProjectReleaseBindings calls ListProjectReleaseBindingsFunc.
-func (mock *ComponentClientMock) ListProjectReleaseBindings(ctx context.Context, orgName string, projectName string) ([]models.ReleaseBindingSummary, error) {
+func (mock *ComponentClientMock) ListProjectReleaseBindings(ctx context.Context, orgName string, projectName string) ([]openchoreo.ReleaseBindingSummary, error) {
 	if mock.ListProjectReleaseBindingsFunc == nil {
 		panic("ComponentClientMock.ListProjectReleaseBindingsFunc: method is nil but ComponentClient.ListProjectReleaseBindings was just called")
 	}
@@ -626,7 +624,7 @@ func (mock *ComponentClientMock) ListProjectReleaseBindingsCalls() []struct {
 }
 
 // ListWorkflowRuns calls ListWorkflowRunsFunc.
-func (mock *ComponentClientMock) ListWorkflowRuns(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*apigen.WorkflowRunList, error) {
+func (mock *ComponentClientMock) ListWorkflowRuns(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*gen.WorkflowRunList, error) {
 	if mock.ListWorkflowRunsFunc == nil {
 		panic("ComponentClientMock.ListWorkflowRunsFunc: method is nil but ComponentClient.ListWorkflowRuns was just called")
 	}
@@ -678,7 +676,7 @@ func (mock *ComponentClientMock) ListWorkflowRunsCalls() []struct {
 }
 
 // TriggerBuild calls TriggerBuildFunc.
-func (mock *ComponentClientMock) TriggerBuild(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*apigen.WorkflowRun, error) {
+func (mock *ComponentClientMock) TriggerBuild(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*gen.WorkflowRun, error) {
 	if mock.TriggerBuildFunc == nil {
 		panic("ComponentClientMock.TriggerBuildFunc: method is nil but ComponentClient.TriggerBuild was just called")
 	}
@@ -730,7 +728,7 @@ func (mock *ComponentClientMock) TriggerBuildCalls() []struct {
 }
 
 // TriggerBuildAtCommit calls TriggerBuildAtCommitFunc.
-func (mock *ComponentClientMock) TriggerBuildAtCommit(ctx context.Context, orgName string, projectName string, componentName string, commitSHA string, secretRef string, runName string) (*apigen.WorkflowRun, error) {
+func (mock *ComponentClientMock) TriggerBuildAtCommit(ctx context.Context, orgName string, projectName string, componentName string, commitSHA string, secretRef string, runName string) (*gen.WorkflowRun, error) {
 	if mock.TriggerBuildAtCommitFunc == nil {
 		panic("ComponentClientMock.TriggerBuildAtCommitFunc: method is nil but ComponentClient.TriggerBuildAtCommit was just called")
 	}
@@ -786,7 +784,7 @@ func (mock *ComponentClientMock) TriggerBuildAtCommitCalls() []struct {
 }
 
 // TriggerCodingAgent calls TriggerCodingAgentFunc.
-func (mock *ComponentClientMock) TriggerCodingAgent(ctx context.Context, params openchoreo.CodingAgentParams) (*apigen.WorkflowRun, error) {
+func (mock *ComponentClientMock) TriggerCodingAgent(ctx context.Context, params openchoreo.CodingAgentParams) (*gen.WorkflowRun, error) {
 	if mock.TriggerCodingAgentFunc == nil {
 		panic("ComponentClientMock.TriggerCodingAgentFunc: method is nil but ComponentClient.TriggerCodingAgent was just called")
 	}
@@ -870,7 +868,7 @@ func (mock *ComponentClientMock) UpdateComponentTraitEnvironmentConfigsCalls() [
 }
 
 // UpdateComponentTraits calls UpdateComponentTraitsFunc.
-func (mock *ComponentClientMock) UpdateComponentTraits(ctx context.Context, orgName string, projectName string, componentName string, traits []models.ComponentTrait) error {
+func (mock *ComponentClientMock) UpdateComponentTraits(ctx context.Context, orgName string, projectName string, componentName string, traits []openchoreo.ComponentTrait) error {
 	if mock.UpdateComponentTraitsFunc == nil {
 		panic("ComponentClientMock.UpdateComponentTraitsFunc: method is nil but ComponentClient.UpdateComponentTraits was just called")
 	}
@@ -879,7 +877,7 @@ func (mock *ComponentClientMock) UpdateComponentTraits(ctx context.Context, orgN
 		OrgName       string
 		ProjectName   string
 		ComponentName string
-		Traits        []models.ComponentTrait
+		Traits        []openchoreo.ComponentTrait
 	}{
 		Ctx:           ctx,
 		OrgName:       orgName,
@@ -902,14 +900,14 @@ func (mock *ComponentClientMock) UpdateComponentTraitsCalls() []struct {
 	OrgName       string
 	ProjectName   string
 	ComponentName string
-	Traits        []models.ComponentTrait
+	Traits        []openchoreo.ComponentTrait
 } {
 	var calls []struct {
 		Ctx           context.Context
 		OrgName       string
 		ProjectName   string
 		ComponentName string
-		Traits        []models.ComponentTrait
+		Traits        []openchoreo.ComponentTrait
 	}
 	mock.lockUpdateComponentTraits.RLock()
 	calls = mock.calls.UpdateComponentTraits
@@ -918,7 +916,7 @@ func (mock *ComponentClientMock) UpdateComponentTraitsCalls() []struct {
 }
 
 // UpdateComponentWorkflowEnvVars calls UpdateComponentWorkflowEnvVarsFunc.
-func (mock *ComponentClientMock) UpdateComponentWorkflowEnvVars(ctx context.Context, orgName string, projectName string, componentName string, envVars []models.WorkflowEnvVarRef) error {
+func (mock *ComponentClientMock) UpdateComponentWorkflowEnvVars(ctx context.Context, orgName string, projectName string, componentName string, envVars []openchoreo.WorkflowEnvVarRef) error {
 	if mock.UpdateComponentWorkflowEnvVarsFunc == nil {
 		panic("ComponentClientMock.UpdateComponentWorkflowEnvVarsFunc: method is nil but ComponentClient.UpdateComponentWorkflowEnvVars was just called")
 	}
@@ -927,7 +925,7 @@ func (mock *ComponentClientMock) UpdateComponentWorkflowEnvVars(ctx context.Cont
 		OrgName       string
 		ProjectName   string
 		ComponentName string
-		EnvVars       []models.WorkflowEnvVarRef
+		EnvVars       []openchoreo.WorkflowEnvVarRef
 	}{
 		Ctx:           ctx,
 		OrgName:       orgName,
@@ -950,14 +948,14 @@ func (mock *ComponentClientMock) UpdateComponentWorkflowEnvVarsCalls() []struct 
 	OrgName       string
 	ProjectName   string
 	ComponentName string
-	EnvVars       []models.WorkflowEnvVarRef
+	EnvVars       []openchoreo.WorkflowEnvVarRef
 } {
 	var calls []struct {
 		Ctx           context.Context
 		OrgName       string
 		ProjectName   string
 		ComponentName string
-		EnvVars       []models.WorkflowEnvVarRef
+		EnvVars       []openchoreo.WorkflowEnvVarRef
 	}
 	mock.lockUpdateComponentWorkflowEnvVars.RLock()
 	calls = mock.calls.UpdateComponentWorkflowEnvVars
@@ -966,7 +964,7 @@ func (mock *ComponentClientMock) UpdateComponentWorkflowEnvVarsCalls() []struct 
 }
 
 // UpdateComponentWorkflowFiles calls UpdateComponentWorkflowFilesFunc.
-func (mock *ComponentClientMock) UpdateComponentWorkflowFiles(ctx context.Context, orgName string, projectName string, componentName string, files []models.WorkflowFileVar) error {
+func (mock *ComponentClientMock) UpdateComponentWorkflowFiles(ctx context.Context, orgName string, projectName string, componentName string, files []openchoreo.WorkflowFileVar) error {
 	if mock.UpdateComponentWorkflowFilesFunc == nil {
 		panic("ComponentClientMock.UpdateComponentWorkflowFilesFunc: method is nil but ComponentClient.UpdateComponentWorkflowFiles was just called")
 	}
@@ -975,7 +973,7 @@ func (mock *ComponentClientMock) UpdateComponentWorkflowFiles(ctx context.Contex
 		OrgName       string
 		ProjectName   string
 		ComponentName string
-		Files         []models.WorkflowFileVar
+		Files         []openchoreo.WorkflowFileVar
 	}{
 		Ctx:           ctx,
 		OrgName:       orgName,
@@ -998,14 +996,14 @@ func (mock *ComponentClientMock) UpdateComponentWorkflowFilesCalls() []struct {
 	OrgName       string
 	ProjectName   string
 	ComponentName string
-	Files         []models.WorkflowFileVar
+	Files         []openchoreo.WorkflowFileVar
 } {
 	var calls []struct {
 		Ctx           context.Context
 		OrgName       string
 		ProjectName   string
 		ComponentName string
-		Files         []models.WorkflowFileVar
+		Files         []openchoreo.WorkflowFileVar
 	}
 	mock.lockUpdateComponentWorkflowFiles.RLock()
 	calls = mock.calls.UpdateComponentWorkflowFiles

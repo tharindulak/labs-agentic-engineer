@@ -22,8 +22,6 @@
 // §6.1.
 package tenant
 
-import "context"
-
 // OrgHandle is the universal tenant key. It is the OC org handle and the value
 // stored in every tenant table's org column (the "oc_org_id"/"org_id" columns
 // all hold this). It is NOT the Thunder ouId/UUID.
@@ -62,11 +60,4 @@ type Caller struct {
 	ThunderUUID string
 	Subject     string
 	Source      Source
-}
-
-type callerCtxKey struct{}
-
-// With returns a copy of ctx carrying the Caller.
-func With(ctx context.Context, c Caller) context.Context {
-	return context.WithValue(ctx, callerCtxKey{}, c)
 }

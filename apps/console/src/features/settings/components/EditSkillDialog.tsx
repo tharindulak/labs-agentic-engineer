@@ -31,9 +31,9 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
+import { MarkdownView } from "../../../components/MarkdownView";
 import { useSkill, useUpdateSkill } from "../api/queries";
 import { splitFrontmatter } from "../skillMd";
-import { SkillMarkdown } from "./SkillMarkdown";
 
 // Raw monospace, not a WYSIWYG: a SKILL.md is YAML frontmatter + markdown, and
 // round-tripping it through a rich-text editor would corrupt the frontmatter
@@ -112,7 +112,7 @@ export function EditSkillDialog({
             ) : (
               <Box sx={{ minHeight: 320, py: 1 }}>
                 {body.trim() ? (
-                  <SkillMarkdown body={body} />
+                  <MarkdownView>{body}</MarkdownView>
                 ) : (
                   <Typography
                     variant="body2"

@@ -35,7 +35,8 @@ import { createLink } from "@tanstack/react-router";
 import { useTask } from "../api/queries";
 import { useTaskLog } from "../hooks/useTaskLog";
 import { TaskLogView } from "./TaskLogView";
-import { TaskStatusChip } from "./TaskStatusChip";
+import { StatusChip } from "../../../components/StatusChip";
+import { taskChip } from "../api/status";
 import { EXEC_ACTIVE, useSecondsSince } from "./TaskPage";
 
 const LinkIconButton = createLink(IconButton);
@@ -148,7 +149,11 @@ export function ValidationPage({
         <Typography variant="subtitle1" sx={{ fontWeight: 600, minWidth: 0 }}>
           {title}
         </Typography>
-        <TaskStatusChip derivedStatus={derivedStatus} />
+        <StatusChip
+          label={taskChip(derivedStatus).label}
+          tone={taskChip(derivedStatus).tone}
+          appearance="soft"
+        />
         <Box sx={{ flexGrow: 1 }} />
         {prUrl && (
           <Tooltip title="Open the validation PR">

@@ -28,8 +28,8 @@ pushing skills in the turn request payload.
 - **Payload, not disk.** The turn request carries `skills: { name, description,
   content }[]`. The service **never reads skills from the filesystem** — the caller
   resolves them. In evals the harness reads repo-root `skills/` and sends the whole
-  library; in production a BFF pushes them. (`src/` writes no files; only `evals/`
-  touches the fs — existing service invariant.)
+  library; in production a BFF pushes them. (`src/` writes no files — existing
+  service invariant.)
 - **Catalog, then load.** The service appends a **catalog** — `name` + `description`
   only, no bodies — to the **end** of the system prompt. A new **`loadSkill(names)`**
   tool returns the requested skills' `content` as one tool result (batched: every

@@ -31,9 +31,6 @@ func TestLabelBuilders(t *testing.T) {
 	if got := OriginLabel(OriginSpecPlan); got != "aep:origin/spec-plan" {
 		t.Errorf("OriginLabel(spec-plan) = %q", got)
 	}
-	if got := StatusLabel(StatusReadyForReview); got != "aep:status/ready_for_review" {
-		t.Errorf("StatusLabel = %q", got)
-	}
 	if got := ClassLabel(ClassValidation); got != "aep:validation" {
 		t.Errorf("ClassLabel(validation) = %q", got)
 	}
@@ -55,30 +52,6 @@ func TestLabelBuilders(t *testing.T) {
 	}
 	if !ClassValidation.Valid() {
 		t.Error("ClassValidation should be Valid()")
-	}
-}
-
-func TestClassify(t *testing.T) {
-	tests := map[string]LabelKind{
-		"aep:task":               KindMarker,
-		"aep:coding":             KindClass,
-		"aep:ops":                KindClass,
-		"aep:validation":         KindClass,
-		"aep:origin/incident":    KindOrigin,
-		"aep:execute":            KindExecute,
-		"aep:hold":               KindHold,
-		"aep:status/in_progress": KindStatus,
-		"aep:attention":          KindAttention,
-		// aep:spec/<tag> is deliberately KindOther so the projection reconciler
-		// never strips the build-lineage label.
-		"aep:spec/v3": KindOther,
-		"bug":         KindOther,
-		"aep:unknown": KindOther,
-	}
-	for label, want := range tests {
-		if got := Classify(label); got != want {
-			t.Errorf("Classify(%q) = %v; want %v", label, got, want)
-		}
 	}
 }
 

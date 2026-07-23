@@ -69,9 +69,9 @@ const (
 // EOF. Comment/keep-alive frames are skipped. A non-nil error from fn aborts
 // the read and is returned verbatim; a transport read error is returned as-is
 // (callers distinguish their own fn errors via errors.Is/As or a captured
-// sentinel). This is the raw sibling of ForEachPart for consumers that must
-// forward payload bytes untouched (the turn broker — StreamPart is a
-// structural subset, so a re-marshal would drop unknown fields).
+// sentinel). Consumers that must forward payload bytes untouched (the turn
+// broker) use this directly — StreamPart is a structural subset, so a
+// re-marshal would drop unknown fields.
 func ForEachDataFrame(r io.Reader, fn func(data []byte) error) (StreamEnd, error) {
 	br := bufio.NewReader(r)
 	var buf []byte
@@ -104,18 +104,4 @@ func ForEachDataFrame(r io.Reader, fn func(data []byte) error) (StreamEnd, error
 			return "", readErr
 		}
 	}
-}
-
-// ForEachPart reads SSE frames from r and calls fn for every parsed
-// StreamPart until [DONE] or EOF. A payload that fails to parse is a
-// truncation remnant, silently dropped. A non-nil error from fn aborts the
-// read and is returned verbatim.
-func ForEachPart(r io.Reader, fn func(StreamPart) error) (StreamEnd, error) {
-	return ForEachDataFrame(r, func(data []byte) error {
-		var part StreamPart
-		if err := json.Unmarshal(data, &part); err != nil {
-			return nil // truncation remnant — the wire carries single-line JSON
-		}
-		return fn(part)
-	})
 }

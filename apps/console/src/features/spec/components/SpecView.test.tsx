@@ -47,12 +47,14 @@ vi.mock("@wso2/oxygen-ui", async () => {
   };
 });
 
-// --- Collab room: solo/offline-shaped stub; flush is the only call
-// SpecView awaits, so it's the only piece a test ever needs to configure. --
+// --- Collab room: solo/offline-shaped stub (status "offline" exercises the
+// header's "solo session" metadata text — see the metadata-line test below);
+// flush is the only call SpecView awaits, so it's the only piece most tests
+// need to configure. --
 const mockFlush = vi.fn().mockResolvedValue(undefined);
 vi.mock("../collab/useCollabSpec", () => ({
   useCollabSpec: () => ({
-    status: "connected",
+    status: "offline",
     peers: [],
     getFileText: () => null,
     getFileFragment: () => null,
@@ -80,9 +82,15 @@ const mockPreflightRefetch = vi.fn();
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
   useProjectStatus: () => ({ data: { specStatus: "approved" } }),
-  useProjectTags: () => ({ data: null }),
+  useProjectTags: () => ({ data: { latest: "v1", specDirty: false } }),
   useBuildProject: () => ({ mutateAsync: mockMutateAsync }),
   useBuildPreflight: () => ({ refetch: mockPreflightRefetch }),
+}));
+
+// Cost visibility (#245): stubbed like the other data hooks — no spend — so
+// the chip renders nothing and Build routing stays the subject.
+vi.mock("../../usage/api/queries", () => ({
+  useProjectUsage: () => ({ data: undefined, isPending: true, isError: false }),
 }));
 
 vi.mock("../api/queries", () => ({
@@ -242,5 +250,33 @@ describe("SpecView onBuild routing (#164)", () => {
     );
     expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("SpecView header metadata (soft version chips)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFlush.mockResolvedValue(undefined);
+  });
+
+  it("renders session/version info as soft status chips (not buttons) and drops 'Approved'", () => {
+    render(<SpecView projectName="proj1" />);
+
+    // Version + session state render as soft status chips beside the title
+    // (consistent with the builds/deployments headers): "v1 · published"
+    // (tags.latest) and "solo session" (offline collab).
+    expect(screen.getByText("v1 · published")).toBeInTheDocument();
+    expect(screen.getByText("solo session")).toBeInTheDocument();
+
+    // The old "Approved" status chip is gone entirely (specStatus is
+    // "approved" in this test's project-status mock).
+    expect(screen.queryByText("Approved")).not.toBeInTheDocument();
+
+    // Build remains the header's only button-like control — the soft chips
+    // are Chips, not buttons.
+    expect(screen.getByRole("button", { name: "Build" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /solo|published/i }),
+    ).not.toBeInTheDocument();
   });
 });

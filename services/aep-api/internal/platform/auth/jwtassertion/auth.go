@@ -127,25 +127,6 @@ func GetJWTFromContext(ctx context.Context) string {
 	return tok
 }
 
-// HasAllScopes returns true if every scope in required is present on the
-// token in context. Returns false if the request is unauthenticated.
-func HasAllScopes(ctx context.Context, required []string) bool {
-	scopes, ok := ctx.Value(scopesKey).(string)
-	if !ok {
-		return false
-	}
-	have := make(map[string]struct{})
-	for _, s := range strings.Fields(scopes) {
-		have[s] = struct{}{}
-	}
-	for _, want := range required {
-		if _, ok := have[want]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
 // buildBearerChallenge formats a WWW-Authenticate header value per RFC 6750
 // and RFC 9728. Empty errorCode omits the error param; empty resource URL
 // omits the resource_metadata hint.
@@ -271,14 +252,4 @@ func (c compiledAudiences) match(audiences jwt.ClaimStrings) error {
 		}
 	}
 	return fmt.Errorf("invalid audience: got %v", audiences)
-}
-
-// validateIssuer and validateAudience are thin wrappers for tests that
-// exercise the matcher directly with a raw allowed-list.
-func validateIssuer(issuer string, allowed []string) error {
-	return compileIssuers(allowed).match(issuer)
-}
-
-func validateAudience(audiences jwt.ClaimStrings, allowed []string) error {
-	return compileAudiences(allowed).match(audiences)
 }

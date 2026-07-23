@@ -22,13 +22,43 @@ function scenario(): ProjectsScenario {
   );
 }
 
-// Projects created through the UI in this session; layered on top of the
-// scenario's seed so the create flow behaves statefully in mock mode.
-const createdProjects: Project[] = [];
+// Projects created/deleted through the UI, persisted to localStorage so the
+// create and delete flows survive a page reload (a Vite HMR update, or the
+// user refreshing) instead of vanishing with module state — otherwise a
+// freshly created project's routes (overview, builds, …) 404 after any reload.
+const CREATED_KEY = "aep:mock:createdProjects";
+const DELETED_KEY = "aep:mock:deletedProjects";
 
-// Names deleted through the UI in this session — masks seed AND created
-// entries so the delete flow behaves statefully in mock mode (#107).
-const deletedProjects = new Set<string>();
+function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// Layered on top of the scenario's seed so the create flow behaves statefully.
+const createdProjects: Project[] = loadJson<Project[]>(CREATED_KEY, []);
+
+// Names deleted through the UI — masks seed AND created entries (#107).
+const deletedProjects = new Set<string>(loadJson<string[]>(DELETED_KEY, []));
+
+function persistCreated(): void {
+  try {
+    localStorage.setItem(CREATED_KEY, JSON.stringify(createdProjects));
+  } catch {
+    /* quota — non-fatal in mock mode */
+  }
+}
+
+function persistDeleted(): void {
+  try {
+    localStorage.setItem(DELETED_KEY, JSON.stringify([...deletedProjects]));
+  } catch {
+    /* quota — non-fatal in mock mode */
+  }
+}
 
 function currentProjects(): Project[] {
   const seed = scenario() === "some" ? seedProjects : [];
@@ -77,14 +107,19 @@ export const projectsHandlers = [
         status: 409,
       });
     }
+    // The build prompt is the project's description when none is given
+    // explicitly — it's what the card and overview show, so a project created
+    // from the "what do you want to build" flow isn't left blank.
+    const description = body.description ?? body.prompt;
     const project: Project = {
       name: body.name,
       displayName: body.displayName ?? body.name,
-      ...(body.description !== undefined && { description: body.description }),
+      ...(description !== undefined && { description }),
       status: "active",
       createdAt: new Date().toISOString(),
     };
     createdProjects.push(project);
+    persistCreated();
     return HttpResponse.json(project, { status: 201 });
   }),
 
@@ -123,6 +158,7 @@ export const projectsHandlers = [
       );
     }
     deletedProjects.add(name);
+    persistDeleted();
     return new HttpResponse(null, { status: 204 });
   }),
 
