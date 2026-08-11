@@ -17,6 +17,7 @@
 package run
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -86,6 +87,15 @@ type harness struct {
 	// than merely that it did not settle.
 	repairMints []MintValidationRepairIssuesInput
 	closed      int
+	// dispatchErr, when set, makes every launch fail — the platform being unable
+	// to start an agent at all, as distinct from an agent that starts and dies.
+	dispatchErr error
+	// clearDispatchErrAfter releases dispatchErr once that many launches have
+	// failed, so a test can model a transient failure that recovers.
+	clearDispatchErrAfter int
+	// dispatchFailures records what was written onto the cycle for each failed
+	// launch: the only durable trace of a failure that leaves no Job behind.
+	dispatchFailures []NoteCycleDispatchFailureInput
 }
 
 // newHarness registers the activities whose behaviour never varies — the
@@ -105,6 +115,7 @@ func newHarness(t *testing.T) *harness {
 	h.env.RegisterActivity(acts.SetValidationVerdict)
 	h.env.RegisterActivity(acts.AppendCycle)
 	h.env.RegisterActivity(acts.NoteCycleDispatch)
+	h.env.RegisterActivity(acts.NoteCycleDispatchFailure)
 	h.env.RegisterActivity(acts.FinishCycle)
 	h.env.RegisterActivity(acts.ReadCycleFacts)
 	h.env.RegisterActivity(acts.CloseMilestone)
@@ -146,6 +157,12 @@ func newHarness(t *testing.T) *harness {
 		}).Return(nil)
 	h.env.OnActivity(acts.AppendCycle, mock.Anything, mock.Anything).Return(testCycleID, nil)
 	h.env.OnActivity(acts.NoteCycleDispatch, mock.Anything, mock.Anything).Return(nil)
+	h.env.OnActivity(acts.NoteCycleDispatchFailure, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.dispatchFailures = append(h.dispatchFailures, args.Get(1).(NoteCycleDispatchFailureInput))
+		}).Return(nil)
 	h.env.OnActivity(acts.FinishCycle, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			h.mu.Lock()
@@ -158,12 +175,26 @@ func newHarness(t *testing.T) *harness {
 			defer h.mu.Unlock()
 			h.closed++
 		}).Return(nil)
+	// A FUNCTION return rather than a static one: whether a launch succeeds is a
+	// per-test fact (dispatchFails), and the static form is fixed at
+	// registration — which, being unlimited, no later expectation can override.
 	h.env.OnActivity(acts.DispatchAgent, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
+		Return(func(_ context.Context, in delivery.MilestoneDispatch) (string, error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			h.dispatches = append(h.dispatches, args.Get(1).(delivery.MilestoneDispatch))
-		}).Return("job-1", nil)
+			h.dispatches = append(h.dispatches, in)
+			if h.dispatchErr != nil {
+				err := h.dispatchErr
+				if h.clearDispatchErrAfter > 0 {
+					h.clearDispatchErrAfter--
+					if h.clearDispatchErrAfter == 0 {
+						h.dispatchErr = nil
+					}
+				}
+				return "", err
+			}
+			return "job-1", nil
+		})
 
 	return h
 }
@@ -340,6 +371,24 @@ func (h *harness) dispatchKinds() []string {
 		out = append(out, d.Kind)
 	}
 	return out
+}
+
+// dispatchFails makes EVERY launch fail — the platform unable to start an agent
+// at all (a credential with no secret reference, a cluster that will not accept
+// the Job).
+func (h *harness) dispatchFails(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.dispatchErr = err
+}
+
+// dispatchFailsOnce fails the FIRST launch and lets the next one through, which
+// is the ordinary transient case: the run must not read it as a platform fault.
+func (h *harness) dispatchFailsOnce(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.dispatchErr = err
+	h.clearDispatchErrAfter = 1
 }
 
 func (h *harness) dispatchCount() int {
@@ -1016,6 +1065,45 @@ func TestRedispatchBudget_AgentDeathEndsTheRun(t *testing.T) {
 	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
 	require.Equal(t, delivery.RunMaxRedispatchPerCycle, h.dispatchCount())
 	require.Equal(t, "", h.finishes[0].MergeSHA)
+}
+
+// A launch that never succeeds is NOT agent death: nothing ran, so there is no
+// agent log to send a reader to and no budget worth naming. It settles with its
+// own reason, and the cause is written onto the cycle — which used to be
+// discarded outright, leaving a misconfigured platform indistinguishable from a
+// crashed agent and traceable only in the API server's container log.
+func TestDispatchFailure_NeverStartedSettlesWithItsOwnReason(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(MilestoneSnapshot{Work: 1, Total: 1})
+	h.dispatchFails(errors.New(`anthropic secret reference for org "default": secret_ref_name is not populated`))
+
+	h.run(delivery.RunOriginSpecBuild, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonDispatchFailed)
+	require.NotEqual(t, delivery.RunReasonRedispatchBudget, h.settle.Reason,
+		"an agent that never started must not be reported as one that died")
+	require.Equal(t, delivery.RunMaxRedispatchPerCycle, h.dispatchCount(),
+		"a failed launch still spends the attempt")
+	require.Len(t, h.dispatchFailures, delivery.RunMaxRedispatchPerCycle,
+		"every failed launch must leave its reason on the cycle")
+	require.Contains(t, h.dispatchFailures[0].Reason, "secret_ref_name is not populated",
+		"the cause must reach the cycle verbatim — it is the whole answer for whoever reads this run")
+}
+
+// The distinction has to survive a launch that eventually works: one failed
+// attempt followed by a live agent is an ordinary cycle, not a platform fault.
+func TestDispatchFailure_ASucceedingRetryIsNotAPlatformFailure(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(MilestoneSnapshot{Work: 1, Total: 1})
+	h.dispatchFailsOnce(errors.New("transient: cluster-gateway timeout"))
+	h.mergesAt("") // the agent runs, but opens no pull request
+
+	h.run(delivery.RunOriginSpecBuild, 0)
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
+	require.Len(t, h.dispatchFailures, 1, "only the first attempt failed to launch")
 }
 
 // TestBuildRetriggerBudget_RedWithNothingToFix is the exit for a build that

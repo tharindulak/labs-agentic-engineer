@@ -229,6 +229,11 @@ export function runHold(
 const TERMINAL_REASONS: Record<string, string> = {
   "redispatch-budget":
     "The coding agent died twice in the same build session — the per-session re-dispatch budget is spent.",
+  // Deliberately NOT phrased as the agent failing: nothing ran, so there is no
+  // agent log to send the reader to. The cause is the platform's, and the
+  // cycle's dispatchError carries the detail the rail renders beneath this.
+  "dispatch-failed":
+    "The coding agent could never be started, so nothing ran. This is a platform problem rather than something the agent did — most often the organization's Anthropic credential is not fully connected.",
   "build-retrigger-budget":
     "A component's build stayed red after its automatic re-trigger, and no fix issue came back.",
   "fix-chain-budget": "The run spent both of its fix sessions.",

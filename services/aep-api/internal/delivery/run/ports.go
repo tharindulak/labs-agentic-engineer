@@ -73,6 +73,10 @@ type RunStore interface {
 type CycleStore interface {
 	Append(ctx context.Context, cycle *delivery.RunCycle) (cycleID string, err error)
 	NoteDispatch(ctx context.Context, cycleID, jobRef string) error
+	// NoteDispatchFailure records why an attempt could not launch an agent, and
+	// spends the attempt. Without it a launch failure leaves the cycle
+	// indistinguishable from one whose agent ran and did nothing.
+	NoteDispatchFailure(ctx context.Context, cycleID, reason string) error
 	Finish(ctx context.Context, cycleID, mergeSHA string) error
 	// SetValidationVerdict records one validation ATTEMPT's outcome on its own cycle
 	// row, so a run that validated more than once keeps every attempt's answer

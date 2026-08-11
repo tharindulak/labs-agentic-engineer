@@ -159,6 +159,10 @@ func CycleView(c *delivery.RunCycle) gen.RunCycleView {
 		Kind:         gen.RunCycleViewKind(c.Kind),
 		Attempts:     int64(c.Attempts),
 		JobRef:       c.JobRef,
+		// The counterpart of JobRef on the path where no Job exists. Without it
+		// a cycle whose agent never started is indistinguishable on the wire
+		// from one whose agent ran and opened nothing.
+		DispatchError: c.DispatchError,
 		Branch:       c.Branch,
 		PrNumber:     int64(c.PRNumber),
 		PrURL:        c.PRURL,

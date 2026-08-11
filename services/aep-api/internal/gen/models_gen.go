@@ -1330,11 +1330,14 @@ type RunBudgets struct {
 // RunCycleView One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 type RunCycleView struct {
 	// Attempts Dispatches of THIS cycle (the per-cycle re-dispatch budget, which resets at every cycle boundary).
-	Attempts  int64      `json:"attempts"`
-	Branch    string     `json:"branch,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
-	EndedAt   *time.Time `json:"endedAt,omitempty"`
-	ID        string     `json:"id"`
+	Attempts  int64     `json:"attempts"`
+	Branch    string    `json:"branch,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// DispatchError Why the runner Job could not be LAUNCHED, when it could not be. Present only on a cycle that never started an agent, and mutually exclusive with `jobRef` — the difference between "the agent ran and produced nothing" and "there was never an agent", which are different failures with different fixes. Written for a reader.
+	DispatchError string     `json:"dispatchError,omitempty"`
+	EndedAt       *time.Time `json:"endedAt,omitempty"`
+	ID            string     `json:"id"`
 
 	// JobRef The dispatched runner Job for the current attempt; replaced on re-dispatch.
 	JobRef string           `json:"jobRef,omitempty"`

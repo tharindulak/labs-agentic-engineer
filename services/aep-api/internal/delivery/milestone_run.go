@@ -89,7 +89,14 @@ const (
 	// Terminal reasons. Each names exactly ONE failure class so the reason a run
 	// stopped is never ambiguous. Empty while the run is non-terminal, and empty
 	// on a succeeded run.
-	RunReasonRedispatchBudget     = "redispatch-budget"
+	RunReasonRedispatchBudget = "redispatch-budget"
+	// RunReasonDispatchFailed is the agent that never STARTED — every attempt
+	// failed to launch a Job, so no agent ever existed. Distinct from
+	// redispatch-budget, which is an agent that ran and opened no pull request:
+	// the two need different actions from a human (repair the platform vs. look
+	// at what the agent did), and reporting the first as the second sends the
+	// reader to an agent log that was never written.
+	RunReasonDispatchFailed       = "dispatch-failed"
 	RunReasonBuildRetriggerBudget = "build-retrigger-budget"
 	RunReasonFixChainBudget       = "fix-chain-budget"
 	RunReasonConflictBudget       = "conflict-budget"

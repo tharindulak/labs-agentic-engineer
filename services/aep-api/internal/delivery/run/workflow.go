@@ -129,6 +129,11 @@ type loop struct {
 	// verdict write lands after runCycle has returned.
 	cycleID string
 
+	// dispatchErr is the last launch failure's reason, kept so the settle path
+	// can log WHY no agent started. The durable copy is on the cycle row; this
+	// is the loop's own hand on it.
+	dispatchErr string
+
 	// validationAttempts counts validation cycles this run has opened, bounded by
 	// maxValidationAttempts. It replaced a `validationDone bool`: once a
 	// failed validation is repairable, "has it validated yet" stopped being the
@@ -231,6 +236,8 @@ func (l *loop) run(ctx workflow.Context) (RunResult, error) {
 		switch res {
 		case cycleCancelled:
 			return l.settle(ctx, delivery.RunStateCancelled, "")
+		case cycleNeverDispatched:
+			return l.settleUndispatched(ctx)
 		case cycleAgentDead:
 			return l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
 		}
@@ -402,6 +409,9 @@ func (l *loop) runValidation(ctx workflow.Context) (settled bool, res RunResult,
 	case cycleCancelled:
 		res, err = l.settle(ctx, delivery.RunStateCancelled, "")
 		return true, res, err
+	case cycleNeverDispatched:
+		res, err = l.settleUndispatched(ctx)
+		return true, res, err
 	case cycleAgentDead:
 		res, err = l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
 		return true, res, err
@@ -496,6 +506,17 @@ func (l *loop) reenterAfterValidation() (bool, RunResult, error) {
 // settle ends the run. The milestone close is display only and happens on
 // success alone: a failed or cancelled increment stays open, because the way
 // forward from it is more work in the same version.
+// settleUndispatched ends a run whose agent never started. It logs the launch
+// failure on the way out because that reason is the whole answer for whoever
+// reads this run, and the terminal reason alone is only a category — the cycle
+// row carries the detail, and this puts it in the operator's log too.
+func (l *loop) settleUndispatched(ctx workflow.Context) (RunResult, error) {
+	workflow.GetLogger(ctx).Error("run: no agent could be started — settling",
+		"run", l.in.RunID, "project", l.in.ProjectID, "milestone", l.in.MilestoneNumber,
+		"attempts", l.st.CycleAttempt, "reason", l.dispatchErr)
+	return l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonDispatchFailed)
+}
+
 func (l *loop) settle(ctx workflow.Context, state, reason string) (RunResult, error) {
 	l.st.Phase = delivery.RunPhaseSettling
 	// A cancelled run's agent is still working. Stop it here, on the ordinary code

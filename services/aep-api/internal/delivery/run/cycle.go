@@ -39,8 +39,13 @@ const (
 	// the conflict issue naming it.
 	cycleConflict
 	// cycleAgentDead — the dispatch never landed a pull request, through the
-	// whole per-cycle re-dispatch budget.
+	// whole per-cycle re-dispatch budget. An agent RAN; it produced nothing.
 	cycleAgentDead
+	// cycleNeverDispatched — no attempt could launch an agent at all, so there
+	// is no agent, no pod and no log to read. A platform failure, not an agent
+	// one, and kept separate from cycleAgentDead because the two send a human
+	// to entirely different places.
+	cycleNeverDispatched
 	// cycleCancelled — a human abandoned the increment mid-cycle.
 	cycleCancelled
 )
@@ -140,17 +145,32 @@ func (l *loop) runCycle(ctx workflow.Context, kind string, anchorIssue int) (cyc
 // dispatchUntilLanded spends the cycle's re-dispatch budget trying to land a
 // merged pull request.
 //
-// A dispatch that fails to LAUNCH counts as an attempt: a Job that could not be
-// created is agent death arriving early, and the budget that names that failure
-// class is exactly this one. (Temporal does not retry the launch either — see
-// dispatchActivityCtx.)
+// A dispatch that fails to LAUNCH counts as an attempt — a Job that could not
+// be created has still spent one of the cycle's chances, and Temporal does not
+// retry the launch either (see dispatchActivityCtx). But it is NOT agent death:
+// nothing ran. The reason is recorded on the cycle and, when no attempt ever
+// launched, returned as cycleNeverDispatched so the run can settle naming the
+// platform failure rather than an exhausted budget.
+//
+// The distinction is the whole point. A launch failure is a misconfigured
+// platform — an org credential with no secret reference, say — and reporting it
+// as "the agent died" sends a reader to an agent log that was never written.
 func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssue int, cycleID string) (bool, cycleResult, error) {
+	launched := false
 	for l.st.CycleAttempt < delivery.RunMaxRedispatchPerCycle {
 		l.st.CycleAttempt++
 		jobRef, derr := l.dispatch(ctx, kind, anchorIssue, cycleID)
 		if derr != nil {
+			// Best-effort: the run must still settle with its reason even if the
+			// note cannot be written, so a failure here is logged, not returned.
+			if nerr := l.noteDispatchFailure(ctx, cycleID, derr.Error()); nerr != nil {
+				workflow.GetLogger(ctx).Error("run: recording the dispatch failure failed",
+					"cycle", cycleID, "error", nerr)
+			}
+			l.dispatchErr = derr.Error()
 			continue
 		}
+		launched = true
 		if err := l.noteDispatch(ctx, cycleID, jobRef); err != nil {
 			return false, cycleNone, err
 		}
@@ -187,6 +207,9 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 			}
 		}
 		stopDeadline()
+	}
+	if !launched {
+		return false, cycleNeverDispatched, nil
 	}
 	return false, cycleAgentDead, nil
 }
@@ -293,6 +316,11 @@ func (l *loop) appendCycle(ctx workflow.Context, kind string) (string, error) {
 func (l *loop) noteDispatch(ctx workflow.Context, cycleID, jobRef string) error {
 	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).NoteCycleDispatch,
 		NoteCycleDispatchInput{CycleID: cycleID, JobRef: jobRef}).Get(ctx, nil)
+}
+
+func (l *loop) noteDispatchFailure(ctx workflow.Context, cycleID, reason string) error {
+	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).NoteCycleDispatchFailure,
+		NoteCycleDispatchFailureInput{CycleID: cycleID, Reason: reason}).Get(ctx, nil)
 }
 
 func (l *loop) finishCycle(ctx workflow.Context, cycleID, mergeSHA string) error {

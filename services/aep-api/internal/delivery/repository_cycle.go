@@ -48,6 +48,7 @@ type RunCycleRepository interface {
 	// returned Attempts against RunMaxRedispatchPerCycle to decide whether the
 	// per-cycle re-dispatch budget is spent. Guarded on the cycle being open.
 	NoteDispatch(ctx context.Context, id, jobRef string) (*RunCycle, error)
+	NoteDispatchFailure(ctx context.Context, id, reason string) (*RunCycle, error)
 
 	// NotePullRequest records the pull request the agent actually opened, learned
 	// from the pull_request webhook — the platform never dictates branch identity
@@ -164,6 +165,21 @@ func (r *runCycleRepository) NoteDispatch(ctx context.Context, id, jobRef string
 	return r.updateOpen(ctx, id, map[string]any{
 		"attempts": gorm.Expr("attempts + 1"),
 		"job_ref":  jobRef,
+		// A launch that succeeds clears any earlier attempt's reason: the cycle
+		// has an agent now, so a stale "could not start" would describe nothing.
+		"dispatch_error": "",
+	})
+}
+
+// NoteDispatchFailure records why an attempt could not LAUNCH an agent. It
+// counts the attempt exactly as NoteDispatch does — a Job that could not be
+// created still spends the cycle's re-dispatch budget — but writes the reason
+// instead of a Job reference, which is the only durable trace of a failure that
+// leaves no agent, no pod and no log behind.
+func (r *runCycleRepository) NoteDispatchFailure(ctx context.Context, id, reason string) (*RunCycle, error) {
+	return r.updateOpen(ctx, id, map[string]any{
+		"attempts":       gorm.Expr("attempts + 1"),
+		"dispatch_error": reason,
 	})
 }
 

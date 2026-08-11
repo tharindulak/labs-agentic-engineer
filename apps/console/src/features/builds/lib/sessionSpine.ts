@@ -122,6 +122,17 @@ function agentStage(cycle: RunCycleView): SpineStage {
     // agent's exit — whatever the cycle row says about being open.
     return { ...stage, state: "done", note: "Finished and opened its pull request." };
   }
+  // No agent ever started. Said BEFORE the "ended without a pull request"
+  // wording below, and worded so it never implies the agent did anything:
+  // there is no runner, no pod and no log here, so sending a reader to look at
+  // what the agent did is sending them to nothing.
+  if (cycle.dispatchError) {
+    return {
+      ...stage,
+      state: "failed",
+      note: `Never started — the runner Job could not be launched. ${cycle.dispatchError}`,
+    };
+  }
   if (cycle.endedAt) {
     return {
       ...stage,

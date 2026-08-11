@@ -105,6 +105,11 @@ func (a runCycles) Append(ctx context.Context, cycle *delivery.RunCycle) (string
 	return cycle.ID, nil
 }
 
+func (a runCycles) NoteDispatchFailure(ctx context.Context, cycleID, reason string) error {
+	_, err := a.cycles.NoteDispatchFailure(ctx, cycleID, reason)
+	return err
+}
+
 func (a runCycles) NoteDispatch(ctx context.Context, cycleID, jobRef string) error {
 	_, err := a.cycles.NoteDispatch(ctx, cycleID, jobRef)
 	return err

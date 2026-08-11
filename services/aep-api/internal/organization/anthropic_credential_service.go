@@ -283,6 +283,14 @@ func (s *AnthropicCredentialService) Connect(ctx context.Context, ocOrgID string
 		if _, err := s.secretRefWriter.WriteAnthropic(ctx, ocOrgID, role, key); err != nil {
 			slog.WarnContext(ctx, "anthropic: SM-API mirror failed (legacy store still authoritative)",
 				"ocOrgId", ocOrgID, "role", role, "error", err)
+			// "Best-effort" is true for the readers that resolve the key out of
+			// the legacy store, and false for the coding agent: dispatch reads
+			// the SECRET REFERENCE this mirror writes, and refuses without it.
+			// So a silent warning here left the org showing a healthy `active`
+			// key while every build failed on a missing reference — the console
+			// said connected, and only the API server's container log disagreed.
+			// Record it on the row instead, where the credential card renders it.
+			s.noteMirrorFailure(ctx, &row, err)
 		} else if role == AnthropicRoleDefault && s.pushEnabled() {
 			// The mirror just stamped a FRESH secret_ref_kv_path/property onto the
 			// row (every WriteAnthropic call gets a brand-new random-suffixed
@@ -305,6 +313,34 @@ func (s *AnthropicCredentialService) Connect(ctx context.Context, ocOrgID string
 
 	slog.InfoContext(ctx, "anthropic.connected", "ocOrgId", ocOrgID, "role", role, "keyPrefix", prefix)
 	return projectionFromAnthropicRow(&row), nil
+}
+
+// noteMirrorFailure records, on the credential row, that the key is stored but
+// not usable by the coding agent — and mutates the in-memory row so the
+// projection this Connect returns says so too, rather than reporting a clean
+// success the next build will contradict.
+//
+// It does NOT move status off `active`: the key itself validated against
+// Anthropic, and the readers that resolve it from the legacy store can use it.
+// What failed is the platform's own mirror, which is a repairable condition and
+// exactly what validationError is for.
+//
+// Best-effort by construction: the key IS connected, so a failure to annotate
+// it must not fail the Connect and lose the key the user just supplied.
+func (s *AnthropicCredentialService) noteMirrorFailure(ctx context.Context, row *OrgAnthropicCredential, cause error) {
+	msg := "This key is stored, but the platform could not mirror it into the cluster secret store, " +
+		"so the coding agent cannot start and builds will fail. Reconnect the key to retry. Cause: " + cause.Error()
+	row.ValidationError = &msg
+
+	if err := s.repo.Tx(ctx, func(tx OrgAnthropicTx) error {
+		if err := tx.AdvisoryLock("org_anthropic:" + row.OcOrgID); err != nil {
+			return err
+		}
+		return tx.Upsert(row)
+	}); err != nil {
+		slog.WarnContext(ctx, "anthropic: could not record the mirror failure on the credential row",
+			"ocOrgId", row.OcOrgID, "role", row.Role, "error", err)
+	}
 }
 
 // pushExternalSecret applies an ExternalSecret in s.pushNamespace whose

@@ -212,6 +212,23 @@ func (a *Activities) NoteCycleDispatch(ctx context.Context, in NoteCycleDispatch
 	return a.cycles.NoteDispatch(ctx, in.CycleID, in.JobRef)
 }
 
+// NoteCycleDispatchFailureInput records one failed LAUNCH on the cycle.
+type NoteCycleDispatchFailureInput struct {
+	CycleID string `json:"cycleId"`
+	Reason  string `json:"reason"`
+}
+
+// NoteCycleDispatchFailure records why an agent could not be started. It is the
+// counterpart of NoteCycleDispatch on the path where there is no Job to name,
+// and it is what lets the run settle with a reason a human can act on instead
+// of an exhausted budget with no explanation.
+func (a *Activities) NoteCycleDispatchFailure(ctx context.Context, in NoteCycleDispatchFailureInput) error {
+	if a.cycles == nil {
+		return errNotConfigured
+	}
+	return a.cycles.NoteDispatchFailure(ctx, in.CycleID, in.Reason)
+}
+
 // FinishCycleInput closes a cycle record.
 type FinishCycleInput struct {
 	CycleID  string `json:"cycleId"`

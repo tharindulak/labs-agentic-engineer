@@ -87,6 +87,18 @@ type RunCycle struct {
 	// until the first dispatch, replaced on re-dispatch).
 	JobRef string `gorm:"type:text" json:"jobRef,omitempty"`
 
+	// DispatchError is why the agent could not be LAUNCHED, when it could not
+	// be. It is the difference between "the agent ran and produced nothing" and
+	// "there was never an agent", which are different failures with different
+	// fixes — a misconfigured org credential is not an agent that died.
+	//
+	// It exists because the launch error used to be discarded outright: the
+	// cycle recorded an empty JobRef, the run settled on the re-dispatch budget,
+	// and the only surviving trace of the cause was a line in the API server's
+	// container log. Stored on the CYCLE rather than the run because each
+	// attempt has its own reason, and the last one is the one worth showing.
+	DispatchError string `gorm:"type:text" json:"dispatchError,omitempty"`
+
 	Branch   string `gorm:"type:text" json:"branch,omitempty"`
 	PRNumber int    `gorm:"index" json:"prNumber,omitempty"`
 	MergeSHA string `gorm:"type:text" json:"mergeSha,omitempty"`
