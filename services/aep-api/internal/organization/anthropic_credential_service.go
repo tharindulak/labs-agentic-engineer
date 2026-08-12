@@ -332,11 +332,13 @@ func (s *AnthropicCredentialService) noteMirrorFailure(ctx context.Context, row 
 		"so the coding agent cannot start and builds will fail. Reconnect the key to retry. Cause: " + cause.Error()
 	row.ValidationError = &msg
 
-	if err := s.repo.Tx(ctx, func(tx OrgAnthropicTx) error {
-		if err := tx.AdvisoryLock("org_anthropic:" + row.OcOrgID); err != nil {
-			return err
-		}
-		return tx.Upsert(row)
+	// A TARGETED column write, NOT Upsert: Upsert is the connect/replace path
+	// and its ON CONFLICT clause hardcodes `validation_error = NULL`, so
+	// routing this through it would erase the very message it just wrote and
+	// leave the console reporting a clean `active` — the exact failure this
+	// function exists to end.
+	if err := s.repo.UpdateColumns(ctx, row.OcOrgID, row.Role, map[string]any{
+		"validation_error": msg,
 	}); err != nil {
 		slog.WarnContext(ctx, "anthropic: could not record the mirror failure on the credential row",
 			"ocOrgId", row.OcOrgID, "role", row.Role, "error", err)

@@ -36,6 +36,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -341,5 +342,58 @@ func TestAnthropicResyncSecretRef_NoopCases_DB(t *testing.T) {
 	anthropicMustConnect(t, svc, "acme", anthropicUnitKey)
 	if wrote, err := svc.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
 		t.Fatalf("no triplet: want (false,nil), got (%v,%v)", wrote, err)
+	}
+}
+
+// A mirror that FAILS must leave its reason on the row. The coding agent reads
+// the secret REFERENCE this mirror writes and refuses without it, so a key whose
+// mirror failed is stored but unusable — and reporting it as a clean `active`
+// sent operators to the agent logs for a platform misconfiguration. Live
+// incident: two credentials sat "connected" for hours while every build failed.
+//
+// It has to be a DB test. The first version of this fix wrote the message and
+// then persisted it through Upsert, whose ON CONFLICT clause hardcodes
+// `validation_error = NULL` — so the row came back clean and the console stayed
+// silent. Only real SQL shows that; a fake repository happily "stores" it.
+func TestAnthropicConnect_FailedMirrorIsRecordedOnTheRow_DB(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	store, err := secrets.NewDBStore(db, []byte(anthropicDBAESKey))
+	if err != nil {
+		t.Fatalf("real DBStore: %v", err)
+	}
+	base, _ := anthropicFakeAPI(t, http.StatusOK)
+	repo := organization.NewOrgAnthropicRepository(db)
+
+	// Enabled (a client is wired) but every create fails — the shape of a
+	// cluster whose org namespace does not exist.
+	sm := &fakeSMClient{createErr: errors.New("namespaces \"wc-abc\" not found")}
+	writer := organization.NewSecretRefWriter(sm, nil, repo, nil)
+	svc := organization.NewAnthropicCredentialService(repo, store, nil).
+		WithAnthropicAPIBase(base).
+		WithSecretRefWriter(writer)
+
+	ctx := context.Background()
+	// Connect still SUCCEEDS: the key validated, and the readers that resolve it
+	// from the legacy store can use it. What failed is the platform's mirror.
+	anthropicMustConnect(t, svc, "acme", anthropicUnitKey)
+
+	st, err := svc.Status(ctx, "acme", organization.AnthropicRoleDefault)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.ValidationError == nil {
+		t.Fatal("a failed mirror must leave a reason on the row — otherwise the console reports a healthy key that no build can use")
+	}
+	if !strings.Contains(*st.ValidationError, "coding agent cannot start") {
+		t.Errorf("validationError = %q, want it to say the coding agent cannot start", *st.ValidationError)
+	}
+	if !strings.Contains(*st.ValidationError, "wc-abc") {
+		t.Errorf("validationError = %q, want the upstream cause carried through", *st.ValidationError)
+	}
+	// Status stays active: the KEY is valid, and demoting it would misreport
+	// which half is broken.
+	if st.Status != "active" {
+		t.Errorf("status = %q, want active — the key validated; the mirror is what failed", st.Status)
 	}
 }
