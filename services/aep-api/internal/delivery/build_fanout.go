@@ -205,6 +205,13 @@ type MergeBuild struct {
 	RunName   string
 	Status    string
 	Completed bool
+	// Succeeded is the build's VERDICT, normalised at the adapter from the
+	// cluster's own reason string — the same edge that normalises
+	// BuildRunInfo.Succeeded, and for the same reason: the status string is a
+	// label, never a predicate, so a reason nobody recognised must not read as a
+	// success. A caller wanting the verdict reads this; a caller wanting to show
+	// the cluster's word reads Status.
+	Succeeded bool
 	StartedAt string
 	// Attempt is the run name's trailing ordinal: 1 for the fan-out's build, 2
 	// for the one automatic re-trigger a red build gets.

@@ -229,6 +229,7 @@ func (a runreadProjectBuilds) ListProjectBuildRuns(ctx context.Context, orgID, p
 			RunName:   item.Name,
 			Status:    item.Status,
 			Completed: item.Completed,
+			Succeeded: item.Status == openchoreo.ReasonWorkflowSucceeded,
 			StartedAt: item.StartedAt,
 		})
 	}

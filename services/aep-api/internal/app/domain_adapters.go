@@ -23,11 +23,15 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// The opsExecutionBridge that used to live here (satisfying ops.ExecutionReader
-// from the legacy execution repository — the consumer-before-provider bridge P1
-// existed to prove) was RETIRED in P6: delivery now owns the Execution store and
-// supplies ops.ExecutionReader directly via execution.NewOpsExecutionReader.
+// The opsExecutionBridge that used to live here (satisfying the ops correlation
+// port from the legacy execution repository — the consumer-before-provider bridge
+// P1 existed to prove) was RETIRED in P6: delivery supplies the port directly.
 // Nothing in internal/ops changed — the property the bridge was proving.
+//
+// The port itself has since been re-cut as ops.FixProgressReader, supplied by
+// runread.NewOpsFixProgress: correlating against `executions` stopped answering
+// once the run loop moved its record to `run_cycles`, so the port now asks for the
+// ANSWER ops needs rather than for rows it has to interpret.
 
 // reaperRepoLister projects git_repositories rows onto the reaper's coordinate
 // port, so the kernel reaper never names the GitRepository entity.

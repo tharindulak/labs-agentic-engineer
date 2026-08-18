@@ -19,9 +19,7 @@ package getreport
 import (
 	"context"
 	"log/slog"
-	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/ops"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
@@ -30,20 +28,21 @@ import (
 
 // Handler serves get-rca-agent-report.
 type Handler struct {
-	reports ops.Repository
-	execs   ops.ExecutionReader
+	reports  ops.Repository
+	progress ops.FixProgressReader
 }
 
-// New returns the slice's handler. execs may be nil, which disables correlation.
-func New(reports ops.Repository, execs ops.ExecutionReader) *Handler {
-	return &Handler{reports: reports, execs: execs}
+// New returns the slice's handler. progress may be nil, which disables
+// correlation.
+func New(reports ops.Repository, progress ops.FixProgressReader) *Handler {
+	return &Handler{reports: reports, progress: progress}
 }
 
 // GetRcaAgentReport returns a single report, 404 when absent.
 //
-// The report's Dispatched/Deployed fields are reconciled against live Task
-// executions so the console's Coding Handover / Verify Fix stepper reflects the
-// current state rather than the write-time snapshot.
+// The report's Dispatched/Deployed fields are reconciled against the live state
+// of the fix so the console's Coding Handover / Verify Fix stepper reflects where
+// the work actually is rather than the write-time snapshot.
 func (h *Handler) GetRcaAgentReport(ctx context.Context, request gen.GetRcaAgentReportRequestObject) (gen.GetRcaAgentReportResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 
@@ -58,54 +57,35 @@ func (h *Handler) GetRcaAgentReport(ctx context.Context, request gen.GetRcaAgent
 	return gen.GetRcaAgentReport200JSONResponse(ops.ToWire(*report)), nil
 }
 
-// correlate upgrades a report's Dispatched/Deployed flags from the live
-// executions of the linked Task (repo + issue number).
+// correlate upgrades a report's Dispatched/Deployed flags from the live progress
+// of the linked issue's fix (project + issue number).
 //
-// It only ever promotes false→true, never the reverse: a writer that already
-// knew the agent was dispatched must not be contradicted by a missing execution
-// row. A no-op when correlation is disabled (nil reader), the report has no
-// linked issue, or the issue URL cannot be resolved to a repo.
+// It only ever promotes false→true, never the reverse: a writer that already knew
+// the agent was dispatched must not be contradicted by a reader that cannot see
+// the work. A no-op when correlation is disabled (nil reader), the report has no
+// linked issue, or the report names no project.
+//
+// DeployedAt is deliberately NOT set here, only preserved. The flags are derivable
+// from live state; the moment a rollout completed is not — a cycle's row closes at
+// its merge, and per-component build state is a projection of the cluster that
+// carries no completion time. Stamping "now" would date every fix to whenever the
+// console last polled, which is worse than an absent timestamp. It stays the
+// writer's to record.
 func (h *Handler) correlate(ctx context.Context, orgID string, report *ops.RcaAgentReport) {
-	if h.execs == nil || report == nil || report.IssueNumber == nil {
+	if h.progress == nil || report == nil || report.IssueNumber == nil || report.Project == "" {
 		return
 	}
-	repo := repoFromIssueURL(report.IssueURL)
-	if repo == "" {
-		return
-	}
-	execs, err := h.execs.LatestExecutionPerKind(ctx, orgID, repo, int(*report.IssueNumber))
+	progress, err := h.progress.FixProgress(ctx, orgID, report.Project, int(*report.IssueNumber))
 	if err != nil {
 		// Correlation is best-effort: serve the stored snapshot on lookup error.
-		slog.WarnContext(ctx, "ops: execution correlation failed",
-			"issue", *report.IssueNumber, "repo", repo, "error", err)
+		slog.WarnContext(ctx, "ops: fix-progress correlation failed",
+			"issue", *report.IssueNumber, "project", report.Project, "error", err)
 		return
 	}
-	if _, ok := execs[string(taskmeta.KindCoding)]; ok {
+	if progress.Dispatched {
 		report.Dispatched = true
 	}
-	// Deployed = a build execution for this Task has SUCCEEDED (the fix built and
-	// rolled) — deliberately beyond merely PR-merged, per issue #156's
-	// "Verify Fix" requirement.
-	if b, ok := execs[string(taskmeta.KindBuild)]; ok && b.Status == string(taskmeta.ExecSucceeded) {
+	if progress.Deployed {
 		report.Deployed = true
-		if report.DeployedAt == nil {
-			report.DeployedAt = b.EndedAt
-		}
 	}
-}
-
-// repoFromIssueURL extracts the "<owner>/<name>" GitHub slug (the key the
-// executions store is scoped by) from a full issue URL like
-// https://github.com/<owner>/<name>/issues/<n>. Returns "" if it cannot.
-func repoFromIssueURL(issueURL string) string {
-	const marker = "github.com/"
-	i := strings.Index(issueURL, marker)
-	if i < 0 {
-		return ""
-	}
-	parts := strings.Split(issueURL[i+len(marker):], "/")
-	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return ""
-	}
-	return parts[0] + "/" + parts[1]
 }

@@ -899,7 +899,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	opsHandlers, err := opshttpapi.New(ops.Deps{
 		Reports: ops.NewRepository(db),
-		Execs:   execution.NewOpsExecutionReader(executionRepo),
+		// The Coding Handover / Verify Fix stepper is correlated against the RUN
+		// LOOP's record (run rows + cycles) plus the cluster's builds — the same
+		// sources the console's own run rail reads. It used to be correlated
+		// against `executions`, which the loop stopped writing, so every report
+		// served a permanently-undispatched snapshot.
+		Progress: runread.NewOpsFixProgress(milestoneRunRepo, runCycleRepo,
+			runreadProjectBuilds{oc: componentClient}),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble ops domain: %w", err)

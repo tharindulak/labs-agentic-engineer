@@ -77,7 +77,7 @@ func TestAssembleRejectsMissingPorts(t *testing.T) {
 // TestAssembleAllowsNilExecutionReader: correlation is optional by design, and
 // P1 must not require the delivery domain (P6) to exist.
 func TestAssembleAllowsNilExecutionReader(t *testing.T) {
-	if _, err := httpapi.New(ops.Deps{Reports: fakeRepo{}, Execs: nil}); err != nil {
+	if _, err := httpapi.New(ops.Deps{Reports: fakeRepo{}, Progress: nil}); err != nil {
 		t.Fatalf("New with a nil ExecutionReader failed: %v — correlation is optional", err)
 	}
 }

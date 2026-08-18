@@ -53,7 +53,7 @@ func New(d ops.Deps) (*Handlers, error) {
 	}
 	return &Handlers{
 		createReportHandler: createreport.New(d.Reports),
-		getReportHandler:    getreport.New(d.Reports, d.Execs),
+		getReportHandler:    getreport.New(d.Reports, d.Progress),
 		listReportsHandler:  listreports.New(d.Reports),
 	}, nil
 }

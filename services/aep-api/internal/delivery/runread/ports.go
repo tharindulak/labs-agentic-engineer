@@ -64,6 +64,21 @@ type CycleReader interface {
 	ListByRun(ctx context.Context, orgID, runID string) ([]delivery.RunCycle, error)
 }
 
+// ProjectRunLister is every version's runs for one project, newest first.
+// Satisfied by delivery.MilestoneRunRepository.
+//
+// Deliberately its OWN port rather than a method on RunReader: only the
+// issue-keyed read (OpsFixProgress) needs it, and every other consumer of this
+// surface resolves a version first. Widening the shared port would have made the
+// whole run surface's fakes carry a method none of them can answer meaningfully —
+// interface segregation earning its keep rather than being cited.
+//
+// Project-wide because an rca-agent issue names no version: the run that adopted
+// it is whichever one was in flight when the incident landed.
+type ProjectRunLister interface {
+	ListByProject(ctx context.Context, orgID, projectID string) ([]delivery.MilestoneRun, error)
+}
+
 // ProjectBuildLister reads every build WorkflowRun in a project, in ONE call —
 // the read a cycle's builds are derived from. Project-wide rather than
 // per-component because the read side does not know which components a merge

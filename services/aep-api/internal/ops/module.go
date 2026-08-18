@@ -27,9 +27,9 @@ import "errors"
 type Deps struct {
 	// Reports is the persistence port. Required.
 	Reports Repository
-	// Execs correlates a report against live Task executions. Optional: nil
-	// disables correlation and the stored snapshot is served as-is.
-	Execs ExecutionReader
+	// Progress correlates a report against the live progress of its fix.
+	// Optional: nil disables correlation and the stored snapshot is served as-is.
+	Progress FixProgressReader
 }
 
 // Validate reports a Deps that cannot produce a working domain. It exists
