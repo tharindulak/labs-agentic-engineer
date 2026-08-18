@@ -761,12 +761,17 @@ type ConsumerDTO struct {
 	ProjectID     string `json:"projectId"`
 }
 
-// CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers.
+// CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers. Adoption is the DEFAULT — an issue filed here is agent work unless the caller opts out with adopt=false.
 type CreateIssueRequest struct {
-	Body      string   `json:"body"`
-	DedupeKey string   `json:"dedupeKey,omitempty"`
-	Labels    []string `json:"labels,omitempty"`
-	Title     string   `json:"title"`
+	// Adopt Whether to hand the issue to the coding agent. OMITTED MEANS TRUE — the issue joins the deployed version's milestone as agent work and a run picks it up. false files a ledger issue instead — recorded against the version, never worked until somebody adopts it.
+	Adopt *bool  `json:"adopt,omitempty"`
+	Body  string `json:"body"`
+
+	// ComponentName The DESIGN component this issue is about, unprefixed (e.g. `service1`, not `myproject-service1`). Optional, and read only when adopting — it provisions the component's OpenChoreo Component CR up-front, so a name the design does not carry fails THIS call instead of surfacing later inside a cycle. Omit it and adoption proceeds without the check.
+	ComponentName string   `json:"componentName,omitempty"`
+	DedupeKey     string   `json:"dedupeKey,omitempty"`
+	Labels        []string `json:"labels,omitempty"`
+	Title         string   `json:"title"`
 }
 
 // CreateProjectRequest defines model for CreateProjectRequest.
@@ -1003,12 +1008,17 @@ type IssueInfo struct {
 	URL    string   `json:"URL"`
 }
 
-// IssueResult Issue metadata after create. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it.
+// IssueResult Issue metadata after create. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it. adopted answers the only other question a caller has — will anything work this issue?
 type IssueResult struct {
-	Deduped bool   `json:"deduped,omitempty"`
-	NodeID  string `json:"nodeId"`
-	Number  int64  `json:"number"`
-	URL     string `json:"url"`
+	// Adopted Whether the issue was adopted — filed into a version's milestone as agent work, with a run started or woken over it. False when the caller passed adopt=false, when creation deduped onto an existing issue (the run that created it owns its dispatch), or when adoption could not proceed; adoptionError says which.
+	Adopted bool `json:"adopted,omitempty"`
+
+	// AdoptionError Why adoption did not happen, when it was asked for and did not. The issue still exists — it is a ledger entry, and adding the `aep:codingagent` label hands it to the coding agent later.
+	AdoptionError string `json:"adoptionError,omitempty"`
+	Deduped       bool   `json:"deduped,omitempty"`
+	NodeID        string `json:"nodeId"`
+	Number        int64  `json:"number"`
+	URL           string `json:"url"`
 }
 
 // LLMProjection defines model for LLMProjection.
@@ -1238,12 +1248,6 @@ type ProjectUsageCard struct {
 // ProjectUsageList Org-wide usage roll-up (#291), tiered — stamped-cost projects first (costUsd desc), then projects with usage the platform could not price (by tokens), then idle $0 projects last.
 type ProjectUsageList struct {
 	Projects []ProjectUsageCard `json:"projects"`
-}
-
-// PromoteFromIssueRequest defines model for PromoteFromIssueRequest.
-type PromoteFromIssueRequest struct {
-	// ComponentName Component this issue is about
-	ComponentName string `json:"componentName"`
 }
 
 // ProvisionBody defines model for ProvisionBody.
@@ -2011,9 +2015,6 @@ type ApplyFilesJSONRequestBody = ApplyRequest
 
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
-
-// PromoteTaskFromIssueJSONRequestBody defines body for PromoteTaskFromIssue for application/json ContentType.
-type PromoteTaskFromIssueJSONRequestBody = PromoteFromIssueRequest
 
 // CreateRcaAgentReportJSONRequestBody defines body for CreateRcaAgentReport for application/json ContentType.
 type CreateRcaAgentReportJSONRequestBody = CreateRcaAgentReportRequest

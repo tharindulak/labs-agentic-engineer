@@ -26,4 +26,8 @@ type Deps struct {
 	// Issues is the issue read/write port. Nil is SUPPORTED: the slices answer
 	// 503, which is what lets a component test wire only the feature under test.
 	Issues IssueService
+	// Adopter hands a freshly filed issue to the coding agent. Optional: nil
+	// degrades create-issue to filing alone (see Adopter), so a component test
+	// can exercise issue filing without a run loop behind it.
+	Adopter Adopter
 }

@@ -676,10 +676,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		PlatformSender: platformSender,
 	})
 	eventPlane.RegisterHandlers(registerWebhook)
-	// The SRE/RCA handoff's dispatch leg (promote-task-from-issue): adopt a
-	// freshly filed issue into the deployed version's milestone and start an
-	// incident run over it.
-	taskCommands := task.NewCommands(componentService, eventcoreAdopter{events: eventPlane})
+	// The SRE/RCA handoff's dispatch leg: create-issue adopts what it files, so
+	// an incident issue joins the deployed version's milestone and a run picks it
+	// up without a second call.
+	issueAdopter := eventcoreIssueAdopter{events: eventPlane}
 	webhook.RegisterInstallationHandlers(webhookRouter, credService, issueService, trashWorkspaceOrg)
 	webhookCtrl := webhook.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
 
@@ -864,7 +864,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// no ops service.
 	// sourcecontrol — the git-host substrate (P2). Its handlers are embedded
 	// straight into the edge's composite; the edge holds no issue service.
-	scHandlers, err := schttpapi.New(sourcecontrol.Deps{Issues: issueService})
+	scHandlers, err := schttpapi.New(sourcecontrol.Deps{Issues: issueService, Adopter: issueAdopter})
 	if err != nil {
 		return nil, fmt.Errorf("assemble sourcecontrol domain: %w", err)
 	}
@@ -1077,7 +1077,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		PreflightSvc:   preflightSvc,
 		BuildActivity:  buildActivityRecorder{svc: activitySvc},
 		TaskReads:      taskReads,
-		TaskCommands:   taskCommands,
 		TaskStream:     taskStreamSvc,
 		RunReads:       runReads,
 		RunProgress:    runProgress,

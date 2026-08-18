@@ -101,7 +101,8 @@
 #                   (default: /mcp = standalone aep-mcp-server; set /sre-mcp for
 #                   the in-process aep-api surface). handoff-v16+ only.
 #   AE_HANDOFF      enable the RCA→AEP coding-agent handoff (default: true)
-#   AE_AUTO_DISPATCH auto-dispatch the coding agent after issue creation
+#   AE_AUTO_DISPATCH hand the filed issue to the coding agent (AEP adopts it as
+#                   part of creating it; false files a ledger entry instead)
 #                   (default: true; false = issue-only, human dispatches)
 #   AE_PUBLISH_REPORTS publish each completed RCA report to aep-api so it
 #                   shows in the console Alerts bell/list (default: true;
@@ -446,8 +447,13 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #                              search-then-create dedup ⇒ duplicate GitHub
 #                              issues + duplicate coding-agent dispatches.
 #   rca-agent-config:
-#     AE_HANDOFF               enables the RCA→AEP handoff stage (issue+dispatch)
-#     AE_AUTO_DISPATCH         false ⇒ issue-only; a human dispatches from AEP
+#     AE_HANDOFF               enables the RCA→AEP handoff stage (file the issue)
+#     AE_AUTO_DISPATCH         true ⇒ the filed issue is handed to the coding
+#                              agent by AEP as it is created (one call, no
+#                              separate dispatch). false ⇒ issue-only: it is a
+#                              ledger entry until a human adopts it, by clicking
+#                              dispatch in AEP or adding `aep:codingagent` on
+#                              the issue in GitHub.
 #     AE_API_URL               aep-mcp-server base URL (host.k3d.internal:3401)
 #     AE_PUBLISH_REPORTS       publish RCA reports to aep-api (console Alerts)
 #     AEP_API_URL              aep-api REST base (host.k3d.internal:9090)

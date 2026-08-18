@@ -17,13 +17,15 @@
  */
 
 /**
- * Thin wrapper over aep-api's `/api/v1/projects/{projectName}/issues` and
- * `/api/v1/projects/{projectName}/tasks/dispatch-from-issue` endpoints
- * (services/aep-api/internal/feature/gitrepo/issue_huma.go and
- * .../task/task_huma.go). Every call forwards the caller's bearer as-is —
- * this server holds no credentials of its own; aep-api's org-scoped JWT
- * verification (humakit.OrgScopedInput) is the only auth boundary. See
- * AE-HANDOFF-DESIGN.md (openchoreo/agents/sre-agent) §4/§9.
+ * Thin wrapper over aep-api's `/api/v1/projects/{projectName}/issues`
+ * endpoints. Every call forwards the caller's bearer as-is — this server holds
+ * no credentials of its own; aep-api's org-scoped JWT verification is the only
+ * auth boundary. See AE-HANDOFF-DESIGN.md (openchoreo/agents/sre-agent) §4/§9.
+ *
+ * There is no separate dispatch call: creating an issue IS the dispatch, unless
+ * the caller opts out with `adopt: false`. aep-api files the issue into the
+ * deployed version's milestone and starts (or wakes) the run in one write, so
+ * there is no window in which the issue exists but nothing will work it.
  */
 
 export interface AepClientOptions {
@@ -37,6 +39,10 @@ export interface IssueResult {
   nodeId: string;
   /** True when an open issue with the same dedupeKey already existed — number/url refer to that issue and nothing was created. */
   deduped?: boolean;
+  /** True when the issue was filed into a version's milestone as agent work and a run was started or woken over it. */
+  adopted?: boolean;
+  /** Why adoption did not happen, when it was asked for and did not. The issue still exists as a ledger entry. */
+  adoptionError?: string;
 }
 
 export interface IssueInfo {
@@ -84,10 +90,8 @@ async function request<T>(
     throw new AepApiError(res.status, text || `aep-api request failed: ${res.status}`);
   }
 
-  // 204 (no-content commands like unhold) and 202 (accepted-async commands
-  // like promote-from-issue) both carry an empty body — Huma sends none for
-  // an output type with no `Body` field, regardless of status code — so key
-  // off actual content rather than a hardcoded status list.
+  // Some aep-api responses carry no body at all (204, and 202 for accepted-async
+  // commands) — so key off actual content rather than a hardcoded status list.
   const text = await res.text();
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
@@ -96,7 +100,14 @@ async function request<T>(
 export function createIssue(
   opts: AepClientOptions,
   project: string,
-  req: { title: string; body: string; labels?: string[]; dedupeKey?: string },
+  req: {
+    title: string;
+    body: string;
+    labels?: string[];
+    dedupeKey?: string;
+    componentName?: string;
+    adopt?: boolean;
+  },
 ): Promise<IssueResult> {
   return request<IssueResult>(opts, "POST", `/projects/${encodeURIComponent(project)}/issues`, req);
 }
@@ -112,22 +123,4 @@ export function listIssues(
   const qs = params.toString();
   const path = `/projects/${encodeURIComponent(project)}/issues${qs ? `?${qs}` : ""}`;
   return request<IssueInfo[]>(opts, "GET", path);
-}
-
-// Promotes an ad-hoc issue into a coding Task and dispatches it through the
-// funnel. Async (202, empty body, see the request() comment above) — there is
-// no synchronous run name anymore; the funnel dispatches out-of-band. title
-// and issueUrl are accepted but unused: kept so ae_dispatch_coding_agent's
-// tool contract doesn't need to change on the SRE agent side.
-export function dispatchFromIssue(
-  opts: AepClientOptions,
-  project: string,
-  req: { componentName: string; title: string; issueNumber: number; issueUrl: string },
-): Promise<void> {
-  return request<void>(
-    opts,
-    "POST",
-    `/projects/${encodeURIComponent(project)}/tasks/${req.issueNumber}/promote-from-issue`,
-    { componentName: req.componentName },
-  );
 }

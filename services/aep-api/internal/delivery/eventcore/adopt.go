@@ -18,10 +18,12 @@ package eventcore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // AdoptTarget is the issue being handed to the coding agent, plus the
@@ -34,10 +36,13 @@ type AdoptTarget struct {
 	MilestoneTitle  string
 }
 
-// AdoptIssue hands one issue to the coding agent, from either of the two
-// adoption routes: the `aep:codingagent` label arriving by webhook, and the
-// console's dispatch button (which calls this directly, because a label the
-// platform stamps itself comes back as an echo and is dropped).
+// AdoptIssue hands an issue that ALREADY EXISTS to the coding agent: the
+// `aep:codingagent` label arriving by webhook, and any caller that adopts an
+// issue by number directly (a label the platform stamps itself comes back as an
+// echo and is dropped, so a direct caller cannot rely on the webhook).
+//
+// Its sibling AdoptOnCreate below is the other direction — the caller filing the
+// issue asks for it in the same breath.
 //
 // The rules, in order:
 //
@@ -92,20 +97,146 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		}
 	}
 
+	return e.startOrWake(ctx, orgID, projectID, milestone)
+}
+
+// CreateAdoptResult is what AdoptOnCreate did. Adopted answers the only
+// question the caller cannot work out for itself — will anything work this
+// issue? — and Reason carries why not, when it will not.
+type CreateAdoptResult struct {
+	Issue   *sourcecontrol.IssueResult
+	Adopted bool
+	// Reason is empty when Adopted is true. Otherwise it is the refusal in
+	// words, for the caller to relay: nothing retries an adoption, so a caller
+	// that cannot see why it did not happen cannot act on it either.
+	Reason string
+}
+
+// AdoptOnCreate files an issue that is agent work FROM THE MOMENT IT EXISTS.
+// It is AdoptIssue's sibling, for the other direction: AdoptIssue takes an
+// issue somebody already filed and hands it over, while this one is asked for
+// by the caller filing it.
+//
+// The difference is not cosmetic. Adoption after the fact needs two more GitHub
+// writes — the milestone and the agent-work label — and an issue that survives
+// the first write but not the second is filed, in a milestone, and invisible to
+// the run that is supposed to work it. Here the milestone and both labels ride
+// the CREATE call, so there is no state between them to be left half-written.
+// Everything after that write is recoverable by the reconcile sweep, whose rule
+// is exactly this issue's situation: a milestone with open work and no live run
+// gets one.
+//
+// The rules it shares with AdoptIssue, because they are adoption's rules and
+// not this path's: a bare issue joins the DEPLOYED version's milestone (or the
+// spec build in flight, when nothing is deployed yet); LabelAgentWork is what
+// makes it visible to the dispatch predicate; LabelAdopt records the act; and a
+// milestone that already has a live run gets that run woken rather than a
+// second one started.
+//
+// Refusals are answered, not raised. A project with no version to adopt into
+// still gets its issue — as a ledger entry, with the reason — because nothing
+// retries a handoff and dropping it loses the incident for good. componentName
+// is the one thing that DOES refuse before writing: an unknown name means the
+// caller's own naming is wrong (a project prefix left on, typically), and
+// failing here is what stops it surfacing later inside a cycle.
+func (e *Events) AdoptOnCreate(
+	ctx context.Context,
+	orgID, projectID, componentName string,
+	req sourcecontrol.CreateIssueRequest,
+) (*CreateAdoptResult, error) {
+	if e.p.Issues == nil {
+		return nil, fmt.Errorf("adopt on create: no issue client wired")
+	}
+
+	milestone, err := e.adoptableMilestone(ctx, orgID, projectID)
+	if err != nil {
+		if !errors.Is(err, delivery.ErrNoAdoptableMilestone) {
+			// A read that failed for any other reason is a server fault, and the
+			// caller may retry it. Filing first and failing after would leave a
+			// duplicate behind on that retry for every caller without a dedupe key.
+			return nil, err
+		}
+		issue, cerr := e.p.Issues.CreateIssue(ctx, orgID, projectID, req)
+		if cerr != nil {
+			return nil, cerr
+		}
+		slog.InfoContext(ctx, "eventcore: issue filed as a ledger entry — no version to adopt it into",
+			"project", projectID, "issue", issue.Number)
+		return &CreateAdoptResult{Issue: issue, Reason: err.Error()}, nil
+	}
+
+	// Before anything is written: a component the design does not carry cannot
+	// be built, so refuse while refusing is still free.
+	if componentName != "" && e.p.Components != nil {
+		if cerr := e.p.Components.EnsureComponent(ctx, orgID, projectID, componentName); cerr != nil {
+			return nil, fmt.Errorf("adopt on create: %w", cerr)
+		}
+	}
+
+	req.Milestone = &milestone.Number
+	req.Labels = appendMissingLabels(req.Labels, delivery.LabelAgentWork, delivery.LabelAdopt)
+
+	issue, err := e.p.Issues.CreateIssue(ctx, orgID, projectID, req)
+	if err != nil {
+		return nil, err
+	}
+	if issue.Deduped {
+		// The open issue this folded onto was adopted by the run that created it,
+		// and that run owns its dispatch. Adopting again would be a no-op against
+		// GitHub and a lie in the answer.
+		slog.InfoContext(ctx, "eventcore: create deduped onto an open issue — its own run owns the dispatch",
+			"project", projectID, "issue", issue.Number)
+		return &CreateAdoptResult{
+			Issue:  issue,
+			Reason: "an open issue for the same dedupe key already exists and is already being worked",
+		}, nil
+	}
+
+	// The issue is adopted from here on — it is in the milestone and carries the
+	// agent-work label. A run that fails to start is therefore NOT an adoption
+	// failure: the sweep finds a milestone with open work and no live run, and
+	// starts one within its interval. Reporting a failure here would be wrong
+	// twice over, since the issue is filed and the run is coming.
+	if rerr := e.startOrWake(ctx, orgID, projectID, *milestone); rerr != nil {
+		slog.WarnContext(ctx, "eventcore: adopted on create, but the run did not start — leaving it to the sweep",
+			"project", projectID, "issue", issue.Number, "milestone", milestone.Number, "error", rerr)
+	}
+	return &CreateAdoptResult{Issue: issue, Adopted: true}, nil
+}
+
+// startOrWake is the tail both adoption routes end in: one run per milestone,
+// woken if it is parked, started if there is none. It exists so neither route
+// can drift from the other on the rule that matters most — never two agents on
+// one branch.
+//
+// A RUNNING run re-reads its milestone at the next cycle boundary, so it needs
+// nothing from us. A WAITING one is parked and re-derives only when told to —
+// and the agent-work label adoption just wrote comes back as a suppressed echo,
+// so the webhook path will not tell it. That is why waking is this path's job
+// and not the delivery's.
+func (e *Events) startOrWake(ctx context.Context, orgID, projectID string, milestone MilestoneRef) error {
 	live, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestone.Number)
 	if err != nil {
 		return err
 	}
 	if live != nil {
 		slog.DebugContext(ctx, "eventcore: adoption into a milestone with a live run",
-			"issue", target.Number, "milestone", milestone.Number, "run", live.ID)
-		// A RUNNING run re-reads its milestone at the next cycle boundary. A
-		// WAITING one is parked and re-derives only when told to — and the label
-		// this call just wrote comes back as a suppressed echo, so the webhook
-		// path will not tell it.
+			"milestone", milestone.Number, "run", live.ID)
 		return e.wakeIfWorkable(ctx, orgID, projectID, milestone.Number)
 	}
 	return e.startRun(ctx, orgID, projectID, milestone)
+}
+
+// appendMissingLabels adds each label the slice does not already carry, matching
+// GitHub's case-insensitive label identity so a caller's hand-typed `AEP` is not
+// duplicated as a second population.
+func appendMissingLabels(labels []string, add ...string) []string {
+	for _, label := range add {
+		if !delivery.HasLabel(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	return labels
 }
 
 // adoptableMilestone is the version a bare issue belongs to: the deployed one

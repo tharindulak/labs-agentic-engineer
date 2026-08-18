@@ -38,5 +38,5 @@ type Handlers struct {
 // than panic. So there is no Deps.Validate here — a nil IssueService is a
 // supported configuration, not a broken one.
 func New(d sourcecontrol.Deps) (*Handlers, error) {
-	return &Handlers{issuesHandler: issues.New(d.Issues)}, nil
+	return &Handlers{issuesHandler: issues.New(d.Issues, d.Adopter)}, nil
 }

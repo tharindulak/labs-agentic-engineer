@@ -65,15 +65,6 @@ type RepoResolver interface {
 	GetRepo(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error)
 }
 
-// ComponentEnsurer idempotently provisions the OpenChoreo Component CR for a
-// design component, erroring if no design component exists by that name.
-// projects.ComponentService satisfies it. PromoteAndExecute calls it
-// synchronously, so an unknown componentName (e.g. a caller's prefix-stripping
-// bug) fails that call rather than surfacing later inside a cycle.
-type ComponentEnsurer interface {
-	EnsureComponent(ctx context.Context, orgID, projectID, componentName string) error
-}
-
 // VersionReader lists approved (tagged) spec/design versions and reads a bundle
 // at a tag — the lineage stamps and the incremental-plan baseline diff (§6).
 type VersionReader interface {
@@ -122,17 +113,6 @@ type AnthropicKeyResolver func(ctx context.Context, orgID string) (string, error
 // toolset:"task-plan" turn and streams raw StreamPart frames back for the tap.
 type TurnClient interface {
 	Turn(ctx context.Context, conversationID, orgID, anthropicKey string, req agentsvc.TurnRequest) (io.ReadCloser, error)
-}
-
-// Adopter hands an issue to the coding agent: file it under the deployed
-// version's milestone and start an incident run over that milestone unless one
-// is already live. *eventcore.Events satisfies it, wired at the composition
-// root — this package names no sibling slice (the task ⊥ run arch lock).
-//
-// The issue is assumed to be BARE (no milestone): the one caller is the SRE/RCA
-// handoff, which files the issue and immediately promotes it.
-type Adopter interface {
-	AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error
 }
 
 // MilestoneResolver resolves a `?tag=v<N>` query to the milestone NUMBER the

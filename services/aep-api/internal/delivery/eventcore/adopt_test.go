@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // The properties in this file are all one incident: an SRE/RCA handoff filed an
@@ -141,4 +142,144 @@ func TestAdoption_DoesNotWakeARunMidCycle(t *testing.T) {
 // milestone is where incidents belong.
 func succeededRun(id string, milestone int) delivery.MilestoneRun {
 	return aRun(id, milestone, delivery.RunStateSucceeded)
+}
+
+// ---- adoption at creation -------------------------------------------------
+//
+// The properties below belong to the other adoption route: the caller is FILING
+// the issue and asking for it to be worked, so there is no "already filed"
+// state to protect. What has to hold is that the issue is never left half
+// adopted, and that a refusal is answered rather than swallowed.
+
+// The whole point of adopting at creation: the milestone and both labels ride
+// the CREATE call, so there is no window in which the issue exists but is not
+// yet workable. If either arrived as a follow-up write, a failure between them
+// would leave an issue filed, in a milestone, and invisible to its own run.
+func TestAdoptOnCreate_FilesTheIssueAlreadyWorkable(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 3))
+
+	out, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "order-service",
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"})
+	if err != nil {
+		t.Fatalf("adopt on create: %v", err)
+	}
+	if !out.Adopted || out.Reason != "" {
+		t.Fatalf("want adopted with no reason, got %+v", out)
+	}
+	if len(h.issues.created) != 1 {
+		t.Fatalf("want exactly one create, got %d", len(h.issues.created))
+	}
+	req := h.issues.created[0]
+	if req.Milestone == nil || *req.Milestone != 3 {
+		t.Fatalf("the milestone must ride the create call, got %v", req.Milestone)
+	}
+	for _, label := range []string{delivery.LabelAgentWork, delivery.LabelAdopt} {
+		if !delivery.HasLabel(req.Labels, label) {
+			t.Fatalf("create must carry %s, got %v", label, req.Labels)
+		}
+	}
+	if len(h.issues.assigned) != 0 || len(h.issues.labelled) != 0 {
+		t.Fatalf("no follow-up write may be needed to make the issue workable: assigned=%v labelled=%v",
+			h.issues.assigned, h.issues.labelled)
+	}
+	if len(h.sup.started) != 1 || h.sup.started[0].MilestoneNumber != 3 {
+		t.Fatalf("a run must be started over the milestone, got %+v", h.sup.started)
+	}
+}
+
+// A project with nothing deployed and nothing building has no version to adopt
+// into, and that refusal must not cost the incident: nothing retries a handoff.
+// So the issue is still filed — as a ledger entry — and the answer says why it
+// will not be worked.
+func TestAdoptOnCreate_NoVersionStillFilesTheIssueAndSaysWhy(t *testing.T) {
+	h := newHarness(t) // no runs at all
+
+	out, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "",
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"})
+	if err != nil {
+		t.Fatalf("a refusal must be answered, not raised: %v", err)
+	}
+	if out.Adopted {
+		t.Fatal("nothing can work an issue with no milestone")
+	}
+	if out.Reason == "" {
+		t.Fatal("a caller that cannot see why adoption did not happen cannot act on it")
+	}
+	if len(h.issues.created) != 1 {
+		t.Fatalf("the incident must survive as a ledger entry, got %d creates", len(h.issues.created))
+	}
+	req := h.issues.created[0]
+	if req.Milestone != nil || delivery.HasLabel(req.Labels, delivery.LabelAgentWork) {
+		t.Fatalf("a ledger entry carries neither milestone nor agent-work label, got %+v", req)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatalf("no milestone means no run, got %+v", h.sup.started)
+	}
+}
+
+// A component the design does not carry is the caller's own bug — the project
+// prefix left on the name is the one that keeps happening. It fails BEFORE the
+// issue is filed, because the alternative is an issue whose component cannot be
+// built and a failure that only surfaces later, inside a cycle.
+func TestAdoptOnCreate_UnknownComponentRefusesBeforeFilingAnything(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 3))
+	h.comps.failFor = "demohello-order-service"
+
+	_, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "demohello-order-service",
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"})
+	if err == nil {
+		t.Fatal("a component the design does not carry must fail the call")
+	}
+	if len(h.issues.created) != 0 || len(h.sup.started) != 0 {
+		t.Fatalf("a refusal before filing must write nothing: created=%v started=%+v",
+			h.issues.created, h.sup.started)
+	}
+}
+
+// Creation that folds onto an open issue has not adopted anything: that issue
+// was adopted by the run which created it, and that run owns its dispatch.
+// Claiming otherwise would report a dispatch this call did not make.
+func TestAdoptOnCreate_DedupeLeavesTheDispatchToTheOwningRun(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 3))
+	req := sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose", DedupeKey: "sre-rca/order-service"}
+
+	if _, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "", req); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	out, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "", req)
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+	if !out.Issue.Deduped {
+		t.Fatalf("the second create must dedupe, got %+v", out.Issue)
+	}
+	if out.Adopted || out.Reason == "" {
+		t.Fatalf("a deduped create adopts nothing and must say so, got %+v", out)
+	}
+	if len(h.sup.started) != 1 {
+		t.Fatalf("the recurrence must not start a second run, got %+v", h.sup.started)
+	}
+}
+
+// Both adoption routes end in the same rule, and it is the one that matters
+// most: never two agents on one branch. A milestone already being worked gets
+// its run woken, not a second one started.
+func TestAdoptOnCreate_NeverStartsASecondRunOnALiveMilestone(t *testing.T) {
+	h := newHarness(t, aRun("run-1", 4, delivery.RunStateWaiting))
+	h.issues.withCounts(4, 0, 1, 1)
+
+	out, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "",
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"})
+	if err != nil {
+		t.Fatalf("adopt on create: %v", err)
+	}
+	if !out.Adopted {
+		t.Fatalf("adoption into a live milestone still adopts, got %+v", out)
+	}
+	if len(h.sup.started) != 0 {
+		t.Fatalf("a second run on a live milestone would put two agents on one branch, got %+v", h.sup.started)
+	}
+	if got := h.sup.named(delivery.SigRunWorkable); len(got) != 1 {
+		t.Fatalf("the parked run must be told work arrived, got %v", got)
+	}
 }

@@ -67,7 +67,7 @@ it), and every former feature→feature edge becomes a legal slice→root type r
 | Sub-package | Owns | Reaches the root for |
 |---|---|---|
 | `build` (buildpipe) | the whole-spec gate + `v<N>` tag cut, **the milestone plan path** (supersede the previous version, mint `v<N>`'s milestone, admit the run row, then plan its Tasks and mint its gates), the version ledger, dep-drawer preflight | `MilestoneRun`/`StartRunRequest`, and the planner via `SpecPlanner` |
-| `task` (taskflow) | the GitHub-native Task READ surface (list/get, scoped to a version by milestone membership) + the plan turn, which mints one **prose** issue per Task **into the version's milestone**, assigned at creation; plus the SRE/RCA handoff's adoption leg | the read DTOs, the milestone label vocabulary, and the run rows (via `MilestoneResolver`) |
+| `task` (taskflow) | the GitHub-native Task READ surface (list/get, scoped to a version by milestone membership) + the plan turn, which mints one **prose** issue per Task **into the version's milestone**, assigned at creation. READ-ONLY over HTTP: it serves no write operation | the read DTOs, the milestone label vocabulary, and the run rows (via `MilestoneResolver`) |
 | `execution` | the executions READ surface: the per-Task progress endpoint, the task-log SSE stream, `OpsExecutionReader`. It writes nothing and dispatches nothing — the only execution rows left are the provisioning gates' | `TaskStreamHub`, the executions kernel |
 | `eventcore` | the event plane of the milestone-run loop: the auto-merge policy seam, the merged-PR path-diff build fan-out + per-`(component, SHA)` re-trigger budget, fix/conflict/red-main issue minting, milestone-matched predicate re-evaluation, adoption, the reconcile sweep, and the build sweep that observes those builds reaching terminal | the milestone model (labels, `MilestoneRun`/`RunCycle`, run signals), `DiffComponents`/`BuildRunName` and `BuildTerminalObserver`; **no Temporal** — it reaches the supervisor only through the `RunSignaler`/`RunStarter` ports |
 | `run` | the milestone run SUPERVISOR: the wait state + dispatch predicate, the cycle loop, the four budgets + no-progress + ceiling, the validation cycle, settle, and cancel. Plus the `Supervisor` handle the event plane and the build click signal and start runs through | `Runtime`, the milestone model, `RunStatus`/`MilestoneRunWorkflowID`, `MilestoneDispatch`, `DiffComponents`/`BuildRunNamePrefix`; **no GitHub client, no gorm** |
@@ -196,14 +196,18 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 - **Adoption makes an issue agent work — milestone membership alone does not.** The working set is the
   milestone's `aep`-labelled issues (`OpenNonGateWork`), and a milestone holds ledger issues too, so an
   adopted issue without the label is invisible to the dispatch predicate: the run starts, finds nothing,
-  and parks forever. `AdoptIssue` therefore stamps `aep` on BOTH routes — the `aep:codingagent` webhook
-  and the handoff's promote leg. The two labels record two different facts and neither replaces the
-  other: `aep:codingagent` is the act of adoption, `aep` is its consequence.
+  and parks forever. Both routes therefore make the issue agent work: `AdoptIssue` stamps `aep` on an
+  issue that already exists (the `aep:codingagent` webhook), and `AdoptOnCreate` files it carrying both
+  labels and its milestone in ONE create call, so there is no window in which the issue exists but is
+  not yet workable. The two labels record two different facts and neither replaces the other:
+  `aep:codingagent` is the act of adoption, `aep` is its consequence.
 - **A bare issue adopts into the version in flight when none is deployed.** An incident is raised by a
   deployment, so the SRE/RCA handoff routinely lands while the run that caused it is still short of
   `succeeded` — refusing there dropped the handoff permanently, because nothing retries it. The deployed
-  version still wins when there is one; with neither, the caller gets `ErrNoAdoptableMilestone`, which
-  the HTTP edge maps to a 409 rather than letting an actionable refusal leave as an opaque 500.
+  version still wins when there is one. With neither, the answer depends on the route: the webhook route
+  refuses with `ErrNoAdoptableMilestone`, while `AdoptOnCreate` still FILES the issue as a ledger entry
+  and returns that refusal as its reason — an incident nobody recorded is worse than one nobody adopted,
+  and nothing retries a handoff.
 - **Adoption wakes a parked run; it does not rely on the webhook to do it.** The `aep` label adoption
   writes comes back as a suppressed echo, so a run parked on an empty working set would never hear about
   the work now sitting in front of it. `wakeIfWorkable` is the one definition of "this milestone can now

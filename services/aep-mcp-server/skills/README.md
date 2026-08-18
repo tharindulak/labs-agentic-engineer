@@ -2,7 +2,7 @@
 
 These `SKILL.md` files are **owned by AEP** and consumed by the OpenChoreo
 SRE/RCA agent, which drives the handoff MCP tools this server exposes
-(`ae_search_related_issues`, `ae_create_issue`, `ae_dispatch_coding_agent`).
+(`ae_search_related_issues`, `ae_create_issue`).
 
 They live here — next to the MCP surface whose contract they describe — and
 **not** in the repo-root `skills/` agent library, so AEP's own skill reconcile
@@ -12,10 +12,11 @@ does not inject them into AEP's coding/design agents.
 
 `issue-fix/SKILL.md` is the handoff skill: it tells the SRE agent's handoff
 sub-agent how to classify config-vs-code root causes, dedupe against related
-GitHub issues, file one issue with RCA context and cross-links, and dispatch
-the coding agent. Its content is AEP's contract (the `aep:*`/`sre-agent`
-labels, the taskmeta block, dedupe keys, unprefixed component names, dispatch
-rules), so it belongs with AEP.
+GitHub issues, and file one issue with RCA context and cross-links. Filing the
+issue IS the handoff — AEP adopts what it files — so there is no dispatch step
+to describe. Its content is AEP's contract (the `sre-agent` label, dedupe keys,
+and what `ae_create_issue` answers back: `deduped`, `adopted`,
+`adoptionError`), so it belongs with AEP.
 
 ## How it reaches the SRE agent (deploy-time mount)
 

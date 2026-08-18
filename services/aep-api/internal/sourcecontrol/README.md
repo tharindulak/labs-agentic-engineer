@@ -25,7 +25,7 @@ flowchart LR
 ## Slices
 | Slice | Use-case | Entry |
 |---|---|---|
-| `issues` | file / search a project's issues | `POST`+`GET /projects/{projectName}/issues` |
+| `issues` | file / search a project's issues — and filing ADOPTS by default: the issue is handed to the coding agent unless the caller passes `adopt: false` | `POST`+`GET /projects/{projectName}/issues` |
 
 *Still in the domain root (not carved into slices): repo lifecycle, workspace, webhook register/receive,
 and installation lifecycle.*
@@ -36,6 +36,7 @@ and installation lifecycle.*
 | `Host` | needs | the git host — implemented by `githubhost` (the domain's own adapter; it lives here, not in `platform/clients`, because an adapter for a domain's port cannot sit in a domain-free kernel) |
 | `secrets.Credential` | needs | `platform/secrets` — App-installation / per-org PAT |
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |
+| `Adopter` | needs | `delivery`'s event plane — files an issue that is agent work from the moment it exists (milestone + labels on the create call, then a run started or woken). Optional: nil degrades create-issue to filing alone |
 
 ## Owns
 - `git_repositories` (the repo coordinate registry) and `webhook_deliveries` — gorm + entities in this
@@ -45,6 +46,15 @@ and installation lifecycle.*
 - The bare-mirror workspace handle, and the GitHub host connection state.
 
 ## Invariants — don't break
+- **Filing an issue through the API dispatches it.** `create-issue`'s `adopt` defaults to TRUE, and the
+  default is the point: an issue filed here with nothing to work it is a ledger entry that looks exactly
+  like accepted work, which is how an SRE handoff was once silently dropped. A caller that wants a ledger
+  entry says so, and the answer names what happened either way (`adopted`, `adoptionError`). The default
+  lives in a POINTER on the generated request type — as a value `bool`, an omitted field would arrive as
+  `false` and turn dispatch off for every caller that never heard of the flag.
+  *Only the HTTP surface adopts.* The dozen in-process callers of `IssueService.CreateIssue` — provision
+  gates, validation, repair, conformance, the plan tap, the mint paths — are untouched, and must stay so:
+  a provision gate exists to HOLD dispatch, and a red-main issue is deliberately never dispatched.
 - **`Host` is provider-neutral.** GitHub specifics live in `githubhost`; nothing above it names GitHub
   — including whether an op rides REST or GraphQL.
 - **A milestone is addressed by NUMBER, never by title.** Titles are renamable, and the host enforces

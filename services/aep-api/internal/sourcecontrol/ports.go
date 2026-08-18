@@ -22,6 +22,39 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
+// Adopter files an issue that is agent work from the moment it exists: into a
+// version's milestone, labelled, with a run started or woken over it.
+//
+// It is a consumer-side port in THIS domain's vocabulary, wired at the root —
+// delivery's event plane satisfies it and this package names no delivery type
+// (the same shape as ops.ExecutionReader). Filing and dispatching are one call
+// because they are one GitHub write: an issue created already carrying its
+// milestone and labels has no half-adopted state to be left in.
+//
+// Optional: a nil Adopter degrades create-issue to filing alone, which is the
+// honest behaviour for a boot with no delivery plane rather than a 503 on every
+// call.
+type Adopter interface {
+	CreateAndAdopt(
+		ctx context.Context,
+		orgID, projectID, componentName string,
+		req CreateIssueRequest,
+	) (*Adoption, error)
+}
+
+// Adoption is what CreateAndAdopt did. It is deliberately not the event plane's
+// own result type: borrowing a provider's model is how a port quietly becomes a
+// shared table.
+type Adoption struct {
+	Issue *IssueResult
+	// Adopted is false when creation deduped onto an issue whose own run owns its
+	// dispatch, or when the project had no version to adopt into. Reason says
+	// which, and is empty only when Adopted is true — nothing retries an
+	// adoption, so a caller that cannot see why it did not happen cannot act.
+	Adopted bool
+	Reason  string
+}
+
 // The git-provider capability ports.
 //
 // These interfaces are the provider-neutral seam between gitrepo's domain

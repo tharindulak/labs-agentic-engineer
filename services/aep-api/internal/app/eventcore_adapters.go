@@ -270,15 +270,27 @@ func (a eventcoreComponents) EnsureComponent(ctx context.Context, orgID, project
 	return nil
 }
 
-// eventcoreAdopter adapts the event plane onto the task feature's Adopter port:
-// the SRE/RCA handoff's promote-from-issue leg hands a freshly filed issue to
-// the coding agent. It passes a BARE target — the caller just created the
-// issue, so it belongs to no milestone yet and adoption files it under the
-// deployed version's.
-type eventcoreAdopter struct{ events *eventcore.Events }
+// eventcoreIssueAdopter adapts the event plane onto sourcecontrol's Adopter
+// port: an issue filed through create-issue is agent work from the moment it
+// exists, which is how the SRE/RCA handoff hands an incident to the coding
+// agent in one call.
+//
+// It is only a type bridge. Every rule — which milestone a bare issue belongs
+// to, which labels make it workable, and whether a run is started or woken —
+// lives on the other side, next to the rules the GitHub-label route obeys, so
+// the two adoption routes cannot drift.
+type eventcoreIssueAdopter struct{ events *eventcore.Events }
 
-func (a eventcoreAdopter) AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error {
-	return a.events.AdoptIssue(ctx, orgID, projectID, eventcore.AdoptTarget{Number: issueNumber})
+func (a eventcoreIssueAdopter) CreateAndAdopt(
+	ctx context.Context,
+	orgID, projectID, componentName string,
+	req sourcecontrol.CreateIssueRequest,
+) (*sourcecontrol.Adoption, error) {
+	out, err := a.events.AdoptOnCreate(ctx, orgID, projectID, componentName, req)
+	if err != nil {
+		return nil, err
+	}
+	return &sourcecontrol.Adoption{Issue: out.Issue, Adopted: out.Adopted, Reason: out.Reason}, nil
 }
 
 // eventcoreRevalidator adapts the event plane onto the run read surface's

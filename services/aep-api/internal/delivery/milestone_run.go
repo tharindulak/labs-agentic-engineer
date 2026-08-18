@@ -27,13 +27,14 @@ import (
 // it to, and a guess would file the incident against a version that does not
 // exist.
 //
-// It lives in the kernel rather than in `eventcore` because the HTTP edge has
-// to recognise it: the promote-from-issue leg of the SRE/RCA handoff surfaces
-// it to a caller verbatim, and `task` may not import `eventcore` (the task ⊥
-// run arch lock). A sentinel both packages already import is the only place a
-// shared `errors.Is` can live.
+// It lives in the kernel rather than in `eventcore` because it is a refusal of
+// the delivery model, not of the event plane's implementation of it: adoption
+// declines for a reason about VERSIONS, and both adoption routes state it the
+// same way.
 //
-// The message is written for a human because that is where it ends up.
+// The message is written for a human because that is where it ends up — an
+// issue filed through create-issue carries it back verbatim as `adoptionError`,
+// and the issue itself survives as a ledger entry.
 var ErrNoAdoptableMilestone = errors.New("no version to adopt this issue into — build the project first")
 
 // MilestoneRun origins, states, terminal reasons and validation verdicts

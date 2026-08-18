@@ -19,13 +19,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import {
-  AepApiError,
-  type AepClientOptions,
-  createIssue,
-  dispatchFromIssue,
-  listIssues,
-} from "./aepClient.js";
+import { AepApiError, type AepClientOptions, createIssue, listIssues } from "./aepClient.js";
 
 function textResult(payload: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
@@ -42,6 +36,12 @@ function errorResult(err: unknown) {
  * incoming HTTP request (see main.ts) — this server holds no credentials or
  * state of its own; every tool call forwards `client.bearer` straight
  * through to aep-api, which performs the actual org-scoped auth check.
+ *
+ * Two tools, not three. There is no dispatch tool: adoption moved into
+ * create-issue, so filing an issue and handing it to the coding agent are one
+ * call and cannot come apart. The other way to adopt an issue that already
+ * exists is the `aep:codingagent` GitHub label, which AE's event plane watches —
+ * a human's route, not this server's.
  */
 export function createAepMcpServer(client: AepClientOptions): McpServer {
   const server = new McpServer({ name: "aep-mcp-server", version: "0.0.0" });
@@ -87,61 +87,46 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
     {
       title: "Create a GitHub issue via AE",
       description:
-        "Create a GitHub issue on a project's repo. Use this for a code-level fix that needs the AE coding agent — not for config-level changes. " +
-        "Pass a stable dedupeKey so concurrent callers reporting the same incident share one issue: if an OPEN issue with the same key exists, it is returned with `deduped: true` and no new issue is created.",
+        "Create a GitHub issue on a project's repo AND hand it to the AE coding agent. Creating the issue IS the dispatch — there is no second call. " +
+        "Use this for a code-level fix; config-level changes do not belong here. " +
+        "Pass a stable dedupeKey so concurrent callers reporting the same incident share one issue: if an OPEN issue with the same key exists, it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). " +
+        "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked.",
       inputSchema: {
         project: z.string().describe("OpenChoreo/AE project name"),
         title: z.string().describe("Issue title"),
         body: z.string().describe("Issue body (markdown)"),
         labels: z.array(z.string()).optional().describe("GitHub labels to apply"),
+        componentName: z
+          .string()
+          .optional()
+          .describe(
+            "The component this issue is about, as AE's design names it: UNPREFIXED (e.g. 'service1', not 'myproject-service1'). Checked before the issue is filed — a name the design does not carry fails this call rather than surfacing later inside a coding cycle.",
+          ),
         dedupeKey: z
           .string()
           .optional()
           .describe(
             "Stable idempotency key (e.g. 'sre-rca/<component>'). While an issue created with this key is open, further creates with the same key return that issue (deduped: true) instead of filing a duplicate.",
           ),
+        adopt: z
+          .boolean()
+          .optional()
+          .describe(
+            "Defaults to TRUE: the issue is handed to the coding agent. Pass false only to file a ledger entry — an issue recorded against the version that nothing will work until a human adopts it.",
+          ),
       },
     },
-    async ({ project, title, body, labels, dedupeKey }) => {
+    async ({ project, title, body, labels, componentName, dedupeKey, adopt }) => {
       try {
         const issue = await createIssue(client, project, {
           title,
           body,
           ...(labels !== undefined ? { labels } : {}),
+          ...(componentName !== undefined ? { componentName } : {}),
           ...(dedupeKey !== undefined ? { dedupeKey } : {}),
+          ...(adopt !== undefined ? { adopt } : {}),
         });
         return textResult(issue);
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
-  );
-
-  server.registerTool(
-    "ae_dispatch_coding_agent",
-    {
-      title: "Dispatch the AE coding agent",
-      description:
-        "Create a task bound to an already-created GitHub issue and dispatch the AE coding agent against it. Call ae_create_issue first and pass its returned issue number/url here. Dispatch is async — this call only confirms the dispatch was accepted, not that the coding agent run has started or finished.",
-      inputSchema: {
-        project: z.string().describe("OpenChoreo/AE project name"),
-        componentName: z
-          .string()
-          .describe("Component this issue is about (the alerting component's name)"),
-        title: z.string().describe("Task title — reuse the issue title"),
-        issueNumber: z.number().int().describe("GitHub issue number returned by ae_create_issue"),
-        issueUrl: z.string().describe("GitHub issue URL returned by ae_create_issue"),
-      },
-    },
-    async ({ project, componentName, title, issueNumber, issueUrl }) => {
-      try {
-        await dispatchFromIssue(client, project, {
-          componentName,
-          title,
-          issueNumber,
-          issueUrl,
-        });
-        return textResult({ dispatched: true });
       } catch (err) {
         return errorResult(err);
       }

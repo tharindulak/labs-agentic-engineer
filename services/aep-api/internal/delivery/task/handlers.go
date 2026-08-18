@@ -29,23 +29,24 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// Handler serves the task read surface (list-tasks / get-task) plus the
-// promote-task-from-issue dispatch leg on the strict interface. Org comes from
-// the gate-bound context and is passed to the service explicitly. The command
-// and plan operations the retired Huma surface also carried (plan-tasks,
-// execute-task, hold-task, unhold-task) are NOT in the committed contract and
-// were deliberately dropped from the HTTP edge (parked proposal in
-// packages/contracts/workflows). promote-task-from-issue STAYS: it is the
-// dispatch leg of the SRE/RCA alert handoff, called by the deployed
-// aep-mcp-server (AE-HANDOFF-DESIGN.md).
+// Handler serves the task READ surface (list-tasks / get-task) and nothing else.
+// Org comes from the gate-bound context and is passed to the service explicitly.
+//
+// There is no write here. The command and plan operations the retired Huma
+// surface carried (plan-tasks, execute-task, hold-task, unhold-task) are not in
+// the committed contract and were deliberately dropped from the HTTP edge
+// (parked proposal in packages/contracts/workflows). The last one standing,
+// promote-task-from-issue, is gone too: it existed to hand an already-filed
+// issue to the coding agent, and adoption now happens where the issue is
+// created (create-issue's adopt flag). The remaining way to adopt an issue that
+// exists already is the `aep:codingagent` label, which the event plane watches.
 type Handler struct {
-	reads    *Reads
-	commands *Commands
+	reads *Reads
 }
 
 // NewHandler returns the slice's handler.
-func NewHandler(reads *Reads, commands *Commands) *Handler {
-	return &Handler{reads: reads, commands: commands}
+func NewHandler(reads *Reads) *Handler {
+	return &Handler{reads: reads}
 }
 
 func (h *Handler) ListTasks(ctx context.Context, request gen.ListTasksRequestObject) (gen.ListTasksResponseObject, error) {
@@ -77,20 +78,6 @@ func (h *Handler) GetTask(ctx context.Context, request gen.GetTaskRequestObject)
 		return nil, mapTaskReadError(err)
 	}
 	return getTaskJSONResponse(*detail), nil
-}
-
-// PromoteTaskFromIssue turns an ad-hoc GitHub issue into a coding Task and
-// dispatches it through the funnel (async 202, empty body). The second half
-// of the SRE/RCA handoff: aep-mcp-server calls this right after create-issue.
-func (h *Handler) PromoteTaskFromIssue(ctx context.Context, request gen.PromoteTaskFromIssueRequestObject) (gen.PromoteTaskFromIssueResponseObject, error) {
-	if h.commands == nil {
-		return nil, apierr.ServiceUnavailable("tasks not configured")
-	}
-	org := tenant.BoundOrgFromContext(ctx)
-	if err := h.commands.PromoteAndExecute(ctx, org, request.ProjectName, request.Body.ComponentName, int(request.IssueNumber)); err != nil {
-		return nil, mapTaskCommandError(err)
-	}
-	return gen.PromoteTaskFromIssue202Response{}, nil
 }
 
 // The 200 bodies are served from the delivery read DTOs (delivery.TaskView /
@@ -129,27 +116,6 @@ func mapTaskReadError(err error) error {
 		return apierr.NotFound("task not found")
 	case errors.Is(err, ErrProjectRepoNotFound):
 		return apierr.NotFound(ErrProjectRepoNotFound.Error())
-	default:
-		return apierr.Internal("internal error")
-	}
-}
-
-// mapTaskCommandError mirrors the retired mapCommandError ladder.
-func mapTaskCommandError(err error) error {
-	switch {
-	case errors.Is(err, ErrTaskNotFound):
-		return apierr.NotFound("task not found")
-	case errors.Is(err, ErrProjectRepoNotFound):
-		return apierr.NotFound(ErrProjectRepoNotFound.Error())
-	case errors.Is(err, ErrIssueClosed):
-		return apierr.Conflict("issue is closed")
-	case errors.Is(err, ErrComponentNameRequired):
-		return apierr.BadRequest(ErrComponentNameRequired.Error())
-	case errors.Is(err, delivery.ErrNoAdoptableMilestone):
-		// Not a server fault: the project has nothing built to adopt into yet.
-		// It is mapped explicitly because it is the one refusal a caller can act
-		// on, and an opaque 500 here once dropped an SRE/RCA handoff silently.
-		return apierr.Conflict(delivery.ErrNoAdoptableMilestone.Error())
 	default:
 		return apierr.Internal("internal error")
 	}

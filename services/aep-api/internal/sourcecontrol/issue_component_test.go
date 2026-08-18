@@ -59,10 +59,16 @@ func (f *fakeIssueService) ListIssues(_ context.Context, org, _ string, _ []stri
 }
 
 // scWith assembles the real sourcecontrol domain around a faked port — the same
-// New the composition root calls.
+// New the composition root calls. No adopter: create-issue then files alone,
+// which is the documented degradation for a boot with no delivery plane.
 func scWith(t *testing.T, svc sourcecontrol.IssueService) *httpapi.Handlers {
 	t.Helper()
-	h, err := httpapi.New(sourcecontrol.Deps{Issues: svc})
+	return scWithAdopter(t, svc, nil)
+}
+
+func scWithAdopter(t *testing.T, svc sourcecontrol.IssueService, adopter sourcecontrol.Adopter) *httpapi.Handlers {
+	t.Helper()
+	h, err := httpapi.New(sourcecontrol.Deps{Issues: svc, Adopter: adopter})
 	if err != nil {
 		t.Fatalf("assemble sourcecontrol: %v", err)
 	}
@@ -134,5 +140,112 @@ func TestIssueComponent_CreateAndList(t *testing.T) {
 	h2 := componenttest.New(t, componenttest.Options{Deps: edge.Deps{}})
 	if resp := h2.AsOrg("acme").Get("/api/v1/projects/web/issues"); resp.Code != 503 {
 		t.Fatalf("nil svc: want 503, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+// fakeAdopter is a sourcecontrol.Adopter that records what it was asked to file.
+type fakeAdopter struct {
+	calls   []sourcecontrol.CreateIssueRequest
+	gotComp string
+	adopted bool
+	reason  string
+}
+
+func (f *fakeAdopter) CreateAndAdopt(
+	_ context.Context, _, _, componentName string, req sourcecontrol.CreateIssueRequest,
+) (*sourcecontrol.Adoption, error) {
+	f.calls = append(f.calls, req)
+	f.gotComp = componentName
+	return &sourcecontrol.Adoption{
+		Issue:   &sourcecontrol.IssueResult{Number: 7, URL: "https://github.com/acme/repo/issues/7", NodeID: "n7"},
+		Adopted: f.adopted,
+		Reason:  f.reason,
+	}, nil
+}
+
+// Adoption is the DEFAULT on this endpoint, and the default is what the wire
+// must express: a caller that omits `adopt` gets its issue worked. The pointer
+// in the generated type is what makes that possible — as a value bool, an
+// omitted field would arrive as false and silently turn dispatch off for every
+// caller that never heard of the flag.
+func TestIssueComponent_CreateAdoptsByDefault(t *testing.T) {
+	t.Parallel()
+	svc := &fakeIssueService{}
+	adopter := &fakeAdopter{adopted: true}
+	h := componenttest.New(t, componenttest.Options{
+		Deps: edge.Deps{SourceControl: scWithAdopter(t, svc, adopter)},
+	})
+
+	resp := h.AsOrg("acme").Post("/api/v1/projects/web/issues",
+		`{"title":"pod oomkilled","body":"details","componentName":"service1"}`)
+	if resp.Code != 200 {
+		t.Fatalf("create: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if len(adopter.calls) != 1 {
+		t.Fatalf("an omitted adopt must reach the adopter, got %d calls", len(adopter.calls))
+	}
+	if len(svc.created) != 0 {
+		t.Fatal("the adopting path files through the adopter, not around it")
+	}
+	if adopter.gotComp != "service1" {
+		t.Fatalf("componentName must reach the adopter, got %q", adopter.gotComp)
+	}
+	var body struct {
+		Number  int64 `json:"number"`
+		Adopted bool  `json:"adopted"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("create body: %v", err)
+	}
+	if body.Number != 7 || !body.Adopted {
+		t.Fatalf("the answer must carry the issue and its adoption, got %s", resp.Body.String())
+	}
+}
+
+// The opt-out is the only way to file an issue nobody works, and it must be
+// explicit — that asymmetry is the whole point of the default.
+func TestIssueComponent_CreateWithAdoptFalseFilesOnly(t *testing.T) {
+	t.Parallel()
+	svc := &fakeIssueService{}
+	adopter := &fakeAdopter{adopted: true}
+	h := componenttest.New(t, componenttest.Options{
+		Deps: edge.Deps{SourceControl: scWithAdopter(t, svc, adopter)},
+	})
+
+	resp := h.AsOrg("acme").Post("/api/v1/projects/web/issues",
+		`{"title":"a note for the ledger","body":"details","adopt":false}`)
+	if resp.Code != 200 {
+		t.Fatalf("create: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if len(adopter.calls) != 0 {
+		t.Fatalf("adopt=false must not adopt, got %d calls", len(adopter.calls))
+	}
+	if len(svc.created) != 1 {
+		t.Fatalf("the issue must still be filed, got %d", len(svc.created))
+	}
+}
+
+// Adoption that could not happen is reported, not hidden: the issue exists, and
+// the caller is the only one in a position to say so in its own report.
+func TestIssueComponent_CreateReportsWhyAdoptionDidNotHappen(t *testing.T) {
+	t.Parallel()
+	adopter := &fakeAdopter{adopted: false, reason: "no version to adopt this issue into — build the project first"}
+	h := componenttest.New(t, componenttest.Options{
+		Deps: edge.Deps{SourceControl: scWithAdopter(t, &fakeIssueService{}, adopter)},
+	})
+
+	resp := h.AsOrg("acme").Post("/api/v1/projects/web/issues", `{"title":"t","body":"b"}`)
+	if resp.Code != 200 {
+		t.Fatalf("create: want 200 — the issue was filed, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Adopted       bool   `json:"adopted"`
+		AdoptionError string `json:"adoptionError"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("create body: %v", err)
+	}
+	if body.Adopted || !strings.Contains(body.AdoptionError, "build the project first") {
+		t.Fatalf("the refusal must reach the caller verbatim, got %s", resp.Body.String())
 	}
 }

@@ -2011,43 +2011,6 @@ paths:
       summary: Stream a Task's live state (status + executions + unified timeline) as SSE
       tags:
       - Tasks
-  /projects/{projectName}/tasks/{issueNumber}/promote-from-issue:
-    post:
-      operationId: promote-task-from-issue
-      summary: Turn an ad-hoc GitHub issue into a coding Task and dispatch it (async)
-      tags:
-      - Tasks
-      security:
-      - userJWT: []
-      parameters:
-      - description: Project name (DNS-label slug)
-        in: path
-        name: projectName
-        required: true
-        schema:
-          type: string
-      - description: GitHub issue number to promote and dispatch
-        in: path
-        name: issueNumber
-        required: true
-        schema:
-          format: int64
-          type: integer
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PromoteFromIssueRequest'
-        required: true
-      responses:
-        '202':
-          description: Accepted — the funnel dispatches out-of-band.
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
   /projects/{projectName}/turns/active:
     get:
       operationId: get-active-turn
@@ -3819,6 +3782,8 @@ components:
       additionalProperties: false
       description: Issue to file on the project's repo. dedupeKey makes creation
         idempotent per open issue (label-encoded), for concurrent alert handlers.
+        Adoption is the DEFAULT — an issue filed here is agent work unless the
+        caller opts out with adopt=false.
       properties:
         title:
           type: string
@@ -3831,6 +3796,30 @@ components:
           nullable: true
         dedupeKey:
           type: string
+        adopt:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # absent must read as the default (true), not as the zero value (false),
+          # or every caller that omits the field would silently stop adopting.
+          #
+          # The default is stated in prose rather than as `default: true` on
+          # purpose: openapi-typescript renders a default-bearing property as
+          # REQUIRED, which would force every TS caller to pass the very field
+          # whose whole point is that omitting it does the right thing.
+          x-go-type-skip-optional-pointer: false
+          description: Whether to hand the issue to the coding agent. OMITTED
+            MEANS TRUE — the issue joins the deployed version's milestone as
+            agent work and a run picks it up. false files a ledger issue instead
+            — recorded against the version, never worked until somebody adopts
+            it.
+          type: boolean
+        componentName:
+          description: The DESIGN component this issue is about, unprefixed (e.g.
+            `service1`, not `myproject-service1`). Optional, and read only when
+            adopting — it provisions the component's OpenChoreo Component CR
+            up-front, so a name the design does not carry fails THIS call instead
+            of surfacing later inside a cycle. Omit it and adoption proceeds
+            without the check.
+          type: string
       required:
       - title
       - body
@@ -3839,6 +3828,8 @@ components:
       additionalProperties: false
       description: Issue metadata after create. deduped=true means an open issue
         with the same dedupeKey already existed — number/url refer to it.
+        adopted answers the only other question a caller has — will anything
+        work this issue?
       properties:
         number:
           format: int64
@@ -3849,6 +3840,18 @@ components:
           type: string
         deduped:
           type: boolean
+        adopted:
+          description: Whether the issue was adopted — filed into a version's
+            milestone as agent work, with a run started or woken over it. False
+            when the caller passed adopt=false, when creation deduped onto an
+            existing issue (the run that created it owns its dispatch), or when
+            adoption could not proceed; adoptionError says which.
+          type: boolean
+        adoptionError:
+          description: Why adoption did not happen, when it was asked for and
+            did not. The issue still exists — it is a ledger entry, and adding
+            the `aep:codingagent` label hands it to the coding agent later.
+          type: string
       required:
       - number
       - url
@@ -4194,15 +4197,6 @@ components:
       - ts
       - seq
       - kind
-      type: object
-    PromoteFromIssueRequest:
-      additionalProperties: false
-      properties:
-        componentName:
-          description: Component this issue is about
-          type: string
-      required:
-      - componentName
       type: object
     Project:
       additionalProperties: false

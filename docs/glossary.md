@@ -324,7 +324,24 @@ carry no `aep` label so they cannot hold the settle predicate open.
 ### Ledger issue
 A bare human issue that joined a milestone carrying none of the platform's
 labels. Part of the version's record; never worked, never stalling settle.
-Labelling one `aep:codingagent` **adopts** it into the next cycle.
+**Adopting** one hands it to the coding agent.
+
+### Adoption
+Making an issue **agent work**: it joins a version's milestone — the deployed
+one, or the spec build in flight when nothing is deployed yet — is labelled
+`aep`, and a run is started over that milestone, or the run already parked on it
+is woken. `aep:codingagent` records the ACT of adoption; `aep` records its
+consequence, and it is the label that puts the issue in a run's working set.
+
+Two routes, one meaning. An issue that already exists is adopted by labelling it
+`aep:codingagent` (in GitHub, or from the console). An issue being filed through
+`create-issue` is adopted AS it is created — milestone and both labels ride the
+one create call — which is the default there: filing an issue through the API
+dispatches it unless the caller opts out. See ADR-0017.
+
+A project with no version to adopt into cannot adopt at all. That refusal is
+`ErrNoAdoptableMilestone`, and it leaves the issue as a ledger entry rather than
+losing it — nothing retries an adoption.
 
 ### Terminal reason
 Why a non-succeeded run stopped. Each value names exactly ONE failure class —

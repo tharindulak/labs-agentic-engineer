@@ -1,6 +1,6 @@
 ---
 name: issue-fix
-description: Classify whether an RCA root cause needs a code change, search for and dedupe against related GitHub issues, file one issue for AE's coding agent with proper RCA context and cross-links, and dispatch it.
+description: Classify whether an RCA root cause needs a code change, search for and dedupe against related GitHub issues, and file one issue for AE's coding agent with proper RCA context and cross-links.
 ---
 
 # Issue-fix
@@ -24,8 +24,10 @@ between `code_level` and `mixed`, not classifying from a blank slate.
    GitHub turns each `#N` mention into a clickable reference and adds a
    "mentioned" event on the other issue's timeline automatically — you never
    comment on other issues.
-4. Dispatch the AE coding agent against the created issue, if your
-   instructions say to.
+
+Creating the issue is the whole handoff. There is no dispatch step: AE hands
+the issue to its coding agent as part of filing it. What you have to get right
+is the issue itself — and reporting honestly what AE answered.
 
 ## CLASSIFICATION
 
@@ -74,7 +76,8 @@ toward NOT linking: a wrong link is more confusing to the human reviewer than
 a missed one.
 
 - If a clearly matching OPEN issue already exists, do not create a duplicate
-  — report it under `related_issues` and skip issue creation and dispatch.
+  — report it under `related_issues` and file nothing. That issue is already
+  the handoff for this problem.
 - Closed matches or partial overlaps do not block creation; they become
   links.
 
@@ -99,34 +102,37 @@ a missed one.
 - `ae_search_related_issues`: always call before creating a new issue, scoped
   to your project.
 - `ae_create_issue`: create exactly one issue for all code-level actions
-  combined, scoped to your project. You don't need to set `dedupeKey` or add
-  a `sre-agent` label yourself — both are attached automatically to every
-  issue you create, so a human (or a sweep job) can always filter
+  combined, scoped to your project. Filing it IS the dispatch — AE files the
+  issue into the deployed version's milestone and starts (or wakes) a coding
+  run over it, in one call.
+- You don't need to set `dedupeKey`, `componentName`, `adopt`, or a
+  `sre-agent` label yourself — all of them are attached for you. The
+  `sre-agent` label is what lets a human (or a sweep job) filter
   `label:sre-agent` across the whole project to find every issue this system
   has ever filed, independent of the per-component dedupe key, and check for
   duplicates that slipped past dedup.
-- If `ae_create_issue` returns `deduped: true`, an earlier run already filed
-  an open issue for this component's problem. Report that issue under
-  `related_issues`, leave `created_issue_number`/`created_issue_url` empty,
-  set `deduped: true` in your structured output, note the dedup in
-  `rationale`, and do NOT call `ae_dispatch_coding_agent` — dispatching
-  belongs to the run that actually created the issue.
-- `ae_dispatch_coding_agent`: if your instructions say to dispatch, call this
-  only after `ae_create_issue` succeeds AND did not dedupe, using the
-  returned issue number and url. For `componentName`, use the alerting
-  component from your scope — but note AE uses UNPREFIXED component names: if
-  the name is prefixed with the project (e.g. `demohello-service1`), strip
-  that prefix first (`service1`). The coding agent can only be dispatched
-  against a component AE already knows about. If your instructions say not
-  to dispatch, don't call this tool at all.
+- Read what `ae_create_issue` ANSWERS, and report it — this is the only place
+  the truth about the handoff exists:
+  - `deduped: true` — an earlier run already filed an open issue for this
+    component's problem, and nothing was created. Report that issue under
+    `related_issues`, leave `created_issue_number`/`created_issue_url` empty,
+    set `deduped: true` in your structured output, and note the dedup in
+    `rationale`. That issue is already being worked by the run that created
+    it; it does not need handing over again.
+  - `adopted: true` — the issue was filed AND a coding run has it. This is
+    the normal outcome. Set `adopted: true` in your structured output.
+  - `adopted: false` with an `adoptionError` — the issue exists, but nothing
+    will work it yet. The usual cause is a project with no built version to
+    adopt an incident into. Do NOT retry and do NOT file a second issue:
+    quote the `adoptionError` in `rationale` so the human reading the report
+    knows the issue is waiting for someone to pick it up.
 
 ## CONSTRAINTS
 
-- Never create more than one issue per RCA report.
-- Never call `ae_dispatch_coding_agent` without first having created a NEW
-  issue number (not a deduped one) — this is also enforced by the tool
-  itself, which rejects the call otherwise, but don't rely on that backstop.
-- Never comment on, close, edit, or relabel existing issues — your only
-  writes are creating the one issue and, if instructed, dispatching.
-- If `ae_create_issue` or `ae_dispatch_coding_agent` fails, report the failure
-  in `rationale` rather than retrying indefinitely.
+- Never create more than one issue per RCA report. One incident, one issue,
+  one handoff.
+- Never comment on, close, edit, or relabel existing issues — creating the one
+  issue is your only write.
+- If `ae_create_issue` fails, report the failure in `rationale` rather than
+  retrying indefinitely. A second attempt after a partial failure risks a
+  duplicate that only the dedupe key can catch.

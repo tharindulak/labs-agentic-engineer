@@ -34,7 +34,6 @@ type Deps struct {
 	// (issue #239); nil disables recording.
 	BuildActivity build.SpecPublishedRecorder
 	TaskReads     *task.Reads
-	TaskCommands  *task.Commands
 	TaskStream    *execution.TaskStreamService
 
 	// The milestone run read surface: a version's runs + cycles, the per-run
@@ -69,7 +68,7 @@ type Handlers struct {
 func New(d Deps) (*Handlers, error) {
 	return &Handlers{
 		buildHandler:     build.NewHandler(d.BuildSvc, d.PreflightSvc, d.BuildActivity),
-		taskHandler:      task.NewHandler(d.TaskReads, d.TaskCommands),
+		taskHandler:      task.NewHandler(d.TaskReads),
 		executionHandler: execution.NewHandler(d.TaskStream),
 		runreadHandler:   runread.NewHandler(d.RunReads, d.RunProgress, d.RunCommands, d.RunCycleBuilds),
 	}, nil
