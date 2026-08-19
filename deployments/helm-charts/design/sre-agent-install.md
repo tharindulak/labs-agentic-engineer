@@ -82,9 +82,10 @@ This is parity with a dev-oriented setup, not a hardened production config.
 Tracked follow-ups:
 
 - **Auto-dispatch is ON by default** (`--ae-auto-dispatch=false` for issue-only).
-  A fired alert can drive automated code changes; the RCA agent feeds pod logs to
-  an LLM (prompt-injection surface).
-- **Non-WSO2 images**: `tharindulak/openchoreo-sre-agent` and the case-insensitive
+  Filing the issue IS the dispatch — AEP adopts it as it is created — so a fired
+  alert can drive automated code changes; the RCA agent feeds pod logs to an LLM
+  (prompt-injection surface).
+- **Non-WSO2 images**: `tharindulak/sre-agent` and the case-insensitive
   logs-adapter. Mirror to WSO2/GHCR and pin by digest for prod.
 - **No NetworkPolicies** on the chart (platform-wide gap); `aep-mcp-server:3400` is
   guarded only by aep-api JWT validation.

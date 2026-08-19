@@ -37,16 +37,16 @@ docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
 
 ```bash
 # Deploy an RCA-agent image that includes the handoff stage.
-# Use the same repo:tag as RCA_IMAGE_TAG in scripts/setup-observability.sh
-# (last verified against tharindulak/openchoreo-sre-agent:handoff-v12) so a later
+# Use the same repo:tag as RCA_IMAGE_REPO:RCA_IMAGE_TAG in
+# scripts/setup-observability.sh — tharindulak/sre-agent:hand0ff-new — so a later
 # setup-observability.sh re-run picks up this local build instead of pulling.
 cd <openchoreo-repo>/agents/sre-agent
-docker build -t tharindulak/openchoreo-sre-agent:handoff-v12 .
-k3d image import tharindulak/openchoreo-sre-agent:handoff-v12 -c <cluster>
+docker build -t tharindulak/sre-agent:hand0ff-new .
+k3d image import tharindulak/sre-agent:hand0ff-new -c <cluster>
 kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
-  "*=tharindulak/openchoreo-sre-agent:handoff-v12"
+  "*=tharindulak/sre-agent:hand0ff-new"
 
-# Enable the handoff (AE_AUTO_DISPATCH=false → issue-only, human dispatches)
+# Enable the handoff (AE_AUTO_DISPATCH=false → issue-only; a human adopts it later)
 kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \
   '{"data":{"AE_HANDOFF":"true","AE_AUTO_DISPATCH":"true","AE_API_URL":"http://host.k3d.internal:3401"}}'
 kubectl rollout restart deploy/ai-rca-agent -n openchoreo-observability-plane
@@ -69,9 +69,15 @@ The alert pipeline must actually evaluate rules — this is the step that is com
 # Trigger the failure the rule matches, then watch:
 kubectl logs -f -n openchoreo-observability-plane deploy/ai-rca-agent | grep -vE "Pydantic V1"
 # expect, in order: POST /analyze 200 → RCA completed → Remediation completed →
-#   Running handoff agent → "Handoff completed: classification=…, issue=…, dispatch=ca-…"
+#   Running handoff agent → "Handoff completed: classification=…, issue=…, adopted=True"
+#   adopted=False means the issue was filed but nothing will work it — the log
+#   line names why (usually: no built version to adopt an incident into).
+#   classification=none means the handoff decided no code change was needed; its
+#   reasoning is the `rationale` on the report, not in this line.
 ```
 
-Then confirm the artifacts: GitHub issue (labels + project board), AEP task
-(`component_tasks` row bound to the issue), coding-agent pod → PR "Closes #N".
-A human reviews and merges the PR — AEP's webhook then builds and deploys the fix.
+Then confirm the artifacts: the GitHub issue (carrying `aep` + `aep:codingagent`
+and joined to the deployed version's milestone), the `milestone_runs` row for the
+incident run adoption started, and the coding-agent PR ("Closes #N"). The platform
+merges that PR itself once it resolves the run's milestone work, then builds and
+deploys the fix.

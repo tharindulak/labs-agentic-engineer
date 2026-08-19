@@ -11,8 +11,11 @@ does not inject them into AEP's coding/design agents.
 ## issue-fix
 
 `issue-fix/SKILL.md` is the handoff skill: it tells the SRE agent's handoff
-sub-agent how to classify config-vs-code root causes, dedupe against related
-GitHub issues, and file one issue with RCA context and cross-links. Filing the
+sub-agent how to decide whether a root cause needs a source code change, dedupe
+against related GitHub issues, and file one issue with RCA context and
+cross-links. It deliberately does NOT classify the incident — code-level /
+config-level / mixed is derived from that decision plus the remediation agent's
+action statuses, so the model is never asked to restate data it was handed. Filing the
 issue IS the handoff — AEP adopts what it files — so there is no dispatch step
 to describe. Its content is AEP's contract (the `sre-agent` label, dedupe keys,
 and what `ae_create_issue` answers back: `deduped`, `adopted`,

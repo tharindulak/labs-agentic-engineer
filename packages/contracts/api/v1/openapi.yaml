@@ -3208,7 +3208,9 @@ components:
       description: Write-side request for a new RCA-agent alert report (issue
       properties:
         classification:
-          description: code-level, config-level, mixed, or none — set by the handoff agent
+          description: code-level, config-level, mixed, or none. Derived by the SRE
+            handoff from its code-change decision and the remediation agent's action
+            statuses — not asserted by a model
           type: string
         component:
           type: string
@@ -4367,7 +4369,9 @@ components:
       description: An RCA report from the OpenChoreo SRE/RCA-agent handoff (console issues
       properties:
         classification:
-          description: code-level, config-level, mixed, or none — set by the handoff agent
+          description: code-level, config-level, mixed, or none. Derived by the SRE
+            handoff from its code-change decision and the remediation agent's action
+            statuses — not asserted by a model
           type: string
         component:
           type: string

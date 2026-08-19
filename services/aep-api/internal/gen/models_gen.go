@@ -790,7 +790,7 @@ type CreateProjectRequest struct {
 
 // CreateRcaAgentReportRequest Write-side request for a new RCA-agent alert report (issue
 type CreateRcaAgentReportRequest struct {
-	// Classification code-level, config-level, mixed, or none — set by the handoff agent
+	// Classification code-level, config-level, mixed, or none. Derived by the SRE handoff from its code-change decision and the remediation agent's action statuses — not asserted by a model
 	Classification string     `json:"classification"`
 	Component      string     `json:"component,omitempty"`
 	Deployed       bool       `json:"deployed,omitempty"`
@@ -1261,7 +1261,7 @@ type ProvisionBody struct {
 
 // RcaAgentReport An RCA report from the OpenChoreo SRE/RCA-agent handoff (console issues
 type RcaAgentReport struct {
-	// Classification code-level, config-level, mixed, or none — set by the handoff agent
+	// Classification code-level, config-level, mixed, or none. Derived by the SRE handoff from its code-change decision and the remediation agent's action statuses — not asserted by a model
 	Classification string    `json:"classification"`
 	Component      string    `json:"component,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`

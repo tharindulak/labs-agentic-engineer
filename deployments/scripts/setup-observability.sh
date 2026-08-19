@@ -72,41 +72,48 @@
 #       patterns then match analysed lowercase tokens — "ERROR" never matches).
 #
 # Knobs (env):
-#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: handoff-v16).
-#                   handoff-v14+ makes every SRE-created issue a well-formed,
-#                   dispatchable AE Task at creation (src/agent/handoff_logic.py):
-#                   it stamps the aep:task/aep:coding/aep:origin/incident labels
-#                   plus the taskmeta block, and normalises the component to AE's
-#                   design (unprefixed) name via design_component_name()
-#                   (testyello-service1 → service1) on BOTH the block and the
-#                   ae_dispatch_coding_agent call — so the funnel gate no longer
-#                   cancels with "component not in design at HEAD" and a
-#                   partially-labelled issue is never left inert (missing the
-#                   aep:task marker → the funnel ignores it). Requires the
-#                   rca-agent component:create grant in setup-aep.sh (without it
-#                   the synchronous EnsureComponent pre-check 403s).
-#                   handoff-v15 ADDS the external-skills loader: the handoff
-#                   'issue-fix' skill is no longer baked into the image — it is
-#                   owned by AEP (services/aep-mcp-server/skills/issue-fix) and
-#                   mounted at deploy time by step 3d below via EXTERNAL_SKILLS_DIR.
-#                   An older image (<= handoff-v14) IGNORES that mount and uses
-#                   its stale baked-in copy, so bump to v15+ to make AEP the real
-#                   source of truth. handoff-v16 makes the handoff MCP path
-#                   configurable (AE_MCP_PATH, default /mcp) so the agent reaches
-#                   the standalone aep-mcp-server on :3401 — v15 and earlier
-#                   hardcoded /sre-mcp and crash-loop at boot against a :3401
-#                   server that only serves /mcp. Falls back to anthropic-patched
-#                   if not built or pullable (RCA works, handoff stage ABSENT).
+#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: hand0ff-new).
+#                   hand0ff-new is the image for the current handoff contract, in
+#                   which FILING the issue IS the handoff:
+#                     * one AE call — ae_create_issue adopts what it files, so
+#                       there is no ae_dispatch_coding_agent and no second leg
+#                       that can fail between them (AEP ADR-0017);
+#                     * no classification asked of the model. It answers
+#                       needs_code_change; code-level / config-level / mixed is
+#                       DERIVED from that plus the remediation statuses;
+#                     * config work never reaches the coding agent. A
+#                       config-only RCA short-circuits before the LLM runs, and a
+#                       mixed one has its ReleaseBinding patches withheld from
+#                       the payload the model writes the issue from;
+#                     * dedupe key, the sre-agent label, the unprefixed design
+#                       component name, and the adopt flag are all forced in code
+#                       (src/agent/handoff_logic.py), never left to the prompt.
+#                   It also carries the two earlier requirements that are easy to
+#                   regress: the EXTERNAL_SKILLS_DIR loader, so the AEP-owned
+#                   issue-fix skill mounted by step 3d below is what actually runs
+#                   (an image with a baked-in copy IGNORES that mount), and a
+#                   configurable AE_MCP_PATH (default /mcp) so the agent reaches
+#                   the standalone aep-mcp-server on :3401 instead of crash-
+#                   looping against a hardcoded /sre-mcp.
+#                   Requires the rca-agent component:create grant in setup-aep.sh
+#                   — the synchronous EnsureComponent pre-check that runs before
+#                   the issue is filed 403s without it. Falls back to
+#                   anthropic-patched if not built or pullable (RCA works,
+#                   handoff stage ABSENT).
 #   AE_MCP_PATH     path of the handoff MCP endpoint under AE_API_URL
 #                   (default: /mcp = standalone aep-mcp-server; set /sre-mcp for
-#                   the in-process aep-api surface). handoff-v16+ only.
-#   AE_HANDOFF      enable the RCA→AEP coding-agent handoff (default: true)
+#                   the in-process aep-api surface). Older images than
+#                   hand0ff-new hardcode /sre-mcp and ignore this.
+#   AE_HANDOFF      enable the RCA→AEP coding-agent handoff (default: true).
+#                   The handoff files ONE issue for code-level work; AEP adopts
+#                   it on creation, which is what puts the coding agent on it.
 #   AE_AUTO_DISPATCH hand the filed issue to the coding agent (AEP adopts it as
 #                   part of creating it; false files a ledger entry instead)
-#                   (default: true; false = issue-only, human dispatches)
+#                   (default: true; false = issue-only, a human adopts it later
+#                   from AEP or by adding `aep:codingagent` on GitHub)
 #   AE_PUBLISH_REPORTS publish each completed RCA report to aep-api so it
-#                   shows in the console Alerts bell/list (default: true;
-#                   handoff-v14+). Needs AEP_API_URL.
+#                   shows in the console Alerts bell/list (default: true).
+#                   Needs AEP_API_URL.
 #   AEP_API_URL     aep-api REST base for report publishing
 #                   (default: http://host.k3d.internal:9090). NOT AE_API_URL
 #                   (that is the MCP server on :3401).
@@ -128,7 +135,7 @@ NS="openchoreo-observability-plane"
 AE_HANDOFF="${AE_HANDOFF:-true}"
 AE_AUTO_DISPATCH="${AE_AUTO_DISPATCH:-true}"
 AE_API_URL="${AE_API_URL:-http://host.k3d.internal:3401}"
-# Report publishing (handoff-v14+): POST each completed RCA report to aep-api
+# Report publishing: POST each completed RCA report to aep-api
 # so it surfaces in the console Alerts bell/list. AEP_API_URL is aep-api's REST
 # base — DISTINCT from AE_API_URL (the MCP server on :3401); reports go to the
 # HTTP API on :9090.
@@ -200,31 +207,34 @@ echo "✅ ExternalSecrets applied"
 # loses imported images — this makes the import part of setup). Build once with
 # (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
 # picked up instead of a registry pull):
-#   docker build -t tharindulak/openchoreo-sre-agent:handoff-v16 <openchoreo-repo>/agents/sre-agent
-# handoff-v16 must be built from the SRE branch that (a) adds the
+#   docker build -t tharindulak/sre-agent:hand0ff-new <openchoreo-repo>/agents/sre-agent
+# hand0ff-new must be built from the SRE branch that (a) adds the
 # EXTERNAL_SKILLS_DIR loader (src/agent/skills.py + src/config.py), (b) removes
 # the baked-in src/skills/issue-fix — without both, step 3d's mount is inert —
-# and (c) makes the handoff MCP path configurable (AE_MCP_PATH, default /mcp) so
-# the boot MCP test reaches the standalone aep-mcp-server on :3401.
+# (c) makes the handoff MCP path configurable (AE_MCP_PATH, default /mcp) so the
+# boot MCP test reaches the standalone aep-mcp-server on :3401, and (d) carries
+# the one-call handoff: ae_create_issue with adopt/componentName, and no
+# ae_dispatch_coding_agent (an older image still calls a tool aep-mcp-server no
+# longer exposes).
 # The agent reads its LLM key + OAuth client secret from the rca-agent-secret
 # Secret (envFrom). RCA_LLM_API_KEY comes from ANTHROPIC_API_KEY in deployments/.env;
 # OAUTH_CLIENT_SECRET must equal the openchoreo-rca-agent client secret registered
 # by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `handoff-v16` (= RCA_IMAGE_TAG default below) carries the
-# Anthropic structured-output fix, the AEP coding-agent handoff stage
-# (AE_HANDOFF), the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted
-# issue-fix skill from step 3d, AND the configurable AE_MCP_PATH (default /mcp).
+# Preferred tag `hand0ff-new` (= RCA_IMAGE_TAG default below) carries the
+# Anthropic structured-output fix, the one-call AEP handoff stage (AE_HANDOFF),
+# the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted issue-fix skill from
+# step 3d, AND the configurable AE_MCP_PATH (default /mcp).
 # Resolution order:
-#   1. local build            docker build -t tharindulak/openchoreo-sre-agent:handoff-v16 \
+#   1. local build            docker build -t tharindulak/sre-agent:hand0ff-new \
 #                               <openchoreo-repo>/agents/sre-agent
 #      (preferred — developers iterating on the agent aren't surprised by a
 #       stale registry copy)
 #   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
 #   3. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
 #
-# RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/openchoreo-sre-agent),
+# RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/sre-agent),
 # not a short local alias — deliberately. An earlier version used a short repo
 # name here and retagged the pulled image to it before `k3d image import`; the
 # Deployment then referenced that short, unqualified name. That worked right
@@ -235,9 +245,9 @@ echo "1️⃣b RCA agent image + secret"
 # (ImagePullBackOff: "pull access denied, repository does not exist"). Using
 # the fully-qualified name everywhere means a cache-evicted image can always
 # be re-pulled from the real registry — no more silent long-term fragility.
-RCA_IMAGE_REPO="tharindulak/openchoreo-sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-handoff-v16}"
-RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/openchoreo-sre-agent:handoff-v16}"
+RCA_IMAGE_REPO="tharindulak/sre-agent"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-hand0ff-new}"
+RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:hand0ff-new}"
 if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; then
     echo "   ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} not built locally — trying registry ${RCA_IMAGE_PULL}..."
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
