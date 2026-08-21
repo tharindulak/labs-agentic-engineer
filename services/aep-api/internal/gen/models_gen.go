@@ -103,6 +103,27 @@ func (e DeployStageValidation) Valid() bool {
 	}
 }
 
+// Defines values for ExternalDependencyValueState.
+const (
+	Configured     ExternalDependencyValueState = "configured"
+	NotProvisioned ExternalDependencyValueState = "not-provisioned"
+	Unset          ExternalDependencyValueState = "unset"
+)
+
+// Valid indicates whether the value is a known member of the ExternalDependencyValueState enum.
+func (e ExternalDependencyValueState) Valid() bool {
+	switch e {
+	case Configured:
+		return true
+	case NotProvisioned:
+		return true
+	case Unset:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MilestoneRunViewOrigin.
 const (
 	IncidentAdoption MilestoneRunViewOrigin = "incident-adoption"
@@ -126,6 +147,7 @@ func (e MilestoneRunViewOrigin) Valid() bool {
 
 // Defines values for MilestoneRunViewState.
 const (
+	MilestoneRunViewStateBlocked   MilestoneRunViewState = "blocked"
 	MilestoneRunViewStateCancelled MilestoneRunViewState = "cancelled"
 	MilestoneRunViewStateFailed    MilestoneRunViewState = "failed"
 	MilestoneRunViewStatePlanning  MilestoneRunViewState = "planning"
@@ -137,6 +159,8 @@ const (
 // Valid indicates whether the value is a known member of the MilestoneRunViewState enum.
 func (e MilestoneRunViewState) Valid() bool {
 	switch e {
+	case MilestoneRunViewStateBlocked:
+		return true
 	case MilestoneRunViewStateCancelled:
 		return true
 	case MilestoneRunViewStateFailed:
@@ -456,6 +480,7 @@ func (e TimelineEventEmitter) Valid() bool {
 
 // Defines values for TurnConflictCode.
 const (
+	ConversationRotated TurnConflictCode = "conversation_rotated"
 	RequirementsMissing TurnConflictCode = "requirements_missing"
 	TurnInProgress      TurnConflictCode = "turn_in_progress"
 )
@@ -463,6 +488,8 @@ const (
 // Valid indicates whether the value is a known member of the TurnConflictCode enum.
 func (e TurnConflictCode) Valid() bool {
 	switch e {
+	case ConversationRotated:
+		return true
 	case RequirementsMissing:
 		return true
 	case TurnInProgress:
@@ -849,9 +876,10 @@ type DependencyCandidate = contracts.DependencyCandidate
 
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
-	Outputs []string `json:"outputs"`
-	Ready   bool     `json:"ready"`
-	Status  string   `json:"status"`
+	Outputs    []string                     `json:"outputs"`
+	Ready      bool                         `json:"ready"`
+	Status     string                       `json:"status"`
+	ValueState ExternalDependencyValueState `json:"valueState,omitempty"`
 }
 
 // DeployStage Deploy-stage aggregate on ProjectStatus (#184) — what's live in dev and rollout progress.
@@ -946,6 +974,16 @@ type ExecutionView struct {
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	Status    string     `json:"status"`
 }
+
+// ExternalDependencyReadiness defines model for ExternalDependencyReadiness.
+type ExternalDependencyReadiness struct {
+	MissingKeys []string                     `json:"missingKeys"`
+	Name        string                       `json:"name"`
+	State       ExternalDependencyValueState `json:"state"`
+}
+
+// ExternalDependencyValueState defines model for ExternalDependencyValueState.
+type ExternalDependencyValueState string
 
 // ExternalResourceDTO defines model for ExternalResourceDTO.
 type ExternalResourceDTO struct {
@@ -1049,10 +1087,10 @@ type MilestoneRunView struct {
 	Origin    MilestoneRunViewOrigin `json:"origin"`
 	StartedAt *time.Time             `json:"startedAt,omitempty"`
 
-	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed.
+	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
 	State MilestoneRunViewState `json:"state"`
 
-	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run.
+	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked explains state=blocked.
 	TerminalReason string `json:"terminalReason,omitempty"`
 
 	// Validation The run's validation outcome. The verdict is a RUN property, not a per-issue one, and this is where the deployment surface reads it.
@@ -1062,7 +1100,7 @@ type MilestoneRunView struct {
 // MilestoneRunViewOrigin Why this run was started. `revalidate` asks a version's criteria again against the already-deployed system; it enters the loop at validation rather than at the working set, and is deliberately outside the one-active-spec-run mutex so it never holds up the next build.
 type MilestoneRunViewOrigin string
 
-// MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed.
+// MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
 type MilestoneRunViewState string
 
 // OrganizationList defines model for OrganizationList.
@@ -1186,6 +1224,25 @@ type Project struct {
 	RepoURL string `json:"repoUrl,omitempty"`
 	Status  string `json:"status,omitempty"`
 	UID     string `json:"uid,omitempty"`
+}
+
+// ProjectConversationList The project's chat threads, newest first. One element today — the current thread; the array shape is the multi-conversation future's contract, so it grows without a rename.
+type ProjectConversationList struct {
+	Conversations []ProjectConversationView `json:"conversations"`
+}
+
+// ProjectConversationView One project chat thread (#430). The id is server-minted and stored against the project — the client never chooses it. Exactly one thread per project is current; turns addressed to a demoted id are refused with 409 conversation_rotated.
+type ProjectConversationView struct {
+	ConversationID string    `json:"conversationId"`
+	CreatedAt      time.Time `json:"createdAt"`
+	CreatedBy      string    `json:"createdBy,omitempty"`
+	Current        bool      `json:"current"`
+}
+
+// ProjectDependencyReadiness defines model for ProjectDependencyReadiness.
+type ProjectDependencyReadiness struct {
+	Configured   bool                          `json:"configured"`
+	Dependencies []ExternalDependencyReadiness `json:"dependencies"`
 }
 
 // ProjectList defines model for ProjectList.
@@ -1333,6 +1390,9 @@ type RunBudgets struct {
 
 // RunCycleView One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 type RunCycleView struct {
+	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, or a secret that had not materialised) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
+	AgentReason string `json:"agentReason,omitempty"`
+
 	// Attempts Dispatches of THIS cycle (the per-cycle re-dispatch budget, which resets at every cycle boundary).
 	Attempts  int64     `json:"attempts"`
 	Branch    string    `json:"branch,omitempty"`
@@ -1466,13 +1526,13 @@ type RunValidation struct {
 
 	// Verdict What the run learned about the deployed system. Empty until the validation cycle settles.
 	// passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle at all).
-	// `failed` and `unreported` fail the run, under terminal reasons validation-failed and validation-unreported respectively. The rest settle succeeded.
+	// `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under terminal reasons validation-failed and validation-unreported respectively; while attempts remain the run repairs and validates again, so this field can hold a fatal verdict on a run that is still live and about to try once more. A client rendering it as the run's answer therefore needs the lifecycle too — that is DeployStage.validation, which reports awaiting-fix for exactly that state. The rest settle succeeded.
 	Verdict RunValidationVerdict `json:"verdict,omitempty"`
 }
 
 // RunValidationVerdict What the run learned about the deployed system. Empty until the validation cycle settles.
 // passed (every criterion was automated and passed), partial (some passed, none failed, and some were never covered — so `passed` would claim a result for criteria nobody checked), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle at all).
-// `failed` and `unreported` fail the run, under terminal reasons validation-failed and validation-unreported respectively. The rest settle succeeded.
+// `failed` and `unreported` fail the run ONCE ITS VALIDATION ATTEMPTS ARE SPENT, under terminal reasons validation-failed and validation-unreported respectively; while attempts remain the run repairs and validates again, so this field can hold a fatal verdict on a run that is still live and about to try once more. A client rendering it as the run's answer therefore needs the lifecycle too — that is DeployStage.validation, which reports awaiting-fix for exactly that state. The rest settle succeeded.
 type RunValidationVerdict string
 
 // SaveValuesBody defines model for SaveValuesBody.
@@ -1730,7 +1790,7 @@ type TimelineEvent struct {
 // TimelineEventEmitter Who produced the line — `subagent` for work the main agent fanned out with the Task tool, absent for the main agent itself. Absence is a positive fact, not an unknown.
 type TimelineEventEmitter string
 
-// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from.
+// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry.
 type TurnConflict struct {
 	ActiveTurnID string           `json:"activeTurnId,omitempty"`
 	Code         TurnConflictCode `json:"code"`
@@ -1904,6 +1964,12 @@ type GetDependencyStatusParams struct {
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
+// GetProjectDependencyReadinessParams defines parameters for GetProjectDependencyReadiness.
+type GetProjectDependencyReadinessParams struct {
+	// Environment Environment (default: development)
+	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
+}
+
 // ListFilesParams defines parameters for ListFiles.
 type ListFilesParams struct {
 	// Prefix Only list paths under this prefix (e.g. specs/design/)
@@ -1934,6 +2000,12 @@ type ListIssuesParams struct {
 
 	// Q Keyword search over issue title/body, ranked by distinct-term overlap (title weighted double), capped at 25. Recall-biased — used to surface related issues before filing a new one.
 	Q string `form:"q,omitempty" json:"q,omitempty"`
+}
+
+// PutProjectReferencesMultipartBody defines parameters for PutProjectReferences.
+type PutProjectReferencesMultipartBody struct {
+	// Files Reference documents. Two groups, both readable by the models: binary read natively as file parts (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`), and text read as workspace files (`.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`). At most 10 documents, each at most 5 MiB measured on the raw bytes. Office formats are not accepted — the models do not read them natively.
+	Files []openapi_types.File `json:"files"`
 }
 
 // GetSpecCollabSessionParams defines parameters for GetSpecCollabSession.
@@ -2015,6 +2087,9 @@ type ApplyFilesJSONRequestBody = ApplyRequest
 
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
+
+// PutProjectReferencesMultipartRequestBody defines body for PutProjectReferences for multipart/form-data ContentType.
+type PutProjectReferencesMultipartRequestBody PutProjectReferencesMultipartBody
 
 // CreateRcaAgentReportJSONRequestBody defines body for CreateRcaAgentReport for application/json ContentType.
 type CreateRcaAgentReportJSONRequestBody = CreateRcaAgentReportRequest

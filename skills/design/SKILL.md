@@ -10,10 +10,10 @@ metadata:
 # Design
 
 The design step: derive the complete design of the PRD from
-`specs/requirements/prd.md`, cell-first. The product ships in a single phase,
-so the design covers EVERY story the PRD defines. The build gate checks the
-result mechanically — a phase declared, every story cited, every component
-enriched — so the way to a clean Build is to follow the order below.
+`specs/requirements/prd.md`, cell-first. The design covers EVERY story the
+PRD defines. The build gate checks the result mechanically — every story
+claimed by some component's design.json, every component enriched — so the
+way to a clean Build is to follow the order below.
 
 ## The PRD is the brief
 
@@ -25,20 +25,39 @@ missing or empty PRD means the user needs `/start` first — stop and say so.
 "deferred" blocks design — stop and point the user at the amend flow's
 resolve-open-questions branch. Deferred questions never block.
 
+## Reference documents ground the design
+
+The kickoff may have attached reference documents — and for design, the ones
+that matter most are the user's own sketches: a drawn wireframe, a form
+screenshot, a mockup image. They are attached to this conversation natively
+(images and PDFs) or in your workspace files (text). When any exist:
+
+- **A user-drawn wireframe sketch is the layout brief.** `wireframes.dsl`
+  follows what the user drew — screen structure, navigation, the controls
+  they placed — refined, not reinvented. Look at the image before writing a
+  single screen.
+- A form document (paper form, PDF) is the field inventory: the screens that
+  digitize it carry its fields and sections.
+- Where a sketch and the PRD disagree, the PRD's scope wins, but the sketch's
+  layout intent survives inside that scope — and the discrepancy is worth a
+  line in the design notes.
+
+No documents attached is the ordinary case: design from the PRD alone.
+
 ## The lineup
 
 Each step names the skill that governs it. Those bodies are inlined for this
 turn — apply them directly, and load one only if you find you do not have it.
 
-1. **design.cell** (`cell-design`) — emit the cell FIRST: the `phase`
-   this version details, every component with its story citations, boundaries
-   and edges. The console streams it into the live diagram, and the platform
-   scaffolds a design.json skeleton per deployable component when it lands.
-   Every story the PRD defines is cited by some component — nothing is left
-   for a later phase.
+1. **design.cell** (`cell-design`) — emit the cell FIRST: every component,
+   boundaries and edges. The console streams it into the live diagram, and
+   the platform scaffolds a design.json skeleton per deployable component
+   when it lands.
 2. **Component enrichment** (`architecture`) — fill each
-   component's design.json: language (org Tech stack default first),
-   dependencies (discover before you invent), description, pinned skills.
+   component's design.json: language (org Tech stack default first), the PRD
+   `stories` it serves (every story the PRD defines must be claimed by some
+   component — the build gate checks coverage), dependencies (discover before
+   you invent), description, pinned skills.
 3. **design.md** — a DIAGRAM document, mermaid throughout: one Overview
    paragraph, then `## Context (C1)` (a mermaid graph: the PRD's actors, the
    system, external systems), `## Domain model (ER)` (a mermaid erDiagram:

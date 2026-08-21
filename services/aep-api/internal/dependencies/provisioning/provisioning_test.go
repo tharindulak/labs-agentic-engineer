@@ -170,6 +170,17 @@ func (f fakeDesign) ReadDesignComponents(context.Context, string, string) ([]spe
 	return f.comps, f.err
 }
 
+type countingDesign struct {
+	comps []spec.DesignComponent
+	err   error
+	calls int
+}
+
+func (f *countingDesign) ReadDesignComponents(context.Context, string, string) ([]spec.DesignComponent, error) {
+	f.calls++
+	return f.comps, f.err
+}
+
 type fakeRepos struct{}
 
 func (fakeRepos) RepoFullName(context.Context, string, string) (string, error) { return "o/r", nil }
@@ -212,12 +223,12 @@ type fakeExtProv struct {
 	// (name/description/config schema) rather than fetched from the catalog.
 	lastER *dependencies.ExternalResource
 
-	// AuthorWithSecretRef spies (the build path's no-SM-write author half).
-	authorRefCalls int
-	authorByEnv    map[string]dependencies.PreparedEnvValues
-	authorResult   *dependencies.ProvisionResult
-	authorErr      error
-	// authorLastER is the *dependencies.ExternalResource the last AuthorWithSecretRef
+	// AuthorPreparedValues spies (the build path's no-SM-write author half).
+	authorPreparedCalls int
+	authorByEnv         map[string]dependencies.PreparedEnvValues
+	authorResult        *dependencies.ProvisionResult
+	authorErr           error
+	// authorLastER is the *dependencies.ExternalResource the last AuthorPreparedValues
 	// call received — same purpose as lastER, for the build author path.
 	authorLastER *dependencies.ExternalResource
 }
@@ -234,8 +245,8 @@ func (f *fakeExtProv) Provision(_ context.Context, _, _, _ string, er *dependenc
 	}
 	return &dependencies.ProvisionResult{ResourceName: "o-ext", BindingByEnv: map[string]string{"development": "o-ext-development"}}, nil
 }
-func (f *fakeExtProv) AuthorWithSecretRef(_ context.Context, _, _ string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error) {
-	f.authorRefCalls++
+func (f *fakeExtProv) AuthorPreparedValues(_ context.Context, _, _ string, er *dependencies.ExternalResource, byEnv map[string]dependencies.PreparedEnvValues) (*dependencies.ProvisionResult, error) {
+	f.authorPreparedCalls++
 	f.authorByEnv = byEnv
 	f.authorLastER = er
 	if f.authorErr != nil {
@@ -450,12 +461,12 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureProvisionIssues: %v", err)
 	}
-	if len(issues.created) != 2 {
-		t.Fatalf("want 2 gate issues (stripe + orders-db), got %d", len(issues.created))
+	if len(issues.created) != 1 {
+		t.Fatalf("want 1 platform-resource gate issue, got %d", len(issues.created))
 	}
 	// The returned map carries the minted gate number for each distinct dep — the
 	// read-your-write the build path threads past the racy list.
-	if gateByDep["stripe"] == 0 || gateByDep["orders-db"] == 0 {
+	if gateByDep["stripe"] != 0 || gateByDep["orders-db"] == 0 {
 		t.Fatalf("EnsureProvisionIssues must return the minted gate number per dep, got %+v", gateByDep)
 	}
 	// A gate is PROSE plus two labels: the aep:provision marker and the
@@ -476,8 +487,8 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 		deps = append(deps, gateDepFromLabels(req.Labels))
 	}
 	sort.Strings(deps)
-	if !reflect.DeepEqual(deps, []string{"orders-db", "stripe"}) {
-		t.Fatalf("gate dep labels = %v, want [orders-db stripe]", deps)
+	if !reflect.DeepEqual(deps, []string{"orders-db"}) {
+		t.Fatalf("gate dep labels = %v, want [orders-db]", deps)
 	}
 
 	// Idempotent: a second call mints nothing new (the deps already have open issues).
@@ -490,7 +501,7 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 		t.Fatalf("second mint must be a no-op, created %d", len(issues.created))
 	}
 	// The map still resolves the pre-existing open gates (from openProvisionDeps).
-	if gateByDep2["stripe"] == 0 || gateByDep2["orders-db"] == 0 {
+	if gateByDep2["stripe"] != 0 || gateByDep2["orders-db"] == 0 {
 		t.Fatalf("second call must still return the existing gate numbers, got %+v", gateByDep2)
 	}
 }

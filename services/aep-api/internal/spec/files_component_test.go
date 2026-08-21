@@ -198,8 +198,8 @@ func mustJSON(t *testing.T, v any) string {
 func TestListAtHead_FilteredByPrefix(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
 		"specs/requirements/prd.md": "req",
-		"specs/design/design.md":             "des",
-		"README.md":                          "root",
+		"specs/design/design.md":    "des",
+		"README.md":                 "root",
 	})
 	rec := r.get(apiBase + "?prefix=specs/design/")
 	if rec.Code != http.StatusOK {
@@ -272,8 +272,8 @@ func TestReadAtHead_ValidationReportAllowListed(t *testing.T) {
 
 func TestApply_MultiWriteAndDelete_SingleCommit(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
-		"specs/requirements/prd.md": "old",
-		"specs/requirements/todo.md":         "scratch",
+		"specs/requirements/prd.md":  "old",
+		"specs/requirements/todo.md": "scratch",
 	})
 	reqSHA := r.readSHA(t, "specs/requirements/prd.md")
 	todoSHA := r.readSHA(t, "specs/requirements/todo.md")
@@ -398,8 +398,8 @@ func TestApply_StaleBaseSHA_409_NothingApplied(t *testing.T) {
 // must not be applied (all-or-nothing), and every conflict is collected.
 func TestApply_BatchConflict_AllOrNothing_CollectsAllConflicts(t *testing.T) {
 	r := newFilesRig(t, map[string]string{
-		"specs/requirements/prd.md": "keep me",
-		"specs/requirements/todo.md":         "scratch",
+		"specs/requirements/prd.md":  "keep me",
+		"specs/requirements/todo.md": "scratch",
 	})
 	todoSHA := r.readSHA(t, "specs/requirements/todo.md")
 	headBefore := r.remote.HeadSHA(t)
@@ -473,6 +473,35 @@ func TestApply_SizeCap(t *testing.T) {
 	if rec := r.apply(body); rec.Code != http.StatusBadRequest {
 		t.Errorf("size cap: code %d, want 400", rec.Code)
 	}
+}
+
+// A text file keeps today's wire shape exactly — no encoding key at all, so
+// every existing consumer (the spec editor, the FE viewer) is untouched.
+func TestRead_TextFileKeepsTodaysWireShape(t *testing.T) {
+	r := newFilesRig(t, map[string]string{"specs/requirements/prd.md": "# PRD\nplain text ✅\n"})
+
+	rec := r.get(apiBase + "/specs/requirements/prd.md")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read code %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `"encoding"`) {
+		t.Fatalf("text read grew an encoding key — the default must stay implicit: %s", firstBytes(body, 200))
+	}
+	var fc spec.FileContent
+	if err := json.Unmarshal(rec.Body.Bytes(), &fc); err != nil {
+		t.Fatalf("decode read: %v", err)
+	}
+	if fc.Content != "# PRD\nplain text ✅\n" {
+		t.Fatalf("content = %q, want it verbatim", fc.Content)
+	}
+}
+
+func firstBytes(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 func TestApply_WarningsNonBlocking(t *testing.T) {
@@ -745,10 +774,9 @@ func TestApply_ScaffoldsComponentsFromCell(t *testing.T) {
 		"specs/design/components/lunch-api/design.json": existing,
 	})
 
-	cell := "phase 1\n" +
-		"component lunch-api service [stories: 1, 2]\n" +
-		"component lunch-web web-application [stories: 1]\n" +
-		"component slack-notifier service [stories: 7]\n" +
+	cell := "component lunch-api service\n" +
+		"component lunch-web web-application\n" +
+		"component slack-notifier service\n" +
 		"component orders-db database\n"
 	body := mustJSON(t, spec.ApplyRequest{
 		Writes:  []spec.WriteOp{{Path: "specs/design/design.cell", Content: cell}},
@@ -773,8 +801,7 @@ func TestApply_ScaffoldsComponentsFromCell(t *testing.T) {
 			t.Errorf("scaffold %s missing enrichable defaults: %v", id, parsed)
 		}
 	}
-	// Existing component: enrichment survives; only the platform-recomputed
-	// stories field is restamped from the cell (lunch-api cites 1, 2).
+	// Existing component: a cell save never touches an existing design.json.
 	var existingParsed map[string]any
 	if err := json.Unmarshal([]byte(r.remote.FileAt(t, "main", "specs/design/components/lunch-api/design.json")), &existingParsed); err != nil {
 		t.Fatalf("existing design.json parse: %v", err)
@@ -782,28 +809,24 @@ func TestApply_ScaffoldsComponentsFromCell(t *testing.T) {
 	if existingParsed["language"] != "Go" || existingParsed["description"] != "hand-written" {
 		t.Errorf("existing enrichment clobbered: %v", existingParsed)
 	}
-	if got := fmt.Sprint(existingParsed["stories"]); got != "[1 2]" {
-		t.Errorf("existing stories = %v, want restamped [1 2]", existingParsed["stories"])
-	}
 	// The database node scaffolds nothing.
 	if rec := r.get(apiBase + "/specs/design/components/orders-db/design.json"); rec.Code != http.StatusNotFound {
 		t.Errorf("orders-db dir should not exist: code %d", rec.Code)
 	}
 }
 
-// TestApply_StoriesDerivedFromCell pins the platform-recomputed `stories`
-// field: scaffolds are born with their cell citations, an existing enriched
-// design.json is restamped when the cell's citations change, and an authored
-// stories value is overwritten (like a dependency's wiring).
-func TestApply_StoriesDerivedFromCell(t *testing.T) {
+// TestApply_AuthoredStoriesSurviveCellSave pins the authored `stories` field
+// (#369): the agent claims a component's stories in design.json during
+// enrichment, and a later cell save must not touch the claim — scaffolds are
+// born without one.
+func TestApply_AuthoredStoriesSurviveCellSave(t *testing.T) {
 	enriched := `{"name":"lunch-api","type":"service","version":"0.1.0","language":"Go","buildpack":"docker","appPath":"lunch-api","entrypoint":"deployment/service","exposure":"intranet","dependencies":[],"description":"hand-written","stories":[9]}`
 	r := newFilesRig(t, map[string]string{
 		"specs/design/components/lunch-api/design.json": enriched,
 	})
 
-	cell := "phase 1\n" +
-		"component lunch-api service [stories: 1, 2]\n" +
-		"component lunch-web web-application [stories: 1]\n"
+	cell := "component lunch-api service\n" +
+		"component lunch-web web-application\n"
 	rec := r.apply(mustJSON(t, spec.ApplyRequest{
 		Writes:  []spec.WriteOp{{Path: "specs/design/design.cell", Content: cell}},
 		Message: "design cell",
@@ -813,22 +836,21 @@ func TestApply_StoriesDerivedFromCell(t *testing.T) {
 	}
 
 	var parsed map[string]any
-	// Scaffolded component is born citing its cell stories.
+	// Scaffolded component is born without a stories claim.
 	if err := json.Unmarshal([]byte(r.remote.FileAt(t, "main", "specs/design/components/lunch-web/design.json")), &parsed); err != nil {
 		t.Fatalf("scaffold parse: %v", err)
 	}
-	if got := fmt.Sprint(parsed["stories"]); got != "[1]" {
-		t.Errorf("scaffold stories = %v, want [1]", parsed["stories"])
+	if _, present := parsed["stories"]; present {
+		t.Errorf("scaffold carries stories = %v, want the agent to author it", parsed["stories"])
 	}
-	// The existing component's authored [9] is OVERWRITTEN by the cell's [1 2];
-	// its hand-written fields survive.
+	// The existing component's authored [9] survives the cell save.
 	if err := json.Unmarshal([]byte(r.remote.FileAt(t, "main", "specs/design/components/lunch-api/design.json")), &parsed); err != nil {
-		t.Fatalf("restamp parse: %v", err)
+		t.Fatalf("existing parse: %v", err)
 	}
-	if got := fmt.Sprint(parsed["stories"]); got != "[1 2]" {
-		t.Errorf("restamped stories = %v, want [1 2]", parsed["stories"])
+	if got := fmt.Sprint(parsed["stories"]); got != "[9]" {
+		t.Errorf("authored stories = %v, want [9] untouched", parsed["stories"])
 	}
 	if parsed["description"] != "hand-written" || parsed["language"] != "Go" {
-		t.Errorf("restamp clobbered enrichment: %v", parsed)
+		t.Errorf("cell save clobbered enrichment: %v", parsed)
 	}
 }

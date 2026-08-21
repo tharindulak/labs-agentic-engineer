@@ -241,7 +241,7 @@ async function main(): Promise<number> {
   const log = openTaskLog(run.runDir);
   let completion: Promise<{ exitCode: number }>;
   try {
-    ({ completion } = runClaudeQuery(req, layout, log, { availableSkillNames, pinnedBodies }));
+    ({ completion } = await runClaudeQuery(req, layout, log, { availableSkillNames, pinnedBodies }));
   } catch (err) {
     // The mirror carries no workflow skill, so there is no procedure to run —
     // see requireWorkflowBodies. In the playground that means the library or the

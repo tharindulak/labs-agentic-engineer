@@ -16,10 +16,10 @@
 
 // Command thunder-app-operator reconciles ThunderApplication custom resources
 // into OAuth clients on the platform Thunder IdP. It runs a single-replica
-// controller-runtime manager (leader election off) that watches all
-// namespaces, drives each CR toward its Thunder application via the operator's
-// system OAuth2 client, and publishes the assigned client_id back as a
-// ConfigMap.
+// controller-runtime manager (leader election off) scoped to the release
+// namespace (POD_NAMESPACE), drives each CR toward its Thunder application via
+// the operator's system OAuth2 client, and publishes the assigned client_id
+// back as a ConfigMap.
 package main
 
 import (
@@ -30,6 +30,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -75,6 +76,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Scope the manager to the release namespace so that ThunderApplication,
+	// ConfigMap, and Secret informers all list/watch the same namespace. This
+	// keeps the cache and RBAC consistent: the Secret Role is namespace-scoped
+	// and all platform ThunderApplication CRs are deployed into this namespace.
+	podNamespace := os.Getenv("POD_NAMESPACE")
+	if podNamespace == "" {
+		setupLog.Error(nil, "POD_NAMESPACE is not set — inject it via the downward API")
+		os.Exit(1)
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		// Single replica by design — leader election off keeps the pod from
@@ -84,6 +95,11 @@ func main() {
 		// exposing a port would only add surface. Re-enable per real cluster.
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: ":8081",
+		Cache: cache.Options{
+			DefaultNamespaces: map[string]cache.Config{
+				podNamespace: {},
+			},
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

@@ -110,9 +110,8 @@ type BuildInputItem struct {
 	Component  string `json:"component" doc:"Owning component name"`
 	Dependency string `json:"dependency" doc:"Dependency name"`
 	Kind       string `json:"kind" enum:"external-config,external-spec,platform-resource,org-service"`
-	// external-config: the collected key/value pairs (secret-vs-nonsecret is
-	// decided server-side from the design's ConfigKey.Secret flags — never sent
-	// by the client, never logged).
+	// external-config request values are ignored. The server derives
+	// unset/defaulted values from the design.
 	Values []ConfigValue `json:"values,omitempty"`
 	// external-spec: the pasted OpenAPI content, or a URL to fetch it from.
 	SpecContent string `json:"specContent,omitempty"`
@@ -123,7 +122,8 @@ type BuildInputItem struct {
 	Approved bool `json:"approved,omitempty"`
 }
 
-// ConfigValue is one external-config key/value pair the drawer collected.
+// ConfigValue is the wire-format shape for an external-config value. Build
+// processing ignores these entries and derives authoring values from design.
 type ConfigValue struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -199,8 +199,7 @@ func (s *Service) StartProjectBuild(ctx context.Context, orgID, projectID string
 // failures (tag == "", no error — a fail-fast pre-tag result that cut no tag),
 // OR an error. Errors are already edge-mapped *EdgeError values EXCEPT the
 // ErrBuildAlreadyRunning sentinel, which each caller interprets for its own
-// context (409 vs. idempotent success). NOTE: inputs may carry raw secret
-// values — it must never be logged.
+// context (409 vs. idempotent success).
 //
 // The dependency hard gate (dependencyGateFailures) runs after the pre-tag
 // inputs are applied but before the tag is cut — see the inline comment at
@@ -219,11 +218,11 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 		return "", nil, &EdgeError{Status: 404, Message: "project repository not found"}
 	}
 
-	// Apply the drawer inputs BEFORE the tag-cut: collect external specs + run the
+	// Apply the relevant drawer inputs BEFORE the tag-cut: collect external specs + run the
 	// design derivations (end-user auth and each resource dependency's wiring —
-	// their commits must land on HEAD so the tag captures them), then stage
-	// external-config secrets to SM-API and assemble the provision payload. A fail-fast pre-tag failure returns {failures} and cuts
-	// NO tag.
+	// their commits must land on HEAD so the tag captures them), then derive
+	// unset/defaulted external authoring and assemble the provision payload. A
+	// fail-fast pre-tag failure returns {failures} and cuts NO tag.
 	var provInputs []delivery.ProvisionInput
 	if s.coord != nil {
 		fails, aerr := s.coord.ApplyPreTag(ctx, orgID, projectID, inputs)
@@ -233,9 +232,9 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 		if len(fails) > 0 {
 			return "", fails, nil
 		}
-		prov, pfails, perr := s.coord.BuildProvisionInputs(ctx, orgID, orgID, projectID, inputs)
+		prov, pfails, perr := s.coord.BuildProvisionInputs(ctx, orgID, projectID, inputs)
 		if perr != nil {
-			return "", nil, &EdgeError{Status: 502, Message: "stage inputs: " + perr.Error()}
+			return "", nil, &EdgeError{Status: 502, Message: "prepare inputs: " + perr.Error()}
 		}
 		if len(pfails) > 0 {
 			return "", pfails, nil
@@ -269,26 +268,34 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 	// supersede the previous milestone, mint `v<N>`, admit the run row that IS
 	// the spec-run mutex — and its detached half plans the Tasks into it.
 	if s.plan != nil {
-		// The tag's PHASE scope (#370) decides the milestone's identity: one
-		// milestone per phase, reused by a same-phase re-tag. A scope read
+		// The tag's story scope (#369) decides the milestone's identity: one
+		// milestone per version. A scope read
 		// failure degrades to the legacy tag-titled milestone rather than
 		// failing a build the gate already validated.
 		scope := spec.BuildScope{Tag: res.Tag}
 		if sc, serr := s.tagger.BuildScopeAtTag(ctx, orgID, projectID, res.Tag); serr == nil {
 			scope = sc
 		} else {
-			slog.WarnContext(ctx, "build: phase scope read failed — using tag-scoped milestone",
+			slog.WarnContext(ctx, "build: story scope read failed — using tag-scoped milestone",
 				"project", projectID, "tag", res.Tag, "error", serr)
 		}
 		run, cerr := s.claimVersion(ctx, orgID, projectID, scope)
 		if cerr != nil {
 			return "", nil, cerr
 		}
-		// Detached: a planning turn is an LLM turn, and the click must not hold
-		// the request open for it. The version is already claimed, so a second
-		// click 409s while this runs.
-		detached := context.WithoutCancel(ctx)
-		go s.fillMilestone(detached, orgID, projectID, res.Tag, run, provInputs)
+		// Synchronous, and fast: this hands the version to the supervisor, which
+		// then fills the milestone as its own first phase. The click used to run
+		// the planning turn itself, in a detached goroutine, because an LLM turn
+		// must not hold a request open — and paid for it with a step that could
+		// not survive a restart, could not retry a blip, and left no history.
+		//
+		// A start that did not happen is settled HERE. The row is the spec-run
+		// mutex; leaving it non-terminal with no workflow behind it would refuse
+		// every later build on this project, and nothing would ever heal it (the
+		// reconcile sweep reads such a row as live).
+		if serr := s.startRun(ctx, orgID, projectID, res.Tag, run, provInputs); serr != nil {
+			return "", nil, serr
+		}
 	}
 
 	slog.InfoContext(ctx, "build started",

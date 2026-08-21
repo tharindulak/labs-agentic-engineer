@@ -21,6 +21,8 @@ import (
 	"errors"
 	"log/slog"
 
+	"go.temporal.io/sdk/temporal"
+
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
@@ -42,27 +44,29 @@ type Activities struct {
 	builds     BuildReader
 	validation ValidationCoordinator
 	dispatcher delivery.MilestoneDispatcher
-	stopper    delivery.MilestoneAgentStopper
-	apiTraits  APITraitSyncer
+	deployer   Deployer
+	deployRead DeploymentReader
+	deployMint DeployIssueMinter
+	gates      Gates
+	planner    Planner
 }
 
 // Deps carries the activity adapters. runs/cycles/milestones are required; the
 // rest degrade (see each activity).
 type Deps struct {
-	Runs       RunStore
-	Cycles     CycleStore
-	Milestones MilestoneReader
-	PRs        PRReader
-	Design     DesignReader
-	Builds     BuildReader
-	Validation ValidationCoordinator
-	Dispatcher delivery.MilestoneDispatcher
-	// Stopper kills a cancelled cycle's agent. Optional: unwired means a cancel
-	// settles the run and leaves the agent to its own deadline, which is exactly
-	// the behaviour this port was added to end — so a degraded boot is the only
-	// place that should ever see it nil.
-	Stopper   delivery.MilestoneAgentStopper
-	APITraits APITraitSyncer
+	Runs         RunStore
+	Cycles       CycleStore
+	Milestones   MilestoneReader
+	PRs          PRReader
+	Design       DesignReader
+	Builds       BuildReader
+	Validation   ValidationCoordinator
+	Dispatcher   delivery.MilestoneDispatcher
+	Deploy       Deployer
+	Deployments  DeploymentReader
+	DeployIssues DeployIssueMinter
+	Gates        Gates
+	Planner      Planner
 }
 
 // NewActivities wires the activity adapters.
@@ -76,8 +80,11 @@ func NewActivities(d Deps) *Activities {
 		builds:     d.Builds,
 		validation: d.Validation,
 		dispatcher: d.Dispatcher,
-		stopper:    d.Stopper,
-		apiTraits:  d.APITraits,
+		deployer:   d.Deploy,
+		deployRead: d.Deployments,
+		deployMint: d.DeployIssues,
+		gates:      d.Gates,
+		planner:    d.Planner,
 	}
 }
 
@@ -104,14 +111,6 @@ type SettleRunInput struct {
 	RunID  string `json:"runId"`
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
-}
-
-// StopCycleAgentInput names the run whose in-flight agent should be stopped. The
-// CYCLE is resolved from it rather than passed, because the Job ref is learned at
-// dispatch and lives on the cycle row.
-type StopCycleAgentInput struct {
-	OrgID string `json:"orgId"`
-	RunID string `json:"runId"`
 }
 
 // SettleRun writes the run's outcome. Guarded in the repository on the run not
@@ -370,7 +369,7 @@ func (a *Activities) PollCycleBuilds(ctx context.Context, in CycleBuildsInput) (
 		return CycleBuildState{}, sourceControlErr(err)
 	}
 	diff := delivery.DiffComponents(files, paths)
-	out := CycleBuildState{Expected: len(diff.Components)}
+	out := CycleBuildState{Expected: len(diff.Components), Components: diff.Components}
 	for _, component := range diff.Components {
 		runs, lerr := a.builds.ListBuildRuns(ctx, in.OrgID, in.ProjectID, component)
 		if lerr != nil {
@@ -388,7 +387,45 @@ func (a *Activities) PollCycleBuilds(ctx context.Context, in CycleBuildsInput) (
 	return out, nil
 }
 
-// ---- managed-API traits -----------------------------------------------------
+// ---- planning ---------------------------------------------------------------
+
+// PlanMilestoneInput fills a version's milestone: mint its dependency gates,
+// then plan its Tasks into it.
+type PlanMilestoneInput struct {
+	OrgID           string                    `json:"orgId"`
+	ProjectID       string                    `json:"projectId"`
+	MilestoneNumber int                       `json:"milestoneNumber"`
+	Tag             string                    `json:"tag"`
+	ProvisionInputs []delivery.ProvisionInput `json:"provisionInputs,omitempty"`
+}
+
+// ProvisionGates authors the version's dependencies and mints its gate issues.
+//
+// Unwired degrades to "nothing to do", like the other optional collaborators: a
+// project with no dependency drawer has no gates to mint, which is an ordinary
+// configuration rather than a failed version.
+func (a *Activities) ProvisionGates(ctx context.Context, in PlanMilestoneInput) error {
+	if a.gates == nil {
+		return nil
+	}
+	return planErr(a.gates.ProvisionForBuild(ctx, in.OrgID, in.ProjectID, in.Tag, in.MilestoneNumber, in.ProvisionInputs))
+}
+
+// PlanMilestone runs the version's planning turn.
+//
+// Idempotent by construction, which is what makes it safe under Temporal's
+// retries AND under a fresh execution started to recover a run: minting dedupes
+// on the title slug against the milestone's own issues, so a re-plan is additive
+// only. A retry after a partially-minted plan completes it rather than doubling
+// it.
+func (a *Activities) PlanMilestone(ctx context.Context, in PlanMilestoneInput) error {
+	if a.planner == nil {
+		return nil
+	}
+	return planErr(a.planner.PlanIntoMilestone(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber))
+}
+
+// ---- deploy -----------------------------------------------------------------
 
 // ProjectRef names the project an activity acts on, for the activities whose
 // scope is the whole project rather than one milestone or one cycle.
@@ -397,31 +434,106 @@ type ProjectRef struct {
 	ProjectID string `json:"projectId"`
 }
 
-// SyncAPITraits lands the per-environment `api-configuration` trait config on
-// every protected component's ReleaseBinding in the project.
-//
-// Called once per cycle at builds-green, which is the earliest point in a run
-// where the write target exists: OpenChoreo creates the ReleaseBinding from the
-// workload the build's last step generates, so before green there may be
-// nothing to patch. The supervisor observes green on a poll up to
-// buildPollInterval after the WorkflowRun actually completed, by which time the
-// deploy chain has long since produced the binding.
+// DeployCycleInput promotes the components a cycle's merge touched, at the
+// commit it merged.
+type DeployCycleInput struct {
+	OrgID      string   `json:"orgId"`
+	ProjectID  string   `json:"projectId"`
+	Components []string `json:"components"`
+	CommitSHA  string   `json:"commitSha"`
+}
+
+// DeployCycle promotes each of the cycle's components: cut the release from the
+// Workload its build posted, then write the binding that pins it — wiring and
+// pin in one object write.
 //
 // Degrades to "nothing to do" when unwired, like the other optional
-// collaborators: a deployment with no trait emitter has no managed-API policy
-// to converge, which is a legitimate configuration rather than a failed run.
-func (a *Activities) SyncAPITraits(ctx context.Context, in ProjectRef) error {
-	if a.apiTraits == nil {
-		return nil
+// collaborators. That is a real configuration (a plane with no OpenChoreo
+// behind it), not a failed run — but note what it means for the loop: with no
+// deployer, a cycle's components never become Ready and the stage reports them
+// all deployed, which is the same answer the loop gave before it had a deploy
+// stage at all.
+func (a *Activities) DeployCycle(ctx context.Context, in DeployCycleInput) ([]delivery.ComponentDeploy, error) {
+	if a.deployer == nil || len(in.Components) == 0 {
+		return nil, nil
 	}
-	if err := a.apiTraits.SyncProjectAPITraits(ctx, in.OrgID, in.ProjectID); err != nil {
-		// Logged here as well as returned: Temporal retries this activity, and the
+	out, err := a.deployer.Deploy(ctx, in.OrgID, in.ProjectID, in.Components, in.CommitSHA)
+	if err != nil {
+		// Logged as well as returned: Temporal retries this activity, and the
 		// per-attempt cause is otherwise only visible in workflow history.
-		slog.ErrorContext(ctx, "run: managed-API trait sync failed",
-			"orgID", in.OrgID, "projectID", in.ProjectID, "error", err)
-		return err
+		slog.ErrorContext(ctx, "run: deploy failed",
+			"orgID", in.OrgID, "projectID", in.ProjectID, "components", in.Components, "error", err)
+		return nil, deployErr(err)
 	}
-	return nil
+	return out, nil
+}
+
+// PlanDeployWaves orders the cycle's components into the levels they can be
+// promoted in — providers before the consumers whose start-up config carries
+// their address.
+//
+// Unwired degrades to ONE wave rather than none, matching DeployCycle's own
+// no-deployer behaviour: a plane without OpenChoreo still walks the stage, it
+// just has nothing to write.
+func (a *Activities) PlanDeployWaves(ctx context.Context, in DeployCycleInput) ([][]string, error) {
+	if a.deployer == nil || len(in.Components) == 0 {
+		return [][]string{in.Components}, nil
+	}
+	waves, err := a.deployer.PlanDeploymentWaves(ctx, in.OrgID, in.ProjectID, in.Components)
+	if err != nil {
+		slog.ErrorContext(ctx, "run: deploy order could not be planned",
+			"orgID", in.OrgID, "projectID", in.ProjectID, "components", in.Components, "error", err)
+		return nil, deployErr(err)
+	}
+	// Logged, not merely returned. The order is the stage's whole premise — a
+	// consumer promoted before its provider is a blank page, and the symptom
+	// appears in a browser rather than anywhere near this code. Reading the plan
+	// off the run beats inferring it from what broke.
+	slog.InfoContext(ctx, "run: deploy order planned",
+		"orgID", in.OrgID, "projectID", in.ProjectID, "waves", waves)
+	return waves, nil
+}
+
+// PollCycleDeployments reads back each component's binding — the readiness poll.
+//
+// With no reader wired every component reads as Ready, which keeps a plane
+// without OpenChoreo from parking its runs in the deploy stage forever.
+func (a *Activities) PollCycleDeployments(ctx context.Context, in DeployCycleInput) (CycleDeployState, error) {
+	if a.deployRead == nil || len(in.Components) == 0 {
+		return CycleDeployState{Expected: len(in.Components), Ready: len(in.Components)}, nil
+	}
+	states, err := a.deployRead.DeploymentState(ctx, in.OrgID, in.ProjectID, in.Components)
+	if err != nil {
+		return CycleDeployState{}, deployErr(err)
+	}
+	return classifyCycleDeploys(len(in.Components), states), nil
+}
+
+// MintDeployFixIssuesInput names the components a cycle could not get running.
+type MintDeployFixIssuesInput struct {
+	OrgID           string            `json:"orgId"`
+	ProjectID       string            `json:"projectId"`
+	MilestoneNumber int               `json:"milestoneNumber"`
+	Components      []string          `json:"components"`
+	Reasons         map[string]string `json:"reasons,omitempty"`
+	CommitSHA       string            `json:"commitSha"`
+}
+
+// MintDeployFixIssues files one issue per component that did not come up.
+//
+// Unwired is a NO-OP rather than an error, matching the other optional
+// collaborators — but it is the one whose absence changes the loop's outcome:
+// with nothing minted the next boundary poll finds an empty working set and
+// settles the run, so a plane without an issue minter reports a version
+// delivered that never started. Wiring it is not optional in any real
+// deployment.
+func (a *Activities) MintDeployFixIssues(ctx context.Context, in MintDeployFixIssuesInput) ([]int, error) {
+	if a.deployMint == nil || len(in.Components) == 0 {
+		return nil, nil
+	}
+	filed, err := a.deployMint.MintDeployFixIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber,
+		in.Components, in.Reasons, in.CommitSHA)
+	return filed, sourceControlErr(err)
 }
 
 // ---- validation ------------------------------------------------------------
@@ -511,35 +623,26 @@ func (a *Activities) MintValidationRepairIssues(ctx context.Context, in MintVali
 
 // DispatchAgent launches the cycle's agent run and returns the Job reference.
 //
-// It is the ONE activity whose failure is not retried by Temporal: a launch
-// that did not happen is agent death, which the cycle's own re-dispatch budget
-// already answers. Letting Temporal retry it as well would spend that budget
-// invisibly.
-// StopCycleAgent stops the agent the run's latest cycle dispatched.
-//
-// It reads the cycle rather than taking a Job ref from the workflow because the
-// ref is learned at dispatch and lives on the row — the loop holds the cycle id,
-// which is the durable key. The LATEST cycle is the right one by construction:
-// only one cycle of a run is ever in flight.
-//
-// Best-effort by contract. Every caller is on a path that is already ending the
-// run, and a run that cannot be settled because its agent could not be reached
-// would be a worse failure than an agent that outlives its run — the outcome the
-// platform records must not depend on the cluster answering.
-func (a *Activities) StopCycleAgent(ctx context.Context, in StopCycleAgentInput) error {
-	if a.stopper == nil || a.cycles == nil {
-		return nil
-	}
-	cycle, err := a.cycles.Latest(ctx, in.OrgID, in.RunID)
-	if err != nil || cycle == nil || cycle.JobRef == "" {
-		return err
-	}
-	return a.stopper.StopAgent(ctx, in.OrgID, cycle.ID, cycle.JobRef)
-}
-
+// Three non-retryable failure classes are stamped here (Temporal must not
+// retry any): agent death — a launch that did not happen, answered by the
+// cycle's re-dispatch budget; quota blocked — entitlement refused, not death;
+// publisher credentials missing — Job create cannot stamp the SecretReference.
 func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDispatch) (string, error) {
 	if a.dispatcher == nil {
 		return "", errNotConfigured
 	}
-	return a.dispatcher.Dispatch(ctx, in)
+	jobRef, err := a.dispatcher.Dispatch(ctx, in)
+	if errors.Is(err, delivery.ErrAgentQuotaExceeded) {
+		// A sentinel does not survive the activity boundary — Temporal
+		// round-trips errors as data — so the refusal is re-expressed as a
+		// TYPED, non-retryable ApplicationError the workflow can branch on.
+		// Non-retryable because no retry can free a billing slot.
+		return "", temporal.NewNonRetryableApplicationError(
+			err.Error(), delivery.ErrTypeAgentQuotaBlocked, err)
+	}
+	if errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
+		return "", temporal.NewNonRetryableApplicationError(
+			delivery.PublisherCredentialsMissingMessage, delivery.ErrTypePublisherCredentialsMissing, err)
+	}
+	return jobRef, err
 }

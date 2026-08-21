@@ -63,7 +63,7 @@ func buildRow(id string) *delivery.Execution {
 }
 
 func newBuildExecutor(oc openchoreo.ComponentClient, repo *sourcecontrol.GitRepository, execRows *fakeExecRepo) *CodingExecutor {
-	return NewCodingExecutor(oc, fakeRepos{repo: repo}, nil, nil, nil, execRows, "http://git", "http://platform", nil, nil, nil, nil)
+	return NewCodingExecutor(oc, fakeRepos{repo: repo}, nil, execRows, "http://git", "http://platform", nil, nil, nil, nil)
 }
 
 // The build path that survives the flip is the exec watcher's git-clone-auth
@@ -111,6 +111,10 @@ func TestBuildPrompt_IsAMilestoneReferenceOnly(t *testing.T) {
 	}
 	if !strings.Contains(got, "`aep` skill") {
 		t.Errorf("prompt must defer the procedure to the aep skill, got %q", got)
+	}
+	lowerPrompt := strings.ToLower(got)
+	if !strings.Contains(lowerPrompt, "external credentials may not yet be configured") || !strings.Contains(lowerPrompt, "live calls may not succeed") {
+		t.Errorf("prompt must warn about unset external credentials, got %q", got)
 	}
 	for _, banned := range []string{"issue:", "issues/", "Closes #", "Resolves #", "git checkout", "gh pr create"} {
 		if strings.Contains(got, banned) {

@@ -280,10 +280,23 @@ if docker image inspect "$RCA_IMAGE" >/dev/null 2>&1; then
         echo "⚠️  import attempt ${attempt} did not land in the node (transient k3d flake) — retrying..."
     done
     if [ -n "$IMPORTED" ]; then
-        echo "✅ imported $RCA_IMAGE into k3d-$CLUSTER_NAME (verified in node containerd)"
-    else
-        echo "⚠️  k3d import failed twice — switching to registry-direct: the cluster"
-        echo "    will pull ${RCA_IMAGE_PULL} from Docker Hub instead."
+        # The patched tag is built locally and exists in no registry, so an image-GC
+        # eviction would be unrecoverable — pin it (see pin_node_image in utils.sh).
+        # It also re-verifies on EVERY server/agent node, where _rca_image_in_node
+        # above only checks server-0: exit 2 means the import landed on some nodes
+        # but not all, so fall through to the registry-direct path rather than
+        # deploying a pod that cannot start wherever the image is missing.
+        PIN_RC=0
+        pin_node_image "$RCA_IMAGE" || PIN_RC=$?
+        if [ "$PIN_RC" = "2" ]; then
+            IMPORTED=""
+        else
+            echo "✅ imported $RCA_IMAGE into k3d-$CLUSTER_NAME (verified in node containerd)"
+        fi
+    fi
+    if [ -z "$IMPORTED" ]; then
+        echo "⚠️  k3d import did not land on every node — switching to registry-direct:"
+        echo "    the cluster will pull ${RCA_IMAGE_PULL} from Docker Hub instead."
         RCA_IMAGE_REPO="${RCA_IMAGE_PULL%%:*}"
         RCA_IMAGE_TAG="${RCA_IMAGE_PULL##*:}"
     fi
@@ -501,28 +514,22 @@ echo "✅ auto-trigger + handoff wiring applied"
 
 # ── 3c. Dynamic Anthropic key — reuse the org's key as set via the AE console ──
 # AnthropicCredentialService.Connect() (aep-api) stores the console-connected
-# key in Postgres (org_secrets, AES-256-GCM), best-effort mirrors it into
-# OpenBao via the SM-API stub, and — when RCA_AGENT_ANTHROPIC_PUSH_NAMESPACE/
-# _SECRET_NAME are set on aep-api (docker-compose.yml) — PUSHES a matching
-# ExternalSecret into THIS namespace itself, synchronously with every
-# Connect() call (AnthropicCredentialService.pushExternalSecret, via the
-# same cluster-gateway-proxy ApplyExternalSecret the coding-agent dispatcher
-# uses for its own per-run secrets). That push is what keeps the
-# ExternalSecret's remoteRef pointed at the CURRENT OpenBao path after
-# Connect() / rotation. Pushing on every Connect() closes that gap for
-# both the first-ever connect and every later rotation — no re-run needed.
+# key in Postgres (org_secrets, AES-256-GCM) and best-effort mirrors it into
+# OpenBao via the SM-API stub. aep-api pushes nothing into this namespace: the
+# observability workstream owns the RCA agent's own ExternalSecret, declared
+# against the org's Anthropic KV path with a refreshInterval that re-syncs it
+# after a connect or a rotation.
 #
-# So THIS script no longer creates or discovers that ExternalSecret at all —
-# it only ensures the one-time STRUCTURAL piece exists: the volume + mount +
-# env var wiring below, which the ExternalSecret (whenever aep-api pushes
-# one) feeds into. If the org has never connected a key via the console,
-# `optional: true` on the volume's secret source means the mount is just an
-# empty dir rather than blocking the pod in ContainerCreating —
-# resolve_api_key() falls back to the static RCA_LLM_API_KEY exactly as
-# before, and main.py's boot-time LLM test skips (warns, doesn't crash) when
-# neither source has a key.
+# So THIS script neither creates nor discovers that ExternalSecret — it only
+# ensures the one-time STRUCTURAL piece exists: the volume + mount + env var
+# wiring below, which the ExternalSecret (whenever the RCA agent's own manifest
+# declares one) feeds into. If no key has been synced, `optional: true` on the
+# volume's secret source means the mount is just an empty dir rather than
+# blocking the pod in ContainerCreating — resolve_api_key() falls back to the
+# static RCA_LLM_API_KEY exactly as before, and main.py's boot-time LLM test
+# skips (warns, doesn't crash) when neither source has a key.
 echo ""
-echo "3️⃣c Dynamic Anthropic key (volume wiring; ExternalSecret is pushed by aep-api on Connect)"
+echo "3️⃣c Dynamic Anthropic key (volume wiring; the ExternalSecret is owned by the RCA agent's own manifest)"
 # Patched onto the Deployment (not chart values) for the same "survives a
 # helm re-run" reason as step 3b's ConfigMap patches. A podSpec change here
 # triggers K8s's normal rolling update on its own — no explicit restart needed.
@@ -547,10 +554,8 @@ spec:
               value: /etc/rca-agent/anthropic/RCA_LLM_API_KEY
 '
 echo "✅ ai-rca-agent volume/env wired for the dynamic Anthropic key"
-echo "   Once an org connects a key via the AE console, aep-api pushes an ExternalSecret here"
-echo "   automatically (refreshed every 5m) — no re-run of this script needed, then or on later"
-echo "   rotations. Until then, or if push isn't configured on aep-api, it falls back to the"
-echo "   static RCA_LLM_API_KEY from step 1b."
+echo "   The RCA agent's own ExternalSecret (against the org's Anthropic KV path) fills this mount."
+echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 1b."
 
 # ── 3d. AEP-owned handoff skill (issue-fix) — deploy-time mount ───────────
 # The handoff sub-agent loads the 'issue-fix' skill (classify config-vs-code,

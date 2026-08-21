@@ -21,7 +21,8 @@ import { query, type McpServerConfig, type Query } from "@anthropic-ai/claude-ag
 import { openDebugSinks, type DebugSinks, type TaskLog } from "./logger.js";
 import type { DispatchRequest } from "./types.js";
 import type { WorkspaceLayout } from "./workspace.js";
-import { emit } from "./progress/emitter.js";
+import { writeBearerFile } from "./workspace.js";
+import { emit, primeScrubber } from "./progress/emitter.js";
 import { createSdkTranslator } from "./progress/from-sdk.js";
 import { createRunWatchdog } from "./progress/watchdog.js";
 import { apiRetryLine, isStreamFrame, readApiRetry } from "./progress/diagnostics.js";
@@ -29,9 +30,12 @@ import { scrubber } from "./progress/scrubber.js";
 import { createWebSearchDlpHook, stagedSecretValues } from "./websearch_dlp.js";
 import { createForegroundFanOutHook } from "./fanout_foreground.js";
 import { createWorkspaceWriteGuard } from "./workspace_guard.js";
+import { startMcpAuthProxy } from "./mcp_auth_proxy.js";
+import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 import { createWebFetchGuardHook } from "./webfetch_guard.js";
 import { checkPreload, preloadWarning } from "./skills_preload_check.js";
 import { SKILLS_MIRROR_DIR, requireWorkflowBodies } from "./skills_presence.js";
+import { curlConfigHome } from "./endpoint_access.js";
 
 /**
  * The mirror the BFF wrote into the project clone, as an absolute path.
@@ -194,10 +198,9 @@ export interface McpQueryOptions {
 
 // buildMcpOptions is a pure seam so the env-presence guard is unit-testable
 // without constructing a full query(). Both mcpUrl and mcpToken must be
-// present — the BFF's coding-agent Job template stamps AEP_MCP_URL
-// unconditionally but only stamps AEP_MCP_TOKEN when minting succeeded
-// (see job_template.go), so a URL-without-token dispatch must still omit
-// the server rather than register it unauthenticated.
+// present — AEP_MCP_URL plus the publisher CC token the runner minted.
+// A URL-without-token dispatch must still omit the server rather than register
+// it unauthenticated.
 export function buildMcpOptions(mcpUrl: string | undefined, mcpToken: string | undefined): McpQueryOptions {
   if (!mcpUrl || !mcpToken) {
     return { allowedTools: BASE_ALLOWED_TOOLS };
@@ -273,6 +276,15 @@ export interface PerTaskSkills {
   pinnedBodies: string;
 }
 
+// Live access-token source for MCP (and bearer-file persistence on remint).
+// canRefresh is true iff publisher CC creds are mounted — the same predicate
+// local and cloud already share. The SDK only accepts static MCP headers, so
+// runClaudeQuery puts a loopback proxy in front of AEP_MCP_URL.
+export interface McpAuthOpts {
+  source: AccessTokenSource;
+  canRefresh: boolean;
+}
+
 /**
  * The skills a run is steered by whatever its design says — read from the mirror
  * like every other skill, but not optional and not the design's to choose.
@@ -322,12 +334,13 @@ export function debugQueryOptions(sinks: DebugSinks | undefined): DebugQueryOpti
   };
 }
 
-export function runClaudeQuery(
+export async function runClaudeQuery(
   req: DispatchRequest,
   layout: WorkspaceLayout,
   log: TaskLog,
   perTaskSkills?: PerTaskSkills,
-): StartedRun {
+  mcpAuth?: McpAuthOpts,
+): Promise<StartedRun> {
   // Spawn env: bearer + git-service URL passed by file path / URL only.
   // No tokens cross via env, so transcripts cannot leak credentials.
   // ANTHROPIC_API_KEY flows through from process.env (container env).
@@ -346,6 +359,12 @@ export function runClaudeQuery(
     AEP_PLATFORM_URL: process.env.AEP_PLATFORM_URL ?? "",
     AEP_GIT_SERVICE_URL: req.gitServiceUrl,
     AEP_CORRELATION_ID: req.correlationId ?? "",
+    // Where curl looks for `.curlrc`. Named explicitly rather than left to the
+    // inherited HOME: a validation run writes `resolve` overrides there for its
+    // deployed endpoints (endpoint_access.ts), and a config curl was never told
+    // to look for is indistinguishable from no config at all. Harmless on a
+    // coding run, which writes no such file.
+    CURL_HOME: curlConfigHome(),
   };
 
   // NO plugins. Every skill this session reads is a directory in the project's
@@ -377,13 +396,35 @@ export function runClaudeQuery(
   // procedure: it throws here, before a session exists, not in each caller.
   const workflowBodies = requireWorkflowBodies(layout.workspace, alwaysOnSkills(req.taskKind));
 
-  // Endpoint Spec Discovery (B2) — register the BFF's MCP server in-process
-  // when the dispatch carries both AEP_MCP_URL and AEP_MCP_TOKEN. Older
-  // dispatches (or a failed token mint) omit one or both, in which case the
-  // runner falls back to the base tool set unchanged.
-  const { mcpServers, allowedTools } = buildMcpOptions(req.mcpUrl, req.mcpToken);
-
-  // D9 secure search (Task 12) — DLP gate for the server-side WebSearch
+  // Endpoint Spec Discovery (B2) — register the BFF's MCP server through a
+  // loopback proxy so the bearer can rotate. The SDK only accepts static
+  // Authorization headers; the proxy calls getToken() per request (5-minute
+  // CC buffer) and on HTTP 401 remints once. A second 401 or a remint
+  // failure kills the run. Dummy "loopback" is never sent upstream.
+  let mcpProxy: { url: string; close: () => Promise<void> } | undefined;
+  let mcpUrl = req.mcpUrl;
+  let mcpToken = req.mcpToken;
+  if (mcpUrl && mcpToken) {
+    const source = mcpAuth?.source ?? staticTokenSource(mcpToken);
+    const canRefresh = mcpAuth?.canRefresh ?? false;
+    let lastBearer = mcpToken;
+    mcpProxy = await startMcpAuthProxy({
+      upstreamUrl: mcpUrl,
+      source,
+      canRefresh,
+      onToken: async (token) => {
+        lastBearer = await writeBearerFile(layout.bearerFile, token, lastBearer);
+        primeScrubber([token]);
+      },
+      onFatal: (err) => {
+        emit({ kind: "result", status: "failure", error: `mcp auth: ${err.message}` });
+        setTimeout(() => process.exit(1), TERMINATE_FLUSH_MS);
+      },
+    });
+    mcpUrl = mcpProxy.url;
+    mcpToken = "loopback";
+  }
+  const { mcpServers, allowedTools } = buildMcpOptions(mcpUrl, mcpToken);
   // tool. Secret candidates are read from childEnv, the SAME env record
   // injected into this run (see websearch_dlp.ts's stagedSecretValues doc
   // comment): staged dependency secrets (Tasks 9-11's per-run K8s Secrets,
@@ -434,7 +475,9 @@ export function runClaudeQuery(
   // prompt-bearing debug log out of the cluster — see DispatchRequest.debug.
   const debugSinks = req.debug ? openDebugSinks(log.dir, (line) => scrubber.scrub(line)) : undefined;
 
-  const q = query({
+  let q: Query;
+  try {
+    q = query({
     prompt: promptWithProjectRoot(req.prompt, layout.workspace, contractReferencePath(layout.workspace)),
     options: {
       cwd: layout.workspace,
@@ -492,7 +535,11 @@ export function runClaudeQuery(
         ],
       },
     },
-  });
+    });
+  } catch (err) {
+    await mcpProxy?.close();
+    throw err;
+  }
 
   // One translator per run — it carries this run's subagent labels and
   // in-flight tool calls (see createSdkTranslator).
@@ -588,6 +635,7 @@ export function runClaudeQuery(
       process.removeListener("SIGINT", onTerminate);
       log.close();
       debugSinks?.close();
+      await mcpProxy?.close();
     }
   })();
 

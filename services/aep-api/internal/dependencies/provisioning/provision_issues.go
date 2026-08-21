@@ -27,19 +27,9 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// Gate kinds. They shape the gate issue's prose (what a human is being asked
-// for) and nothing else — no code branches on a gate's kind after it is minted,
-// because resolving a gate is always the same act: the drawer submits, the
-// platform provisions, the issue closes.
-const (
-	gateConfigCollection     = "config-collection"
-	gateResourceProvisioning = "resource-provisioning"
-)
-
 // provisionDep is one distinct provisioning dependency discovered in a design.
 type provisionDep struct {
 	name         string
-	gateKind     string // config-collection | resource-provisioning
 	resourceType string // platform-resource only
 }
 
@@ -120,9 +110,8 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 	return gateByDep, nil
 }
 
-// distinctProvisionDeps collects the project's distinct external +
-// platform-resource dependencies (keyed by lowercased name — the same dependency
-// consumed by several components is one gate issue).
+// distinctProvisionDeps collects the project's distinct platform-resource
+// dependencies. External values are no longer a build-time collection gate.
 func distinctProvisionDeps(comps []spec.DesignComponent) map[string]provisionDep {
 	out := map[string]provisionDep{}
 	for i := range comps {
@@ -136,10 +125,8 @@ func distinctProvisionDeps(comps []spec.DesignComponent) map[string]provisionDep
 				continue
 			}
 			switch d.Kind {
-			case spec.DependencyKindExternal:
-				out[key] = provisionDep{name: d.Name, gateKind: gateConfigCollection}
 			case spec.DependencyKindPlatformResource:
-				out[key] = provisionDep{name: d.Name, gateKind: gateResourceProvisioning, resourceType: d.ResourceType}
+				out[key] = provisionDep{name: d.Name, resourceType: d.ResourceType}
 			}
 		}
 	}
@@ -170,29 +157,18 @@ func (s *Service) openProvisionDeps(ctx context.Context, orgID, projectID string
 }
 
 func provisionIssueTitle(dep provisionDep) string {
-	if dep.gateKind == gateResourceProvisioning {
-		if dep.resourceType != "" {
-			return fmt.Sprintf("Provision resource: %s (%s)", dep.name, dep.resourceType)
-		}
-		return "Provision resource: " + dep.name
+	if dep.resourceType != "" {
+		return fmt.Sprintf("Provision resource: %s (%s)", dep.name, dep.resourceType)
 	}
-	return "Provide configuration: " + dep.name
+	return "Provision resource: " + dep.name
 }
 
-func provisionIssueRationale(dep provisionDep) string {
-	if dep.gateKind == gateResourceProvisioning {
-		return "A platform resource this project depends on must be provisioned before dependent components can deploy."
-	}
-	return "An external dependency this project consumes needs its configuration/secret values before dependent components can deploy."
+func provisionIssueRationale(provisionDep) string {
+	return "A platform resource this project depends on must be provisioned before dependent components can deploy."
 }
 
 func provisionIssueScope(dep provisionDep) string {
-	if dep.gateKind == gateResourceProvisioning {
-		return fmt.Sprintf("## Provision `%s`\n\nConfirm the provisioning parameters for this platform resource in the "+
-			"architecture drawer. The platform provisions it and closes this issue once the resource is ready — "+
-			"no manual action on this issue is needed.", dep.name)
-	}
-	return fmt.Sprintf("## Configure `%s`\n\nProvide this dependency's configuration/secret values in the architecture "+
-		"drawer. Secret values are stored in the secret manager and never appear here. The platform closes this issue "+
-		"once the values are collected.", dep.name)
+	return fmt.Sprintf("## Provision `%s`\n\nConfirm the provisioning parameters for this platform resource in the "+
+		"architecture drawer. The platform provisions it and closes this issue once the resource is ready — "+
+		"no manual action on this issue is needed.", dep.name)
 }

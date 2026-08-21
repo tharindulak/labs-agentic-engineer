@@ -67,6 +67,7 @@ func BaseModels() []any {
 		&delivery.MilestoneRun{},
 		&delivery.RunCycle{},
 		&delivery.AgentUsageLedgerEntry{},
+		&spec.ProjectConversation{},
 	}
 }
 
@@ -105,7 +106,6 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		ctxStep("org_secrets", RunOrgSecretsMigration),
 		ctxStep("per_org_secret_name", RunPerOrgSecretName),
 		ctxStep("org_anthropic_credentials", RunOrgAnthropicCredentialsMigration),
-		ctxStep("phase3_sm_api_columns", RunPhase3SMAPIColumns),
 		ctxStep("phase3_thunder_org_uuid", RunPhase3ThunderOrgUUID),
 		ctxStep("phase3_coding_agent_logs", RunPhase3CodingAgentLogs),
 		// GitRepository table from the model tag (creates the new composite index).
@@ -114,7 +114,6 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// which creates the new index from the tag but never drops the old one.
 		ctxStep("git_repositories_composite_unique", RunGitRepoCompositeUnique),
 		dbStep("phase7_skills", RunPhase7Skills),
-		ctxStep("phase8_idp_sm_api_columns", RunPhase8IDPSMAPIColumns),
 		// Executions table (AutoMigrated from the model) gains its partial
 		// admission-mutex unique index, which AutoMigrate cannot express.
 		ctxStep("executions", RunExecutions),
@@ -136,10 +135,10 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// no-op; it stays in the ordered list because the list is frozen and
 		// because an existing deployment's abandoned table keeps its index.
 		ctxStep("workflow_runs", RunWorkflowRuns),
-		// coding_agent_logs (GitHub-native): create the JobWatcher's final-log
-		// sidecar keyed to executions(id). Runs after `executions` (FK target) and
-		// `tasks_github_native` (cascade-drops any legacy component_tasks-keyed
-		// table). Supersedes the guarded phase3_coding_agent_logs no-op above.
+		// coding_agent_logs (GitHub-native): legacy CREATE TABLE for execution-
+		// keyed agent-log rows. New cycle logs are read from OpenChoreo + the
+		// observer; nothing writes this table. Runs after `executions` (FK) and
+		// `tasks_github_native`. Supersedes the phase3_coding_agent_logs no-op.
 		ctxStep("coding_agent_logs", RunCodingAgentLogs),
 		// rca_agent_reports (ops.RcaAgentReport): the store backing the
 		// console's Alerts notification bell and Alerts list/stepper
@@ -151,9 +150,9 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// (org, project). Fresh schema — nothing to backfill from the legacy
 		// executions/workflow_runs tables.
 		ctxStep("milestone_runs", RunMilestoneRuns),
-		// run_cycle_logs: the cycle-keyed agent-log sidecar the run progress
-		// stream reads once the Job's pod is reaped. FK'd to run_cycles(id), so it
-		// follows milestone_runs.
+		// run_cycle_logs: RETIRED tombstone. Writers deleted (grill Q2); step
+		// kept for frozen order and no longer creates the table (see
+		// run_cycle_logs.go).
 		ctxStep("run_cycle_logs", RunRunCycleLogs),
 		// agent_usage_ledger: the spend record that outlives the project. Its
 		// upsert arbiter index, plus the one-time backfill from the dispatch rows
@@ -165,8 +164,8 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// step inserts the claude-sonnet-5 row so write-time USD stamping has
 		// a price card to resolve against. Ops-managed thereafter.
 		ctxStep("model_rates_seed", RunModelRatesSeed),
-		// EXPAND: provider-neutral secret_ref_* columns alongside sm_api_*
-		// (phase-03 item 14). CONTRACT (drop sm_api_*) waits for phase 09.
+		// secret_ref_* columns, backfilled from leftover sm_api_* if present.
+		// Do not ADD sm_api_* here — phase14 drops leftovers that already exist.
 		ctxStep("phase11_secret_ref_columns", RunPhase11SecretRefColumns),
 		// Encrypt publisher_client_secret + webhook_secrets in place
 		// (phase-03 items 15–16). Uses the same credential-encryption-key.
@@ -178,6 +177,12 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// Follows phase11, which added the secret_ref_* columns the new row
 		// carries just like the default row does.
 		ctxStep("phase13_anthropic_credential_role", RunPhase13AnthropicCredentialRole),
+		// project_conversations (AutoMigrated from the model) gains the #430
+		// one-current-thread-per-scope partial unique index — the admission
+		// fence lazy create and rotation race against.
+		ctxStep("project_conversations", RunProjectConversations),
+		// Drop leftover sm_api_* columns. secret_ref_* stay.
+		ctxStep("phase14_drop_sm_api_columns", RunPhase14DropSMAPIColumns),
 	}
 }
 

@@ -33,6 +33,14 @@ test("accepts each well-formed kind", () => {
   assert.ok(isTurnSpec({ kind: "flow", skill: "amend", text: "add an actor" }));
   assert.ok(isTurnSpec({ kind: "start" }));
   assert.ok(isTurnSpec({ kind: "start", idea: "an expense tracker" }));
+  // Reference documents ride as paths; a non-string list is a caller bug and
+  // must be refused before it reaches prompt composition.
+  assert.ok(isTurnSpec({ kind: "start", references: ["specs/requirements/references/rfp.pdf"] }));
+  assert.ok(isTurnSpec({ kind: "flow", skill: "design", references: ["specs/requirements/references/sketch.png"] }));
+  assert.equal(isTurnSpec({ kind: "flow", skill: "design", references: [7] }), false);
+  assert.ok(isTurnSpec({ kind: "start", references: [] }));
+  assert.equal(isTurnSpec({ kind: "start", references: [1, 2] }), false);
+  assert.equal(isTurnSpec({ kind: "start", references: "rfp.pdf" }), false);
   assert.ok(isTurnSpec({ kind: "plan" }));
 });
 
@@ -58,23 +66,23 @@ test("plan scope and task context are validated when present", () => {
   assert.ok(
     isTurnSpec({
       kind: "plan",
-      scope: { phase: 2, tag: "spec-v3", stories: [{ number: 1, title: "Sign in", covered: false }] },
+      scope: { tag: "spec-v3", stories: [{ number: 1, title: "Sign in", covered: false }] },
       taskContext: [{ path: "tasks/1.md", body: "# Task" }],
     }),
   );
   // A story row without `covered` would silently plan over already-covered work.
   assert.equal(
-    isTurnSpec({ kind: "plan", scope: { phase: 2, tag: "t", stories: [{ number: 1 }] } }),
+    isTurnSpec({ kind: "plan", scope: { tag: "t", stories: [{ number: 1 }] } }),
     false,
   );
-  assert.equal(isTurnSpec({ kind: "plan", scope: { phase: "2", tag: "t", stories: [] } }), false);
-  assert.equal(isTurnSpec({ kind: "plan", scope: { phase: 2, tag: "t" } }), false);
+  assert.equal(isTurnSpec({ kind: "plan", scope: { tag: 2, stories: [] } }), false);
+  assert.equal(isTurnSpec({ kind: "plan", scope: { tag: "t" } }), false);
   assert.equal(isTurnSpec({ kind: "plan", taskContext: [{ path: "tasks/1.md" }] }), false);
   assert.equal(isTurnSpec({ kind: "plan", taskContext: {} }), false);
 });
 
 test("a title is optional on a story row", () => {
-  assert.ok(isTurnSpec({ kind: "plan", scope: { phase: 1, tag: "t", stories: [{ number: 3, covered: true }] } }));
+  assert.ok(isTurnSpec({ kind: "plan", scope: { tag: "t", stories: [{ number: 3, covered: true }] } }));
 });
 
 test("unknown extra keys are tolerated", () => {

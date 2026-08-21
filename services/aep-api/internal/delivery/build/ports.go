@@ -50,13 +50,6 @@ type DesignFactDeriver interface {
 	DerivePlatformResourceFactsAtHead(ctx context.Context, orgID, projectID string) error
 }
 
-// SecretStager writes an external dependency's secret values to SM-API and
-// returns the reference per env (NOT the value). Satisfied by the app-root
-// adapter over resources.ExternalResourceProvisioner.StageSecrets.
-type SecretStager interface {
-	StageExternalSecrets(ctx context.Context, orgID, ocOrgID, projectID, depName string, secretsByEnv map[string]map[string]string) (refByEnv map[string]string, err error)
-}
-
 // RepoLookup resolves a project's "owner/name" repo full name. Satisfied by
 // the app-root repoFullNameLookup adapter.
 type RepoLookup interface {
@@ -68,8 +61,8 @@ type RepoLookup interface {
 // handler unwraps *spec.SpecValidationError into the 422 detail.
 type SpecTagger interface {
 	TagSpec(ctx context.Context, orgID, projectID string) (*spec.SpecSaveResult, error)
-	// BuildScopeAtTag reads the tag's phase scope (#370): the milestone the
-	// claim mints is the PHASE's, and a same-phase re-tag reuses it.
+	// BuildScopeAtTag reads the tag's story scope (#369): the milestone the
+	// claim mints is the version's.
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error)
 }
 

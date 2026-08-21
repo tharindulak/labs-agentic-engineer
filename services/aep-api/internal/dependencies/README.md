@@ -43,7 +43,7 @@ three services are sub-package slices that import only that root.
 
 | Slice | Ops / role | Reaches |
 |---|---|---|
-| `provisioning` | 7 HTTP ops: list/delete/collect-values external resources, provision-platform, dependency-status, request/list org-service access + the aep:provision gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues) |
+| `provisioning` | 8 HTTP ops: list/delete/collect-values external resources, project readiness, provision-platform, dependency-status, request/list org-service access + the aep:provision gate lifecycle, watcher, teardown | root cores; delivery (provision execution rows); sourcecontrol (gate issues) |
 | `mcpdiscovery` | the MCP discovery server + `ListPlatformResourceTypes` HTTP read | root `ResourceTypeLister` / endpoint catalog |
 | `runtimeconfig` | the SPA `env-config.js` convergence service + its watcher (no HTTP op) | root naming/markers; spec (design at HEAD); repositories (execution enumerate) |
 
@@ -74,6 +74,15 @@ slices.
   DB row — the org-namespaced OpenChoreo `ResourceType` is the registry (ADR-0009).
 
 ## Invariants — don't break
+- **`env-config.js` is ready or absent, never partial** — and "ready" means exactly *the keys the SPA needs
+  to START*: a sibling backend's address, a platform resource's outputs. `src/env.ts` throws on a missing
+  key at module load, so half a file is worse than the stale one the pod already has. The SPA's OWN
+  external URL is deliberately not one of those keys: it exists only once the SPA has a rendered binding,
+  so requiring it before the first write is a demand the SPA cannot meet until it has already been
+  deployed — and the one thing that needs it (registering the callback URL with an OIDC dependency) is not
+  read by the bundle at all. That registration is SOFT: it is retried by the deploy stage's converge pass
+  and by the converge watcher, and it never holds the file back. Grading it hard once withheld
+  `window._env_` entirely and served a blank page. ADR-0019.
 - **Secret values never leave the SecretWriter port.** External-resource secret values route through SM-API;
   issue bodies, comments, and API responses carry only names / paths / refs — never secret material. The
   domain imports no secret-backend SDK (the fence holds via `platform/secrets`).
@@ -82,6 +91,10 @@ slices.
   drawer's resolve are LABEL queries, never a body read (bodies are prose a human may rewrite) and never a
   title match. A gate deliberately does not carry `aep` — it is a hold on the next dispatch, never agent
   work — and it holds only DISPATCH: an open gate never blocks a run from settling.
+- **External values are authored unset and never mint a provision gate.** Build derives every external
+  dependency from the design's union schema, seeds plain defaults, authors other plain values plus
+  `secretStorePath` empty, and preserves non-empty values already saved on a rebuild. Project readiness
+  iterates that same design schema; stale binding keys cannot make a dependency configured.
 - **A gate's provisioning run keeps an execution row.** It is the one execution kind the milestone model
   still writes: admitted when the drawer submits, finished by the readiness watcher, and its terminal state
   is what closes the gate issue.
@@ -102,4 +115,9 @@ slices.
 - **The wire quirks the contract-first cutover pinned stay pinned**: wrong-kind → 400, not-found/
   not-registered → 404, in-use → 409, provision-failure → 502; get-dependency-status and list-access-requests
   return their empty-but-present shapes; a nil service 503s (the surface exists with the feature unwired).
+- **Platform-resource catalog may be disabled.** When `PLATFORM_RESOURCES_ENABLED=false`,
+  `ResourceTypeCatalog.List` returns an empty slice without calling OpenChoreo. HTTP
+  `GET .../platform-resource-types`, MCP `list_platform_resource_types`, and design-save
+  marker/wiring stamping all degrade off that empty catalog (no separate API signal).
+  Any future entry point that discovers platform resource types must honor the same flag.
 - Platform-wide rules (tenant gate, secrets fence, feature-free domains) → [../../README.md](../../README.md).

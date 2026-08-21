@@ -277,6 +277,67 @@ beforeEach(() => {
   });
 });
 
+describe("SpecView never opens a reference document (#383)", () => {
+  // References are transient turn inputs and are never committed (ADR-0017),
+  // so `toSpecEntry` drops them and they cannot reach the file list from git.
+  // The room is the other way in: a project created under the feature's v1 has
+  // them in git, so a room seeded from that HEAD still carries the paths. This
+  // exercises SpecView's own collab-union call to `toSpecEntry` — the union is
+  // where a room path becomes an entry — and pins that a reference path never
+  // becomes one, and so never reaches the pane as base64 editor text.
+  it("drops a reference path arriving from the collab room", () => {
+    mockCollab = {
+      ...soloCollab(),
+      docPaths: ["specs/requirements/references/claim-form.pdf"],
+    };
+    mockUseSpecFiles.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.queryByText("claim-form.pdf"),
+    ).not.toBeInTheDocument();
+    // The content hook is disabled (empty path) rather than pointed at it.
+    const requestedPaths = mockUseSpecFileContent.mock.calls.map(
+      (c) => (c[1] as { path: string } | null)?.path ?? null,
+    );
+    expect(requestedPaths).not.toContain(
+      "specs/requirements/references/claim-form.pdf",
+    );
+  });
+
+  it("a requirements file still wins the default as before", () => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [
+        {
+          path: "specs/requirements/references/claim-form.pdf",
+          sha: "r1",
+          group: "references",
+          size: 868409,
+        },
+        { path: "specs/requirements/prd.md", sha: "p1", group: "requirements" },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    render(<SpecView projectName="proj1" />);
+    const requestedPaths = mockUseSpecFileContent.mock.calls.map(
+      (c) => (c[1] as { path: string } | null)?.path ?? null,
+    );
+    expect(requestedPaths).toContain("specs/requirements/prd.md");
+    expect(requestedPaths).not.toContain(
+      "specs/requirements/references/claim-form.pdf",
+    );
+  });
+});
+
 describe("SpecView onBuild routing (#164)", () => {
   beforeEach(() => {
     vi.clearAllMocks();

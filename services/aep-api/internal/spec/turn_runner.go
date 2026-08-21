@@ -38,6 +38,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/platform/agentfold"
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -65,7 +66,11 @@ type turnJob struct {
 	nsConversationID string            // namespaced agents-service id
 	turn             agentsvc.TurnSpec // what this turn is FOR (the agents service composes the text)
 	target           string            // spec-bundle path this turn should write to, when pinned
-	summary          string            // raw user instruction (feed line subject)
+	summary          string            // raw user instruction (feed line subject + journal display, #463)
+	// author is the acting user for the journal (#463), nil when the bearer
+	// carries no human identity — an M2M token journals no author rather than
+	// a bare subject claim.
+	author *agentsvc.JournalAuthor
 	repoRef          sourcecontrol.RepoRef
 	baseRef          string
 	skillsRef        string
@@ -127,6 +132,42 @@ func designOrCollabTurn(job turnJob) bool {
 	return job.flow == "design" || job.collabRoomID != ""
 }
 
+// journalFor is the turn's display record (#463): the raw client-sent
+// instruction — exactly what the sender's UI rendered as the user bubble —
+// plus the acting user. The agents service stores it beside the transcript;
+// its get-conversation read serves it for user rows so the composed prompt
+// never reaches a browser. A blank instruction (never sent by real clients)
+// journals nothing rather than an empty bubble.
+func journalFor(job turnJob) *agentsvc.JournalBlock {
+	// Trimming detects a blank instruction only — the journal carries the
+	// instruction VERBATIM (that is its contract; the sender's UI rendered
+	// exactly these bytes).
+	if strings.TrimSpace(job.summary) == "" {
+		return nil
+	}
+	return &agentsvc.JournalBlock{Text: job.summary, Author: job.author}
+}
+
+// journalAuthorFrom projects the request bearer onto the journal's author
+// shape, EMAIL-ANCHORED to match the console's live author identity
+// ({id: email, displayName}) — that equality is what lets a rehydrated row
+// read as "you" vs a teammate. No email means no attributable human (an M2M
+// token, or a minimal user token): journal no author, never a bare subject.
+func journalAuthorFrom(ctx context.Context) *agentsvc.JournalAuthor {
+	token := auth.GetAuthToken(ctx)
+	if token == "" {
+		return nil
+	}
+	name, email := parseDisplayIdentity("Bearer " + token)
+	if email == "" {
+		return nil
+	}
+	if name == "" {
+		name = email
+	}
+	return &agentsvc.JournalAuthor{ID: email, DisplayName: name}
+}
+
 // mcpForTurn mints the per-turn MCP discovery block for design-generation turns
 // AND collab room-scoped turns (dependency-management Phase 5): a BFF-signed
 // token (aud aep-api-mcp) carrying the org, plus the BFF's internal MCP endpoint
@@ -174,6 +215,34 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		previousTurnFailed = last.Status == turnStatusFailed
 	}
 
+	// Heartbeat the row for the WHOLE run, starting BEFORE dispatch (D17).
+	// The agents service opens its SSE stream lazily on the first model event,
+	// so Dispatch blocks until then — and a turn carrying a large PDF or image
+	// can spend well past the 60s stale threshold being read before the model
+	// emits anything. Heartbeating only after Dispatch returned left that
+	// window unguarded, and the sweep failed healthy turns as "replica crashed
+	// or hung".
+	hbEvery := s.heartbeatEvery
+	if hbEvery <= 0 {
+		hbEvery = turnHeartbeatEvery
+	}
+	hbStop := make(chan struct{})
+	defer close(hbStop)
+	go func() {
+		ticker := time.NewTicker(hbEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbStop:
+				return
+			case <-ticker.C:
+				if err := s.turns.Heartbeat(ctx, job.turnID); err != nil {
+					slog.WarnContext(ctx, "genai: turn heartbeat failed", "turn", job.turnID, "error", err)
+				}
+			}
+		}
+	}()
+
 	var collab *agentsvc.CollabBlock
 	if job.collabRoomID != "" {
 		collab = &agentsvc.CollabBlock{RoomID: job.collabRoomID, Token: job.collabToken}
@@ -193,30 +262,13 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		MCP:                    s.mcpForTurn(ctx, job),
 		WebSearch:              designOrCollabTurn(job),
 		Collab:                 collab,
+		Journal:                journalFor(job),
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "genai: turn dispatch failed", "turn", job.turnID, "error", err)
 		return failedTerminal(turnReasonDispatchFailed, "agents dispatch failed: "+err.Error(), nil)
 	}
 	defer body.Close()
-
-	// Heartbeat the row while the stream runs (D17).
-	hbStop := make(chan struct{})
-	defer close(hbStop)
-	go func() {
-		ticker := time.NewTicker(turnHeartbeatEvery)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-hbStop:
-				return
-			case <-ticker.C:
-				if err := s.turns.Heartbeat(ctx, job.turnID); err != nil {
-					slog.WarnContext(ctx, "genai: turn heartbeat failed", "turn", job.turnID, "error", err)
-				}
-			}
-		}
-	}()
 
 	// Idle watchdog (plan_tap precedent): any read pulses activity; silence
 	// past the deadline closes body to unblock the pending read.

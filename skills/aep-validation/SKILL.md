@@ -105,28 +105,14 @@ probe, scan, or infer endpoints, and do not call the platform for them
 yourself; the URL is not something you can work out from inside the cluster.
 
 - **Endpoints** become `tests/e2e/targets.json` (step 5) and your target
-  list. Probe each URL (`curl -sf -o /dev/null <url>` or a playwright-cli
-  visit) before authoring. Never start, build, or deploy the app — you
-  validate what is already running; an unreachable endpoint → issue
-  comment + exit failure.
-- **A `.localhost` endpoint fails that probe for a reason that is not the
-  app.** curl and Chromium both implement RFC 6761: they resolve
-  `*.localhost` to loopback THEMSELVES, ignoring DNS and `/etc/hosts`. Inside
-  the runner pod loopback is the pod, so a plain `curl` gets connection
-  refused however healthy the deployment is. Do not read that as an
-  unreachable endpoint, and do not go hunting for the cause — resolve the
-  gateway from DNS and pin it per request:
-
-  ```bash
-  GW=$(getent ahostsv4 development-default.openchoreoapis.localhost | awk 'NR==1{print $1}')
-  curl -sf -o /dev/null --resolve "<host>:19080:$GW" "<url>"
-  ```
-
-  The browser needs the same override, which
-  `playwright.config.template.ts` already applies for you via
-  `--host-resolver-rules` — copy that file unedited and it self-configures.
-  Only treat an endpoint as genuinely down if it still fails WITH the
-  mapping.
+  list. Each one is reachable exactly as written: the runner probed them all
+  and exits before starting you if any did not answer, so there is no
+  unreachable-endpoint case for you to detect or report. Use the URL as
+  given — do not rewrite it to an IP or a cluster-internal name, which would
+  route around the gateway and stop testing what a user actually reaches.
+  Never start, build, or deploy the app; you validate what is already
+  running. If a request fails once you are authoring, that is a finding
+  about the app, not a target to go re-derive.
 - **Test credentials (on demand):** request them only when a criterion
   needs a login — POST the test-credentials endpoint with an optional
   `role` hint (the role the flow requires). `AEP_TASK_ID` is this run's

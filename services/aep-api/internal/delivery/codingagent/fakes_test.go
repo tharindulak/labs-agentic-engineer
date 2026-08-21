@@ -19,7 +19,6 @@ package codingagent
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -79,20 +78,12 @@ func (f *fakeRuntimeConfig) calls() [][3]string {
 	return append([][3]string{}, f.args...)
 }
 
-// fakeIdentities / fakeTokens satisfy the coding-dispatch ports for the
-// ClusterWorkflow path (proxy unset).
+// fakeIdentities satisfies the coding-dispatch Identities port for the
+// OpenChoreo Component path.
 type fakeIdentities struct{}
 
 func (fakeIdentities) IdentityFor(context.Context, string) (string, string, string, error) {
 	return "aep-bot", "bot@aep.dev", "aep-bot", nil
-}
-
-type fakeTokens struct{}
-
-func (fakeTokens) Issue(string, string, string) (string, error) { return "bearer-xyz", nil }
-
-func (fakeTokens) IssueServiceToken(string, string, time.Duration) (string, error) {
-	return "mcp-token-xyz", nil
 }
 
 // fakeRetrier records RetryAuthFailedBuild calls and returns a scripted result.
@@ -150,7 +141,9 @@ func (f *fakeExecRepo) count() int {
 	return len(f.rows)
 }
 
-func (f *fakeExecRepo) RecordUsage(context.Context, string, contracts.CapturedUsage) error { return nil }
+func (f *fakeExecRepo) RecordUsage(context.Context, string, contracts.CapturedUsage) error {
+	return nil
+}
 
 func (f *fakeExecRepo) SumUsageByProjectPhase(context.Context, string) (map[string]contracts.StampedUsage, map[string]contracts.StampedUsage, error) {
 	return nil, nil, nil
@@ -243,8 +236,8 @@ func (f *fakeExecRepo) DistinctDeployedProjects(context.Context) ([]delivery.Dep
 }
 
 // noDispatchPathErr is the error launchAgent returns once it clears credential
-// resolution and reaches the dispatch stage with no path wired (proxy and
-// k8sJob both unset). The dispatch tests assert it to prove control reached
-// that stage: they exercise the SHAPE of a launch, not any particular dispatch
-// mechanism (the K8s Job / proxy paths need cluster infra to unit-test).
+// resolution and reaches the dispatch stage with no OpenChoreo client wired.
+// The dispatch tests assert it to prove control reached that stage: they
+// exercise the SHAPE of a launch, not the OC Component chain (which needs
+// cluster infra to unit-test).
 const noDispatchPathErr = "no coding-agent dispatch path configured"

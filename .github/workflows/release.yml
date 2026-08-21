@@ -35,9 +35,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: aep-server
-            dockerfile: tools/aepctl/Dockerfile.server
-            context: tools/aepctl
           - name: aep-api
             dockerfile: services/aep-api/Dockerfile
             context: services/aep-api
@@ -60,9 +57,9 @@ jobs:
           - name: console
             dockerfile: apps/console/Dockerfile
             context: .
-          - name: cluster-gateway-proxy
-            dockerfile: deployments/local-cluster-gateway-proxy/Dockerfile
-            context: deployments/local-cluster-gateway-proxy
+          - name: thunder-app-operator
+            dockerfile: deployments/single-cluster/resource-types/thunder-app/operator/Dockerfile
+            context: deployments/single-cluster/resource-types/thunder-app/operator
 
     steps:
       - uses: actions/checkout@v4
@@ -128,50 +125,52 @@ jobs:
             helm registry login ${{ env.REGISTRY }} \
               --username ${{ github.actor }} --password-stdin
 
-      - name: Package bootstrap chart
-        run: |
-          cp -r deployments/helm-charts/bootstrap /tmp/bootstrap
-
-          yq -i '.version = "${{ inputs.version }}"' /tmp/bootstrap/Chart.yaml
-          yq -i '.appVersion = "${{ inputs.version }}"' /tmp/bootstrap/Chart.yaml
-          yq -i '.aepServer.image.repository = "${{ env.IMAGE_PREFIX }}/aep-server"' /tmp/bootstrap/values.yaml
-          yq -i '.aepServer.image.tag = "${{ inputs.version }}"' /tmp/bootstrap/values.yaml
-          yq -i '.aepServer.image.pullPolicy = "IfNotPresent"' /tmp/bootstrap/values.yaml
-
-          helm dependency build /tmp/bootstrap
-          helm package /tmp/bootstrap --destination /tmp/charts
-
       - name: Package platform chart
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo "invalid version: $VERSION"; exit 1; }
+
+          helm dependency update deployments/helm-charts/platform
           cp -r deployments/helm-charts/platform /tmp/platform
 
-          yq -i '.version = "${{ inputs.version }}"' /tmp/platform/Chart.yaml
-          yq -i '.appVersion = "${{ inputs.version }}"' /tmp/platform/Chart.yaml
-          yq -i '.aepApi.image.repository = "${{ env.IMAGE_PREFIX }}/aep-api"' /tmp/platform/values.yaml
-          yq -i '.aepApi.image.tag = "${{ inputs.version }}"' /tmp/platform/values.yaml
+          yq -i '.version = strenv(VERSION)' /tmp/platform/Chart.yaml
+          yq -i '.appVersion = strenv(VERSION)' /tmp/platform/Chart.yaml
+          yq -i '.aepApi.image.repository = strenv(IMAGE_PREFIX) + "/aep-api"' /tmp/platform/values.yaml
+          yq -i '.aepApi.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.aepApi.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.repository = "${{ env.IMAGE_PREFIX }}/agents"' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.tag = "${{ inputs.version }}"' /tmp/platform/values.yaml
+          yq -i '.aepAgents.image.repository = strenv(IMAGE_PREFIX) + "/agents"' /tmp/platform/values.yaml
+          yq -i '.aepAgents.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.aepAgents.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.collab.image.repository = "${{ env.IMAGE_PREFIX }}/collab"' /tmp/platform/values.yaml
-          yq -i '.collab.image.tag = "${{ inputs.version }}"' /tmp/platform/values.yaml
+          yq -i '.collab.image.repository = strenv(IMAGE_PREFIX) + "/collab"' /tmp/platform/values.yaml
+          yq -i '.collab.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.collab.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.repository = "${{ env.IMAGE_PREFIX }}/aep-mcp-server"' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.tag = "${{ inputs.version }}"' /tmp/platform/values.yaml
+          yq -i '.aepMcpServer.image.repository = strenv(IMAGE_PREFIX) + "/aep-mcp-server"' /tmp/platform/values.yaml
+          yq -i '.aepMcpServer.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.aepMcpServer.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.console.image.repository = "${{ env.IMAGE_PREFIX }}/console"' /tmp/platform/values.yaml
-          yq -i '.console.image.tag = "${{ inputs.version }}"' /tmp/platform/values.yaml
+          yq -i '.console.image.repository = strenv(IMAGE_PREFIX) + "/console"' /tmp/platform/values.yaml
+          yq -i '.console.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.console.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.codingAgentDispatch.clusterGatewayProxy.image = "${{ env.IMAGE_PREFIX }}/cluster-gateway-proxy:${{ inputs.version }}"' /tmp/platform/values.yaml
-          yq -i '.codingAgentRunner.image = "${{ env.IMAGE_PREFIX }}/remote-worker:${{ inputs.version }}"' /tmp/platform/values.yaml
+          yq -i '.codingAgentRunner.image = strenv(IMAGE_PREFIX) + "/remote-worker:" + strenv(VERSION)' /tmp/platform/values.yaml
+          yq -i '."thunder-app-operator".image.repository = strenv(IMAGE_PREFIX) + "/thunder-app-operator"' /tmp/platform/values.yaml
+          yq -i '."thunder-app-operator".image.tag = strenv(VERSION)' /tmp/platform/values.yaml
+          yq -i '."thunder-app-operator".image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
 
           helm package /tmp/platform --destination /tmp/charts
 
+      - name: Package thunder-app-operator chart
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cp -r deployments/single-cluster/resource-types/thunder-app/operator/helm /tmp/thunder-app-operator
+          yq -i '.version = strenv(VERSION)' /tmp/thunder-app-operator/Chart.yaml
+          yq -i '.appVersion = strenv(VERSION)' /tmp/thunder-app-operator/Chart.yaml
+          helm package /tmp/thunder-app-operator --destination /tmp/charts
+
       - name: Push charts to GHCR
         run: |
-          for chart in /tmp/charts/*.tgz; do
-            helm push "$chart" oci://${{ env.REGISTRY }}/wso2/aep/charts
-          done
+          helm push /tmp/charts/aep-platform-*.tgz oci://${{ env.REGISTRY }}/wso2/aep/charts
+          helm push /tmp/charts/thunder-app-operator-*.tgz oci://${{ env.REGISTRY }}/wso2
 
   # ─── Platform: create GitHub release ────────────────────────────────────────
   create-platform-release:
@@ -196,28 +195,23 @@ jobs:
           ### Install
 
           \`\`\`bash
-          helm install aep oci://ghcr.io/wso2/aep/charts/aep-bootstrap \\
-            --version ${{ inputs.version }} -n wso2-aep --create-namespace
-
-          aep platform install \\
-            --server http://aep-server.openchoreo.localhost:8080 \\
-            --platform-version ${{ inputs.version }}
+          aectl platform config import --config <your-config-file>
+          aectl platform install --platform-version ${{ inputs.version }}
           \`\`\`
 
           ### Images
 
-          - \`ghcr.io/wso2/aep/aep-server:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/aep-api:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/agents:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/collab:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/aep-mcp-server:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/console:${{ inputs.version }}\`
-          - \`ghcr.io/wso2/aep/cluster-gateway-proxy:${{ inputs.version }}\`"
+          - \`ghcr.io/wso2/aep/thunder-app-operator:${{ inputs.version }}\`"
 
   # ─── CTL: build CLI binaries ─────────────────────────────────────────────────
   build-ctl-binaries:
-    name: Build aep binary (${{ matrix.goos }}/${{ matrix.goarch }})
+    name: Build aectl binary (${{ matrix.goos }}/${{ matrix.goarch }})
     if: ${{ inputs.component == 'ctl' || inputs.component == 'all' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -244,21 +238,23 @@ jobs:
         with:
           go-version-file: go.work
 
-      - name: Build aep
-        working-directory: tools/aepctl
+      - name: Build aectl
+        working-directory: tools/aectl
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          VERSION: ${{ inputs.version }}
         run: |
-          go build -trimpath -ldflags="-s -w -X main.version=${{ inputs.version }}" \
-            -o aep-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }} .
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo "invalid version: $VERSION"; exit 1; }
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+            -o aectl-${GOOS}-${GOARCH}${{ matrix.ext || '' }} .
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aep-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: tools/aepctl/aep-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }}
+          name: aectl-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: tools/aectl/aectl-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext || '' }}
 
   # ─── CTL: create GitHub release ──────────────────────────────────────────────
   create-ctl-release:
@@ -275,29 +271,32 @@ jobs:
       - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: aep-*
+          pattern: aectl-*
           path: dist
           merge-multiple: true
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          REPO: ${{ github.repository }}
         run: |
-          gh release create "ctl/v${{ inputs.version }}" \
-            --title "AEP CTL v${{ inputs.version }}" \
-            --notes "## AEP CTL v${{ inputs.version }}
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || { echo "invalid version: $VERSION"; exit 1; }
+          gh release create "ctl/v${VERSION}" \
+            --title "AECTL v${VERSION}" \
+            --notes "## AECTL v${VERSION}
 
           ### Install
 
           **Linux (amd64)**
           \`\`\`bash
-          curl -L https://github.com/${{ github.repository }}/releases/download/ctl%2Fv${{ inputs.version }}/aep-linux-amd64 \
-            -o /usr/local/bin/aep && chmod +x /usr/local/bin/aep
+          curl -L https://github.com/${REPO}/releases/download/ctl%2Fv${VERSION}/aectl-linux-amd64 \
+            -o /usr/local/bin/aectl && chmod +x /usr/local/bin/aectl
           \`\`\`
 
           **macOS (Apple Silicon)**
           \`\`\`bash
-          curl -L https://github.com/${{ github.repository }}/releases/download/ctl%2Fv${{ inputs.version }}/aep-darwin-arm64 \
-            -o /usr/local/bin/aep && chmod +x /usr/local/bin/aep
+          curl -L https://github.com/${REPO}/releases/download/ctl%2Fv${VERSION}/aectl-darwin-arm64 \
+            -o /usr/local/bin/aectl && chmod +x /usr/local/bin/aectl
           \`\`\`" \
-            dist/aep-*
+            dist/aectl-*

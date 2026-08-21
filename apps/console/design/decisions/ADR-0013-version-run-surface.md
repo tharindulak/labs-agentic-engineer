@@ -101,10 +101,14 @@ is no ledger list in between.
    what is being validated.** The Validation page keeps its role — the authored
    criteria joined with the runner's committed report — but re-keys to the run's
    **verdict**, read from `/builds/{tag}/runs`; there is no validation endpoint.
-   Its live log is the run feed filtered to the validation cycle. The
-   deployments board's entry chip now names the outcome ("validation passed")
-   instead of naming the artifact, because the verdict is finally a fact the
-   platform holds. The validation issue never appears in the issue list.
+   Its live log is the run feed filtered to the validation cycle. The deployments
+   surface names the outcome ("validation passed") instead of naming the artifact,
+   because the verdict is finally a fact the platform holds. The validation issue
+   never appears in the issue list.
+   *Amended by ADR-0016: the verdict alone is not what either surface renders (§1),
+   and the entry chip this decision put in the Dev environment card is gone — the
+   rail's Validation stage carries the outcome, with the counts, a sentence and its
+   own link to the report.*
 
 9. **The run feed is one SSE stream, rendered as an accordion by cycle.**
    *(The stream contract is unchanged. Per ADR-0014 the log renders inside the

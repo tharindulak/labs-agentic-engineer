@@ -35,39 +35,54 @@ import (
 // plus the projectName that scopes it. The client applies ScopedComponentName
 // internally so callers never deal with the prefixed k8s name.
 //
-// Deploy chain: with AutoDeploy=true set on the Component (see
-// dispatch_service.ensureOCComponent), OC's Component controller owns the
-// Workload → ComponentRelease → ReleaseBinding fan-out. The build
-// workflow's `generate-workload-cr` step POSTs the Workload; the
-// controller picks it up, hashes the spec, creates a ComponentRelease,
-// and binds it into the project's first environment. The BFF only reads
-// the result back via ListDeployments. Wrappers for the write side of
-// that chain are deliberately absent — no caller needs them yet.
+// Deploy chain: the BFF owns it, for every component. AutoDeploy is false
+// everywhere, so no controller promotes a release on its own — the platform
+// decides when a build becomes a running deployment, which is what lets the run
+// supervisor order validation AFTER the version is actually serving.
+//
+// The two halves differ only in who posts the Workload:
+//
+//   - USER components: the build's last step posts the Workload; the deploy
+//     stage then calls EnsureRelease + ApplyReleaseBinding at the merge SHA.
+//   - Ephemeral platform components (coding-agent): no build exists, so the
+//     dispatcher drives EnsureWorkload as well, then EnsureRelease +
+//     EnsureReleaseBinding.
 type ComponentClient interface {
 	ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.ComponentList, error)
 	GetComponent(ctx context.Context, orgName, projectName, componentName string) (*gen.Component, error)
 	CreateComponent(ctx context.Context, orgName, projectName string, req *CreateComponentRequest) (*gen.Component, error)
-	// UpdateComponentWorkflowEnvVars writes per-component env vars onto each
-	// of the component's ReleaseBindings at
-	// `spec.workloadOverrides.container.env`. Per-env (one RB per
-	// environment) so OC's controller renders the values straight into the
-	// pod spec on the next reconcile — no rebuild required, matching how
-	// PE-managed components (aep-api, agent-manager-service, etc.)
-	// carry their env. ReleaseBindings are listed by component label and
-	// each is updated independently; if no RBs exist yet (pre-first-deploy)
-	// the call is a soft no-op and the caller is expected to retry once
-	// the first build has produced RBs.
-	UpdateComponentWorkflowEnvVars(ctx context.Context, orgName, projectName, componentName string, envVars []WorkflowEnvVarRef) error
 
-	// UpdateComponentWorkflowFiles writes per-component literal files onto
-	// each of the component's ReleaseBindings at
-	// `spec.workloadOverrides.container.files`. Used by the runtime-config
-	// pipeline to drop `env-config.js` (and any other literal file) into
-	// the pod via an OC-rendered ConfigMap mounted at the declared
-	// mountPath — no rebuild needed. As with UpdateComponentWorkflowEnvVars,
-	// when no ReleaseBindings exist yet the call is a soft no-op and the
-	// caller is expected to retry after the first build produces RBs.
-	UpdateComponentWorkflowFiles(ctx context.Context, orgName, projectName, componentName string, files []WorkflowFileVar) error
+	// EnsureComponentType get-or-creates a namespaced ComponentType. Idempotent
+	// on (orgName, metadata.name): HTTP 409 GETs the existing type and succeeds.
+	// body is the raw CR map (e.g. CodingAgentComponentType()) posted via the
+	// gen client's WithBody path — no typed converter.
+	EnsureComponentType(ctx context.Context, orgName string, body map[string]any) error
+
+	// ListInternalComponents returns the project's aep-internal coding-agent
+	// Components — the ONLY read that can see what ListComponents filters out.
+	// Drives the retention reaper.
+	ListInternalComponents(ctx context.Context, orgName, projectName string) ([]InternalComponent, error)
+
+	// The explicit deploy chain. EnsureWorkload is the ephemeral half — an
+	// agent cycle has no build to post a Workload, so the dispatcher posts it —
+	// while a user component's Workload arrives from its build. Every one
+	// treats 409 as success so a crashed dispatch resumes.
+	EnsureWorkload(ctx context.Context, orgName, projectName string, in WorkloadInput) error
+	EnsureRelease(ctx context.Context, orgName, projectName, componentName, releaseName string) (releaseNameOut string, err error)
+	EnsureReleaseBinding(ctx context.Context, orgName, projectName, componentName, environment, releaseName string) error
+
+	// ApplyReleaseBinding converges a USER component's binding onto the desired
+	// state — the pin plus every field the platform owns on it, in one write.
+	// Distinct from EnsureReleaseBinding above, which is create-only because an
+	// ephemeral component's binding is never re-pinned; this one re-pins on
+	// every cycle, which is what a deploy IS.
+	ApplyReleaseBinding(ctx context.Context, orgName, projectName string, in ReleaseBindingDesired) error
+
+	// GetReleaseBindingStatus reads one binding's aggregate Ready condition, or
+	// (nil, nil) when it does not exist yet. The deploy stage's readiness poll:
+	// the component-scoped read, where ListProjectReleaseBindings is the
+	// project-status page's.
+	GetReleaseBindingStatus(ctx context.Context, orgName, projectName, componentName, environment string) (*ReleaseBindingSummary, error)
 
 	// DeleteComponent removes the Component CR. OC's controller GCs the
 	// chain (Component → ReleaseBinding → RenderedRelease → Deployment /
@@ -83,23 +98,36 @@ type ComponentClient interface {
 	// exist (idempotent — 404 is treated as success).
 	DeleteComponent(ctx context.Context, orgName, projectName, componentName string) error
 
-	// UpdateComponentTraits replaces `spec.traits` on an existing Component
-	// with the supplied slice. Passing an empty slice clears traits.
-	// Returns ErrComponentNotFound when the Component does not exist (the
-	// caller decides whether to recreate or no-op). Used by trait_sync.go
-	// when a user toggles `exposesAPI.auth` on `design.json` after first deploy.
-	UpdateComponentTraits(ctx context.Context, orgName, projectName, componentName string, traits []ComponentTrait) error
+	// ApplyComponentSpec re-asserts the platform-owned half of an existing
+	// Component's spec — its traits and its build/deploy policy — in one
+	// GET-then-PUT. Returns ErrComponentNotFound when the Component does not
+	// exist (the caller decides whether to recreate or no-op).
+	//
+	// Called on EVERY component ensure, not only when something changed: the
+	// trait shape is frozen into the next ComponentRelease, so a design edit
+	// that has not reached the CR before the build is an edit the release
+	// silently drops.
+	ApplyComponentSpec(ctx context.Context, orgName, projectName, componentName string, desired ComponentSpecDesired) error
 
 	// UpdateComponentTraitEnvironmentConfigs writes per-environment trait
 	// configs onto each of the component's ReleaseBindings at
 	// `spec.traitEnvironmentConfigs`. Configs is keyed by trait instance
 	// name; the value is the parameters block (e.g. `{"jwtAuth": {"enabled": true}}`).
 	// Passing an empty map clears the field. When no RBs exist yet (pre-
-	// first-deploy) the call is a soft no-op — the caller retries via the
-	// trait-sync watcher once the deploy chain catches up.
+	// first-deploy) the call is a soft no-op.
+	//
+	// Superseded for user components by ApplyReleaseBinding, which writes the
+	// trait configs in the SAME object write as the release pin — that is what
+	// closes the window where a binding was renderable with a trait attached and
+	// its config missing. Nothing retries this call any more: the trait-sync
+	// watcher it used to lean on is gone, and the deploy stage composes the whole
+	// binding at once (ADR-0017).
 	UpdateComponentTraitEnvironmentConfigs(ctx context.Context, orgName, projectName, componentName string, configs map[string]map[string]interface{}) error
 
-	// Deploy (read-only — auto-deploy on the Component drives the chain)
+	// Deploy (read-only). The platform drives the chain itself — components carry
+	// autoDeploy: false and the run supervisor performs the promote (ADR-0017) —
+	// so this reads back what OpenChoreo resolved, including the external URLs the
+	// deploy order depends on.
 	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*gen.DeploymentList, error)
 
 	// ListProjectReleaseBindings returns the org's ReleaseBindings owned by
@@ -123,12 +151,6 @@ type ComponentClient interface {
 	// agent-manager-service/clients/openchoreosvc/client/builds.go:71-85.
 	// See TriggerBuild for the `runName` + `secretRef` contracts.
 	TriggerBuildAtCommit(ctx context.Context, orgName, projectName, componentName, commitSHA, secretRef, runName string) (*gen.WorkflowRun, error)
-	// TriggerCodingAgent creates a WorkflowRun of ClusterWorkflow
-	// `aep-coding-agent` for the per-task ephemeral pod that runs the
-	// Claude Agent SDK against the task's feature branch. The label
-	// `aep.openchoreo.dev/coding-agent-task` carries the taskId so
-	// the BFF watcher can correlate runs back to the task.
-	TriggerCodingAgent(ctx context.Context, params CodingAgentParams) (*gen.WorkflowRun, error)
 	ListWorkflowRuns(ctx context.Context, orgName, projectName, componentName string, limit int, cursor string) (*gen.WorkflowRunList, error)
 	// ListProjectWorkflowRuns is the same read widened to every component in
 	// the project — one call instead of one per component. The run read uses it
@@ -136,36 +158,6 @@ type ComponentClient interface {
 	// learn which components the merge touched.
 	ListProjectWorkflowRuns(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.WorkflowRunList, error)
 	GetWorkflowRun(ctx context.Context, orgName, runName string) (*gen.WorkflowRun, error)
-}
-
-// CodingAgentParams is the input to TriggerCodingAgent. Mirrors the schema
-// of `aep-coding-agent` ClusterWorkflow. All fields are required.
-// The agent itself creates the feature branch and opens the PR (with
-// `Closes #<issueNumber>` so the BFF webhook can link it back to the
-// task), so no branch is plumbed through here.
-type CodingAgentParams struct {
-	OrgName       string
-	ProjectName   string
-	ComponentName string
-	TaskID        string
-	Prompt        string
-	RepoURL       string
-	IdentityName  string
-	IdentityEmail string
-	IdentityLogin string
-	Bearer        string
-	GitServiceURL string
-	// PlatformURL is the BFF base URL the runner pod uses for its callbacks
-	// (credentials refresh). Passed through to the ClusterWorkflow parameter
-	// `bff.platformUrl` → env var AEP_PLATFORM_URL in the pod.
-	PlatformURL string
-	// AnthropicSecretRef is the name of the per-org K8s Secret in
-	// workflows-<OrgName> carrying ANTHROPIC_API_KEY. Materialised by
-	// AnthropicCredentialService.ApplyWPSecret in the dispatch pre-flight.
-	// The ClusterWorkflow wires
-	// it into the pod via `parameters.anthropic.secretRef` →
-	// `secretKeyRef.name`.
-	AnthropicSecretRef string
 }
 
 type componentClient struct {
@@ -286,8 +278,9 @@ func workflowRunToModel(run ocgen.WorkflowRun) gen.WorkflowRun {
 	}
 }
 
-// deploymentFromReleaseBinding pulls the first HTTP external URL from the
-// binding's resolved endpoints via the typed `ExternalURLs.Http *EndpointURL`.
+// deploymentFromReleaseBinding pulls the first public URL from the binding's
+// resolved endpoints. Cloud gateways populate `externalURLs.https` only;
+// local/HTTP listeners populate `http`. Prefer https when both exist.
 func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding) gen.Deployment {
 	var projectName, componentName, environment, releaseName string
 	if rb.Spec != nil {
@@ -300,8 +293,8 @@ func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding) gen.Deployment {
 	var endpointURL string
 	if rb.Status != nil && rb.Status.Endpoints != nil {
 		for _, ep := range *rb.Status.Endpoints {
-			if ep.ExternalURLs != nil && ep.ExternalURLs.Http != nil {
-				endpointURL = formatEndpointURL(ep.ExternalURLs.Http)
+			if u := publicEndpointURL(ep.ExternalURLs); u != "" {
+				endpointURL = u
 				break
 			}
 		}
@@ -323,6 +316,21 @@ func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding) gen.Deployment {
 	}
 }
 
+// publicEndpointURL prefers the HTTPS gateway URL when OpenChoreo resolved
+// one, else HTTP. Empty when the binding has no external URL at all.
+func publicEndpointURL(urls *ocgen.EndpointGatewayURLs) string {
+	if urls == nil {
+		return ""
+	}
+	if urls.Https != nil {
+		return formatEndpointURL(urls.Https)
+	}
+	if urls.Http != nil {
+		return formatEndpointURL(urls.Http)
+	}
+	return ""
+}
+
 // formatEndpointURL renders ocgen.EndpointURL as scheme://host:port/path. Path
 // of "" or "/" yields a trailing "/" for stable display.
 func formatEndpointURL(u *ocgen.EndpointURL) string {
@@ -342,6 +350,15 @@ func formatEndpointURL(u *ocgen.EndpointURL) string {
 }
 
 // -- Component CRUD ----------------------------------------------------------
+
+const annotationInternal = "aep.wso2.com/internal"
+
+func isInternalComponent(annotations, labels map[string]string) bool {
+	if annotations[annotationInternal] == "true" {
+		return true
+	}
+	return labels[annotationInternal] == "true"
+}
 
 func (c *componentClient) ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.ComponentList, error) {
 	params := &ocgen.ListComponentsParams{}
@@ -369,11 +386,111 @@ func (c *componentClient) ListComponents(ctx context.Context, orgName, projectNa
 		})
 	}
 
-	items := make([]gen.Component, len(resp.JSON200.Items))
-	for i, comp := range resp.JSON200.Items {
-		items[i] = componentToModel(comp)
+	items := make([]gen.Component, 0, len(resp.JSON200.Items))
+	for _, comp := range resp.JSON200.Items {
+		var ann, lbls map[string]string
+		if comp.Metadata.Annotations != nil {
+			ann = *comp.Metadata.Annotations
+		}
+		if comp.Metadata.Labels != nil {
+			lbls = *comp.Metadata.Labels
+		}
+		if isInternalComponent(ann, lbls) {
+			continue
+		}
+		items = append(items, componentToModel(comp))
 	}
 	return &gen.ComponentList{Items: items}, nil
+}
+
+// internalComponentFrom lifts the reaper's view off the CR. The project is read
+// from spec.owner (authoritative) and the identity from the marker labels.
+func internalComponentFrom(c ocgen.Component) InternalComponent {
+	var projectName, typeName string
+	if c.Spec != nil {
+		projectName = c.Spec.Owner.ProjectName
+		typeName = c.Spec.ComponentType.Name
+	}
+	var created time.Time
+	if c.Metadata.CreationTimestamp != nil {
+		created = c.Metadata.CreationTimestamp.UTC()
+	}
+	return InternalComponent{
+		Name:      FriendlyComponentName(c.Metadata.Name, projectName),
+		TypeName:  typeName,
+		CycleID:   label(c.Metadata.Labels, string(LabelKeyAepCycle)),
+		RunName:   label(c.Metadata.Labels, string(LabelKeyAepRunName)),
+		CreatedAt: created,
+	}
+}
+
+// IsCodingAgentTypeName reports whether typeName is a coding-agent ComponentType
+// reference. OC may surface either the bare name (`coding-agent`) or the
+// workload-qualified form (`job/coding-agent`). Shared by the internal lister
+// and retention so a surface that returns one form cannot be silently pruned
+// by a check that only accepts the other.
+func IsCodingAgentTypeName(typeName string) bool {
+	return typeName == CodingAgentComponentTypeRef || typeName == CodingAgentComponentTypeName
+}
+
+// ListInternalComponents returns the project's aep-internal coding-agent
+// Components, following pagination. It selects on the internal MARKER (not on
+// the project label) and matches ownership client-side against
+// spec.owner.projectName, for the reason ListProjectReleaseBindings does:
+// ownership is the authoritative fact, and a label OC did or did not copy onto
+// the CR is not.
+//
+// This is the deliberate counterpart to ListComponents' filter: one method hides
+// internal components from users, the other is the only way the platform's own
+// machinery can see them. Only coding-agent typed internals are returned — the
+// retention reaper must not touch other future internal kinds.
+func (c *componentClient) ListInternalComponents(ctx context.Context, orgName, projectName string) ([]InternalComponent, error) {
+	sel := ocgen.LabelSelectorParam(string(LabelKeyAepInternal) + "=" + LabelValueAepInternal)
+	params := &ocgen.ListComponentsParams{LabelSelector: &sel}
+	var out []InternalComponent
+	for {
+		resp, err := c.oc.ListComponentsWithResponse(ctx, orgName, params)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list internal components: %w", err)
+		}
+		if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+			return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+				JSON400: resp.JSON400,
+				JSON401: resp.JSON401,
+				JSON403: resp.JSON403,
+				JSON500: resp.JSON500,
+			})
+		}
+		for _, comp := range resp.JSON200.Items {
+			var ann, lbls map[string]string
+			if comp.Metadata.Annotations != nil {
+				ann = *comp.Metadata.Annotations
+			}
+			if comp.Metadata.Labels != nil {
+				lbls = *comp.Metadata.Labels
+			}
+			if !isInternalComponent(ann, lbls) {
+				continue
+			}
+			if comp.Spec == nil || comp.Spec.Owner.ProjectName != projectName {
+				continue
+			}
+			if !IsCodingAgentTypeName(comp.Spec.ComponentType.Name) {
+				continue
+			}
+			out = append(out, internalComponentFrom(comp))
+		}
+		next := resp.JSON200.Pagination.NextCursor
+		if next == nil || *next == "" {
+			return out, nil
+		}
+		// A non-advancing cursor would spin this loop forever — fail instead.
+		if params.Cursor != nil && *next == string(*params.Cursor) {
+			return nil, fmt.Errorf("list internal components: pagination did not advance (cursor %q)", *next)
+		}
+		cur := ocgen.CursorParam(*next)
+		params.Cursor = &cur
+	}
 }
 
 func (c *componentClient) GetComponent(ctx context.Context, orgName, projectName, componentName string) (*gen.Component, error) {
@@ -395,12 +512,33 @@ func (c *componentClient) GetComponent(ctx context.Context, orgName, projectName
 }
 
 func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectName string, req *CreateComponentRequest) (*gen.Component, error) {
+	// Refuse a coding-agent Component whose SCOPED name leaves OpenChoreo no
+	// room for `-{env}-{hash8}` inside the Kubernetes label-value limit. Same
+	// failure class as an overlong WorkflowRun name: OC accepts the parent CR,
+	// then ResourceApplyFailed on the Job, then no runner pod — only the Job
+	// path surfaces on the ReleaseBinding, which the console's progress dark
+	// zone does not read. Catch it here, where the cause is still known.
+	if req != nil && req.Type == CodingAgentComponentTypeRef {
+		scoped := ScopedComponentName(projectName, req.Name)
+		if len(scoped) > CodingAgentComponentNameBudget {
+			return nil, fmt.Errorf(
+				"create component: coding-agent name %q is %d chars after project scoping, over the %d-char budget "+
+					"(OpenChoreo appends -%s-<hash8> into a pod label, so this Component would be accepted and then never schedule a runner)",
+				scoped, len(scoped), CodingAgentComponentNameBudget, DevEnvironmentName)
+		}
+	}
+
 	resp, err := c.oc.CreateComponentWithResponse(ctx, orgName, buildCreateComponentBody(projectName, req))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create component: %w", err)
 	}
 
 	switch {
+	case resp.StatusCode() == http.StatusPaymentRequired:
+		// Org is at its agent-concurrency cap. Own sentinel so the dispatcher
+		// can map this to blocked-not-failed (never a retryable create failure).
+		return nil, fmt.Errorf("%w: create component %q: %s",
+			ErrPaymentRequired, req.Name, strings.TrimSpace(string(resp.Body)))
 	case resp.StatusCode() == http.StatusCreated && resp.JSON201 != nil:
 		comp := componentToModel(*resp.JSON201)
 		return &comp, nil
@@ -421,133 +559,6 @@ func (c *componentClient) CreateComponent(ctx context.Context, orgName, projectN
 		JSON409: resp.JSON409,
 		JSON500: resp.JSON500,
 	})
-}
-
-// UpdateComponentWorkflowEnvVars lists the component's ReleaseBindings
-// and writes the env vars onto each one at
-// `spec.workloadOverrides.container.env`. One RB per environment — OC's
-// controller renders the value into the pod spec on the next reconcile,
-// so changing env vars no longer requires a rebuild.
-//
-// When no ReleaseBindings exist yet (the first build hasn't produced
-// one), the call is a soft no-op: the caller is expected to retry after
-// a successful deploy. An empty `envVars` slice clears any previously
-// set env block on each binding.
-func (c *componentClient) UpdateComponentWorkflowEnvVars(ctx context.Context, orgName, projectName, componentName string, envVars []WorkflowEnvVarRef) error {
-	scopedComp := ScopedComponentName(projectName, componentName)
-	componentQ := ocgen.ComponentQueryParam(scopedComp)
-	listResp, err := c.oc.ListReleaseBindingsWithResponse(ctx, orgName, &ocgen.ListReleaseBindingsParams{
-		Component: &componentQ,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list release bindings for env-var update: %w", err)
-	}
-	if listResp.StatusCode() != http.StatusOK || listResp.JSON200 == nil {
-		return handleErrorResponse(listResp.StatusCode(), ErrorResponses{
-			JSON401: listResp.JSON401,
-			JSON403: listResp.JSON403,
-			JSON500: listResp.JSON500,
-		})
-	}
-
-	rbs := listResp.JSON200.Items
-	if len(rbs) == 0 {
-		// First build hasn't produced a ReleaseBinding yet — nothing to
-		// patch. The caller retries once the deploy chain catches up.
-		return nil
-	}
-
-	envList := workflowEnvVarRefsToGen(envVars)
-	for _, rb := range rbs {
-		if rb.Spec == nil {
-			rb.Spec = &ocgen.ReleaseBindingSpec{}
-		}
-		if rb.Spec.WorkloadOverrides == nil {
-			rb.Spec.WorkloadOverrides = &ocgen.WorkloadOverrides{}
-		}
-		if rb.Spec.WorkloadOverrides.Container == nil {
-			rb.Spec.WorkloadOverrides.Container = &ocgen.ContainerOverride{}
-		}
-		rb.Spec.WorkloadOverrides.Container.Env = envList
-
-		updResp, uerr := c.oc.UpdateReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(rb.Metadata.Name), ocgen.UpdateReleaseBindingJSONRequestBody(rb))
-		if uerr != nil {
-			return fmt.Errorf("failed to update release binding %s: %w", rb.Metadata.Name, uerr)
-		}
-		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
-				JSON400: updResp.JSON400,
-				JSON401: updResp.JSON401,
-				JSON403: updResp.JSON403,
-				JSON404: updResp.JSON404,
-				JSON500: updResp.JSON500,
-			})
-		}
-	}
-	return nil
-}
-
-// UpdateComponentWorkflowFiles lists the component's ReleaseBindings and
-// writes the literal files onto each one at
-// `spec.workloadOverrides.container.files`. Per-env (one RB per
-// environment) so OC's controller materialises a ConfigMap mounted at
-// the declared mountPath on the next reconcile — no rebuild required.
-//
-// When no ReleaseBindings exist yet (the first build hasn't produced
-// one), the call is a soft no-op: the caller is expected to retry after
-// a successful deploy. An empty `files` slice clears any previously set
-// files block on each binding.
-func (c *componentClient) UpdateComponentWorkflowFiles(ctx context.Context, orgName, projectName, componentName string, files []WorkflowFileVar) error {
-	scopedComp := ScopedComponentName(projectName, componentName)
-	componentQ := ocgen.ComponentQueryParam(scopedComp)
-	listResp, err := c.oc.ListReleaseBindingsWithResponse(ctx, orgName, &ocgen.ListReleaseBindingsParams{
-		Component: &componentQ,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list release bindings for file update: %w", err)
-	}
-	if listResp.StatusCode() != http.StatusOK || listResp.JSON200 == nil {
-		return handleErrorResponse(listResp.StatusCode(), ErrorResponses{
-			JSON401: listResp.JSON401,
-			JSON403: listResp.JSON403,
-			JSON500: listResp.JSON500,
-		})
-	}
-
-	rbs := listResp.JSON200.Items
-	if len(rbs) == 0 {
-		// First build hasn't produced a ReleaseBinding yet — soft no-op.
-		return nil
-	}
-
-	fileList := workflowFileVarsToGen(files)
-	for _, rb := range rbs {
-		if rb.Spec == nil {
-			rb.Spec = &ocgen.ReleaseBindingSpec{}
-		}
-		if rb.Spec.WorkloadOverrides == nil {
-			rb.Spec.WorkloadOverrides = &ocgen.WorkloadOverrides{}
-		}
-		if rb.Spec.WorkloadOverrides.Container == nil {
-			rb.Spec.WorkloadOverrides.Container = &ocgen.ContainerOverride{}
-		}
-		rb.Spec.WorkloadOverrides.Container.Files = fileList
-
-		updResp, uerr := c.oc.UpdateReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(rb.Metadata.Name), ocgen.UpdateReleaseBindingJSONRequestBody(rb))
-		if uerr != nil {
-			return fmt.Errorf("failed to update release binding %s files: %w", rb.Metadata.Name, uerr)
-		}
-		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
-			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
-				JSON400: updResp.JSON400,
-				JSON401: updResp.JSON401,
-				JSON403: updResp.JSON403,
-				JSON404: updResp.JSON404,
-				JSON500: updResp.JSON500,
-			})
-		}
-	}
-	return nil
 }
 
 // workflowFileVarsToGen converts the BFF-internal file model into
@@ -595,17 +606,17 @@ func (c *componentClient) DeleteComponent(ctx context.Context, orgName, projectN
 	})
 }
 
-// UpdateComponentTraits replaces spec.traits on the named Component. GET-
-// then-PUT to satisfy OC's full-object update semantics. Pass an empty
-// slice to clear traits.
-func (c *componentClient) UpdateComponentTraits(ctx context.Context, orgName, projectName, componentName string, traits []ComponentTrait) error {
+// ApplyComponentSpec re-asserts traits + build/deploy policy on the named
+// Component. GET-then-PUT to satisfy OC's full-object update semantics; an
+// empty trait slice clears traits.
+func (c *componentClient) ApplyComponentSpec(ctx context.Context, orgName, projectName, componentName string, desired ComponentSpecDesired) error {
 	scopedComp := ScopedComponentName(projectName, componentName)
 	// GET and PUT both inside the retried closure: a retry has to re-read, or
 	// it replays the same stale resourceVersion. See stale_write.go.
-	return retryStaleWrite(ctx, "component/"+scopedComp+" spec.traits", func(ctx context.Context) error {
+	return retryStaleWrite(ctx, "component/"+scopedComp+" spec", func(ctx context.Context) error {
 		getResp, err := c.oc.GetComponentWithResponse(ctx, orgName, scopedComp)
 		if err != nil {
-			return fmt.Errorf("failed to get component for traits update: %w", err)
+			return fmt.Errorf("failed to get component for spec update: %w", err)
 		}
 		if getResp.StatusCode() != http.StatusOK || getResp.JSON200 == nil {
 			return handleErrorResponse(getResp.StatusCode(), ErrorResponses{
@@ -619,11 +630,18 @@ func (c *componentClient) UpdateComponentTraits(ctx context.Context, orgName, pr
 		if comp.Spec == nil {
 			comp.Spec = &ocgen.ComponentSpec{}
 		}
-		comp.Spec.Traits = componentTraitsToGen(traits)
+		comp.Spec.Traits = componentTraitsToGen(desired.Traits)
+		// autoDeploy is re-asserted on every pass, not only at create. A
+		// component created before the platform owned deploy still carries
+		// autoDeploy=true, and leaving it would have OC's controller promoting
+		// releases underneath the deploy stage — two writers racing over one
+		// binding's pin, with the loser's release silently serving.
+		autoBuild, autoDeploy := desired.AutoBuild, desired.AutoDeploy
+		comp.Spec.AutoBuild, comp.Spec.AutoDeploy = &autoBuild, &autoDeploy
 
 		updResp, err := c.oc.UpdateComponentWithResponse(ctx, orgName, ocgen.ComponentNameParam(scopedComp), ocgen.UpdateComponentJSONRequestBody(comp))
 		if err != nil {
-			return fmt.Errorf("failed to update component traits: %w", err)
+			return fmt.Errorf("failed to update component spec: %w", err)
 		}
 		if updResp.StatusCode() != http.StatusOK && updResp.StatusCode() != http.StatusCreated {
 			return handleErrorResponse(updResp.StatusCode(), ErrorResponses{
@@ -664,7 +682,8 @@ func (c *componentClient) UpdateComponentTraitEnvironmentConfigs(ctx context.Con
 	rbs := listResp.JSON200.Items
 	if len(rbs) == 0 {
 		// First build hasn't produced a ReleaseBinding yet — soft no-op.
-		// The trait_sync watcher will retry once the deploy chain catches up.
+		// The deploy stage creates the binding complete; the converge sweep
+		// re-asserts it afterwards.
 		return nil
 	}
 
@@ -782,6 +801,18 @@ func buildCreateComponentBody(projectName string, req *CreateComponentRequest) o
 				Name: req.Type,
 			},
 		},
+	}
+
+	if len(req.Labels) > 0 {
+		labels := make(map[string]string, len(req.Labels))
+		for k, v := range req.Labels {
+			labels[k] = v
+		}
+		body.Metadata.Labels = &labels
+	}
+	if len(req.Parameters) > 0 {
+		params := cloneParameterMap(req.Parameters)
+		body.Spec.Parameters = &params
 	}
 
 	if req.Workflow != nil {
@@ -1147,94 +1178,9 @@ func cloneParameterMap(in map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-// TriggerCodingAgent creates a WorkflowRun of ClusterWorkflow
-// `aep-coding-agent`. Each call creates a fresh run; idempotency is
-// the caller's responsibility (see DispatchService.dispatchOne which gates
-// on task.LastCodingAgentRunName + DispatchedAt).
-//
-// NOTE: deliberately NOT setting `openchoreo.dev/component` /
-// `openchoreo.dev/project` labels. OC validates the
-// ClusterWorkflow ↔ ClusterComponentType allowed-workflow pair when a
-// WorkflowRun carries the `openchoreo.dev/component` label, which would
-// reject `aep-coding-agent` because the user's component is
-// `deployment/service` (allowed only the builder ClusterWorkflows). The
-// agent pod has no need to be tied to the user's Component for OC's
-// purposes — the project + component identifiers flow in via the
-// `parameters.task.*` fields that the runner reads. The `aep.*`
-// label catalog carries them for the BFF watcher instead.
-func (c *componentClient) TriggerCodingAgent(ctx context.Context, params CodingAgentParams) (*gen.WorkflowRun, error) {
-	scopedComp := ScopedComponentName(params.ProjectName, params.ComponentName)
-
-	// Run name shape: coding-agent-<short-task>-<unixMs>. K8s names must be
-	// ≤63 chars and start with a letter. Truncate the taskID to 8 to stay
-	// safely inside the budget. The unixMs suffix makes re-dispatch unique.
-	shortTask := params.TaskID
-	if len(shortTask) > 8 {
-		shortTask = shortTask[:8]
-	}
-	runName := fmt.Sprintf("coding-agent-%s-%d", shortTask, time.Now().UnixMilli())
-
-	labels := map[string]string{
-		string(LabelKeyAepCodingAgentTask): params.TaskID,
-		string(LabelKeyAepProject):         params.ProjectName,
-		string(LabelKeyAepComponent):       scopedComp,
-	}
-
-	wfKind := ocgen.WorkflowRunConfigKindClusterWorkflow
-	parameters := codingAgentParameters(params)
-	body := ocgen.CreateWorkflowRunJSONRequestBody{
-		Metadata: ocgen.ObjectMeta{
-			Name:   runName,
-			Labels: &labels,
-		},
-		Spec: &ocgen.WorkflowRunSpec{
-			Workflow: ocgen.WorkflowRunConfig{
-				Kind:       &wfKind,
-				Name:       "aep-coding-agent",
-				Parameters: &parameters,
-			},
-		},
-	}
-
-	return c.createWorkflowRun(ctx, params.OrgName, body, "trigger coding-agent")
-}
-
-// codingAgentParameters builds the `parameters.*` map that the
-// aep-coding-agent ClusterWorkflow's openAPIV3Schema expects. The
-// runner image reads AEP_* env vars substituted from these keys.
-func codingAgentParameters(p CodingAgentParams) map[string]interface{} {
-	return map[string]interface{}{
-		"task": map[string]interface{}{
-			"id":            p.TaskID,
-			"orgId":         p.OrgName,
-			"projectId":     p.ProjectName,
-			"componentName": p.ComponentName,
-			"prompt":        p.Prompt,
-		},
-		"repository": map[string]interface{}{
-			"url":       p.RepoURL,
-			"identity": map[string]interface{}{
-				"name":  p.IdentityName,
-				"email": p.IdentityEmail,
-				"login": p.IdentityLogin,
-			},
-		},
-		"bff": map[string]interface{}{
-			"bearer":      p.Bearer,
-			"platformUrl": p.PlatformURL,
-		},
-		"gitService": map[string]interface{}{
-			"url": p.GitServiceURL,
-		},
-		"anthropic": map[string]interface{}{
-			"secretRef": p.AnthropicSecretRef,
-		},
-	}
-}
-
-// createWorkflowRun is the shared POST path for both trigger flows. opName
+// createWorkflowRun is the shared POST path for WorkflowRun creates. opName
 // goes into the network-error wrap to keep slog logs distinguishable
-// (trigger build / trigger coding-agent).
+// (e.g. trigger build).
 func (c *componentClient) createWorkflowRun(ctx context.Context, orgName string, body ocgen.CreateWorkflowRunJSONRequestBody, opName string) (*gen.WorkflowRun, error) {
 	// Refuse a name OpenChoreo would accept and then never build. This is the
 	// one choke point every WorkflowRun create passes through, and the check is

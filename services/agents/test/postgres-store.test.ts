@@ -26,11 +26,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Conversation } from "../src/store/conversation-store.js";
-import { PostgresConversationStore, type Queryable } from "../src/store/postgres-store.js";
+import { PostgresConversationStore, sanitizeForJsonb, type Queryable } from "../src/store/postgres-store.js";
 
 interface Row {
   id: string;
   messages: unknown;
+  turns: unknown;
   status: string;
   created_at: Date;
   updated_at: Date;
@@ -51,6 +52,7 @@ class FakePg implements Queryable {
     return {
       id: row.id,
       messages: JSON.parse(JSON.stringify(row.messages)),
+      turns: JSON.parse(JSON.stringify(row.turns)),
       status: row.status,
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
@@ -61,6 +63,7 @@ class FakePg implements Queryable {
     const verb = text.trimStart().split(/\s+/)[0]?.toUpperCase();
     switch (verb) {
       case "CREATE":
+      case "ALTER":
         return Promise.resolve({ rows: [] });
       case "SELECT": {
         const row = this.rows.get(String(params[0]));
@@ -72,7 +75,8 @@ class FakePg implements Queryable {
         this.rows.set(id, {
           id,
           messages: JSON.parse(String(params[1])),
-          status: String(params[2]),
+          turns: JSON.parse(String(params[2])),
+          status: String(params[3]),
           created_at: existing?.created_at ?? this.now(), // preserved on conflict
           updated_at: this.now(),
         });
@@ -105,6 +109,7 @@ function fresh(id: string): Conversation {
   return {
     id,
     messages: [{ role: "user", content: "hi" }],
+    turns: [],
     status: "active",
     createdAt: new Date("2020-01-01T00:00:00Z"), // ignored: the store owns timestamps
     updatedAt: new Date("2020-01-01T00:00:00Z"),
@@ -166,6 +171,143 @@ test("save upserts; createdAt is preserved, updatedAt advances", async () => {
   assert.equal(second.status, "done");
   assert.equal(second.createdAt.getTime(), first.createdAt.getTime(), "createdAt is first-seen");
   assert.ok(second.updatedAt.getTime() > first.updatedAt.getTime(), "updatedAt advances on upsert");
+});
+
+// --- NUL sanitization at the persistence boundary (#384) ---------------------
+//
+// PostgreSQL's jsonb column rejects any string containing the U+0000 escape
+// sequence ("unsupported Unicode escape sequence") — real turns hit this when
+// a tool result contained embedded NUL bytes (e.g. a binary file read as
+// "text"), which killed the INSERT and, with it, the whole turn.
+
+/** A pg double that records the exact params of the last INSERT, unparsed. */
+class RecordingPg implements Queryable {
+  lastInsertParams: unknown[] | undefined;
+  query(text: string, params: unknown[] = []): Promise<{ rows: Array<Record<string, unknown>> }> {
+    if (text.trimStart().toUpperCase().startsWith("INSERT")) {
+      this.lastInsertParams = params;
+    }
+    return Promise.resolve({ rows: [] });
+  }
+}
+
+test("sanitizeForJsonb recursively replaces U+0000 with U+FFFD; everything else is byte-identical", () => {
+  const input = {
+    a: "keep me",
+    b: ["x\u0000y", 42, null, true],
+    c: { nested: "z\u0000\u0000z", untouched: "fine" },
+  };
+  const out = sanitizeForJsonb(input);
+  assert.deepEqual(out, {
+    a: "keep me",
+    b: ["x�y", 42, null, true],
+    c: { nested: "z��z", untouched: "fine" },
+  });
+  // The original value is untouched (no in-place mutation).
+  assert.equal(input.b[0], "x\u0000y");
+});
+
+// Postgres refuses the codepoint anywhere in a jsonb document, keys included —
+// sanitizing only the leaves would still lose the turn to a NUL-bearing key.
+// A Date has no enumerable own properties, so the plain-object rebuild used to
+// replace it with {} — and the journal then read back an Invalid Date on every
+// save. Non-plain objects pass through so JSON.stringify can apply toJSON.
+test("sanitizeForJsonb preserves a Date through the JSON round trip", () => {
+  const createdAt = new Date("2026-08-17T10:00:00.000Z");
+
+  const out = sanitizeForJsonb({ turns: [{ turnId: "t1", createdAt }] });
+  const round = JSON.parse(JSON.stringify(out)) as {
+    turns: Array<{ createdAt: string }>;
+  };
+  const back = new Date(round.turns[0]!.createdAt);
+
+  assert.equal(Number.isNaN(back.getTime()), false, "createdAt round-tripped as an Invalid Date");
+  assert.equal(back.toISOString(), createdAt.toISOString());
+});
+
+// The pass-through must not cost the NUL scrub anywhere it still applies.
+test("sanitizeForJsonb still scrubs NULs in strings beside a Date", () => {
+  const out = sanitizeForJsonb({
+    createdAt: new Date("2026-08-17T10:00:00.000Z"),
+    text: "before\u0000after",
+  }) as { createdAt: Date; text: string };
+
+  assert.equal(out.text, "before\ufffdafter");
+  assert.equal(out.createdAt instanceof Date, true);
+});
+
+test("sanitizeForJsonb replaces U+0000 in object keys, at any depth", () => {
+  const NUL = String.fromCharCode(0);
+  const out = sanitizeForJsonb({
+    [`top${NUL}key`]: "v",
+    nested: { [`deep${NUL}key`]: [`a${NUL}b`] },
+  });
+  assert.deepEqual(out, {
+    "top�key": "v",
+    nested: { "deep�key": ["a�b"] },
+  });
+  assert.equal(JSON.stringify(out).includes(NUL), false);
+});
+
+test("save strips the NUL escape sequence from the jsonb payload sent to Postgres", async () => {
+  const db = new RecordingPg();
+  const store = new PostgresConversationStore(db);
+  const withNul: Conversation = {
+    id: "nul1",
+    messages: [
+      { role: "user", content: "hi" },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "t1",
+            toolName: "loadSkillReference",
+            output: { type: "text", value: "binary junk: \u0000\u0000 more text" },
+          },
+        ],
+      },
+    ],
+    turns: [],
+    status: "done",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  await store.save(withNul);
+
+  const payload = String(db.lastInsertParams?.[1]);
+  assert.equal(payload.includes("\u0000"), false, "no literal NUL byte in the jsonb payload");
+  assert.equal(payload.includes("\\u0000"), false, "no NUL unicode escape — this is what Postgres rejects");
+  assert.match(payload, /binary junk: �� more text/, "the NUL was replaced with U+FFFD, not dropped");
+});
+
+test("save/get round-trips a NUL-bearing message through a real jsonb-shaped store", async () => {
+  const db = new FakePg();
+  const store = new PostgresConversationStore(db);
+  await store.save({
+    id: "nul2",
+    messages: [
+      { role: "user", content: "hi" },
+      {
+        role: "tool",
+        content: [
+          { type: "tool-result", toolCallId: "t1", toolName: "x", output: { type: "text", value: "a\u0000b" } },
+        ],
+      },
+    ],
+    turns: [],
+    status: "done",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  const got = await store.get("nul2");
+  assert.ok(got);
+  const toolMsg = got.messages[1] as { content: Array<{ output: { value: string } }> };
+  assert.equal(toolMsg.content[0]?.output.value, "a�b");
+  // The rest of the aggregate is untouched.
+  assert.equal((got.messages[0] as { content: string }).content, "hi");
 });
 
 test("sweepExpired deletes rows past the TTL and keeps fresh ones", async () => {

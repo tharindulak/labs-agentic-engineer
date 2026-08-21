@@ -58,17 +58,20 @@ behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
 - `agents` — TS interactive spec agents (Vercel AI SDK).
 - `collab` — TS Yjs collaboration server.
 - `aep-mcp-server` — MCP surface for the SRE/RCA handoff.
-- `remote-worker` (runner) — TS Claude Agent SDK one-shot pod; one image serves
-  both task kinds.
+- `runners/` (job image) — TS Claude Agent SDK one-shot pod; one Debian image serves
+  both task kinds (ADR-0012).
 - `console` (app) — React frontend.
 
 ## How a version gets built
 
 A spec version is cut as a `v<N>` tag and executed as **one supervised run over
-one GitHub milestone**: the planner mints prose issues into it, one coding agent
+one GitHub milestone**: the run mints prose issues into it as its first phase, one coding agent
 works the whole milestone per cycle, its pull request auto-merges, the merge
-fans out to a build per changed component, and the run settles when the working
-set is empty and validation has a verdict. The decision and its costs are
-[ADR-0011](decisions/ADR-0011-milestone-is-the-unit-of-execution.md); the
+fans out to a build per changed component, the supervisor then promotes each
+built component and waits for it to serve, and the run settles when the working
+set is empty and validation has a verdict. The decisions and their costs are
+[ADR-0011](decisions/ADR-0011-milestone-is-the-unit-of-execution.md),
+[ADR-0017](decisions/ADR-0017-the-platform-owns-deploy.md) and
+[ADR-0018](decisions/ADR-0018-planning-is-a-run-phase.md); the
 mechanism is
 [`internal/delivery/README.md`](../services/aep-api/internal/delivery/README.md).

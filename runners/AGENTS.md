@@ -20,18 +20,16 @@ into the runner pod at `/app/skills` for live skill edits (see
   messages (which the BFF forwards to the console build log), into `ps`, and into
   `.git/config`. Rationale inline in `git_clone.ts`; the BFF keeps a shape-based
   second line of defense in `delivery/codingagent/redact.go`.
-- **ONE credential mechanism: the git credential helper in `lib/credhelper.ts`.**
-  Every authenticated git operation in a run goes through it, the provisioning
-  clone included — the clone wires it in with `git -c credential.<origin>.helper`
-  because `.git/config` doesn't exist yet, and `workspace.ts` installs the same
-  script durably afterwards. No GIT_ASKPASS, no token in argv or env, and the
-  runner process never holds a GitHub token. Don't add a second path: the last
-  one shipped a script serving two protocols that dispatched on `[ -n "$1" ]`,
-  which is true for both, so the clone worked and every agent operation failed
-  its auth silently. Putting the helper on the clone is what makes a break a
-  provisioning failure instead. Any change to the generated scripts must keep
-  `credhelper.test.ts` green — it drives them with real `git`, which is the only
-  thing that would have caught that.
+- **Git credentials — two modes, one helper value in `.git/config`.**
+  When `GITHUB_TOKEN` / `GH_TOKEN` is set (cloud Jobs mount the org PAT),
+  `workspace.ts` installs `gh auth git-credential` (the same helper
+  `gh auth setup-git` uses), pinned to the **real** `gh` absolute path so the
+  `.aep/gh` wrapper cannot intercept. Clone and push share that path; they do
+  **not** call `credentials/refresh`. When those env vars are absent, every
+  authenticated git op goes through `lib/credhelper.ts` → refresh (clone via
+  `git -c`, then the same script installed durably). No GIT_ASKPASS, no token
+  in argv or URL. Don't add a third path. Changes to the generated refresh
+  scripts must keep `credhelper.test.ts` green — it drives them with real `git`.
 - Runner `console.*` is a **user-facing** channel, and it shares the file
   descriptor the NDJSON progress feed writes to. `installConsoleScrubber()` at
   each entry point converts every call into a scrubbed `log` progress event, so
@@ -192,3 +190,19 @@ into the runner pod at `/app/skills` for live skill edits (see
   critical path) and imports it in `setup-aep.sh`; `PREBUILD_RUNNER=0` reverts
   to a serial build. The build is skipped when the tag exists, so use
   `FORCE=1 make build-runner` after changing the Dockerfile or `src/`.
+- **The imported tag is pinned in containerd** — `build-runner.sh` calls
+  `pin_node_image` (`deployments/scripts/utils.sh`) after a successful
+  `k3d image import`. `aep-runner:dev` is local-only, so there is no registry to
+  re-pull from, and it sits idle between dispatches: kubelet's imageGCManager
+  collects least-recently-used images first (it sorts `byLastUsedAndDetected`, not
+  by size) once the node's image filesystem crosses its high threshold (85%,
+  freeing down to 80%), so an idle runner tag goes early and its size means one
+  eviction covers much of the target. That leaves the next dispatch in
+  `ImagePullBackOff` with nothing to recover from. The same helper
+  covers the other local-only imports (`thunder-app-operator:local`, the patched
+  RCA image). It doubles as import verification: an image in no node's containerd
+  means the import silently did not land. Verify a pin from the host with
+  `docker exec k3d-openchoreo-server-0 crictl inspecti aep-runner:dev` →
+  `"pinned": true` (there is no host-side `crictl`). An import replaces the
+  containerd record, so the pin has to live in the import path, not in a manual
+  step.

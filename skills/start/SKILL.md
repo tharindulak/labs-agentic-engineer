@@ -1,6 +1,6 @@
 ---
 name: start
-description: Use when kicking off a project from its idea — the /start flow that interviews the user in a single round of questions and writes the PRD at specs/requirements/prd.md; also the flow for re-running /start on a project that already has a PRD.
+description: Use when kicking off a project from its idea, or re-running /start on a project that already has a PRD.
 metadata:
   aep:
     kind: platform
@@ -24,6 +24,35 @@ It is not a file: it is attached or it is absent. When absent, open with one
 free text welcome. The answer is the brief. Getting the brief is not the
 interview: it is the only thing that may precede the one form below.
 
+## Reference documents outrank the idea
+
+Some kickoffs list reference documents — files the user attached when they
+created the project, named in the instruction by path. When they are listed,
+**read every one before you plan anything.** They are the primary brief; the
+typed idea is the anchor that says which part of them matters.
+
+Every listed document is already in front of you: text documents are in your
+workspace files, and PDFs and images are attached to this conversation
+natively — look at an attached mockup or form, don't just acknowledge it. Never
+fetch a reference document through a repository or MCP tool — a binary fetched
+as text is garbage, and the tool will refuse it anyway.
+
+Read them, then take the coverage walk against what they say:
+
+- **Do not ask what a document already answers.** A document that settles a
+  section settles it — the walk records the answer and moves on. Attaching a
+  20-page spec and then being asked its contents back is the failure this
+  channel exists to prevent.
+- **Interview only where the documents are silent, ambiguous, or contradict
+  each other.** A contradiction between two documents is a real question, and
+  a good one: quote both and ask which holds.
+- **Cite what informed what.** Where a PRD section rests on a document, say so
+  in the section, by filename. The user must be able to see their material
+  landed, and a later reader must be able to trace a decision to its source.
+
+No documents listed is the ordinary case: the instruction says nothing and
+you interview from the idea alone, exactly as below.
+
 ## The coverage walk
 
 Walk the PRD's own sections, in its own order:
@@ -32,9 +61,8 @@ Walk the PRD's own sections, in its own order:
 2. **Actors** — who uses the system, at product altitude.
 3. **Journey & stories** — what each actor does, end to end.
 4. **Product decisions** — policy choices: sign-in, notifications, integrations.
-5. **Phasing** — a single Phase 1 holding every story; anything that should
-   not ship in it belongs in Out of scope, not in a later phase.
-6. **Out of scope** — what this project is explicitly not.
+5. **Out of scope** — what this project is explicitly not; anything that should
+   not ship now belongs here, not in the story list.
 
 The walk is **planning, not turns**: you take it silently, in full, before the
 user sees a single question. For each section:
@@ -55,8 +83,7 @@ is their document.
 - **The bar, not the budget.** Ask only what changes the PRD. Three questions
   is a good form; padding one out to the cap is an interrogation.
 - **More questions than a form holds** → ask those whose answers change the
-  document most, and treat every one left behind exactly as the skip valve
-  does: your recommended answer, tagged `*assumed*`.
+  document most, and send every one left behind through the skip valve.
 
 Depth is opt-in: after generating, the user can go deeper in chat on any
 feature.
@@ -67,6 +94,10 @@ At any point the user may say "just generate" / "skip". Stop asking
 immediately: fill every remaining decision with your recommended answer and tag
 each one `*assumed*` where it lands in the PRD. An assumption the user can see
 is a decision they can overturn; a silent one is an invention.
+
+The valve answers an **ask** — the user's own words, whichever ones they choose.
+An unanswered form keeps its questions live: when anything else arrives while
+one stands, re-present that form and wait for the answer it is owed.
 
 ## Write the PRD
 

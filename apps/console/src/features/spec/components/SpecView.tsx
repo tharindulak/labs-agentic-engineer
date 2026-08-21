@@ -54,7 +54,7 @@ import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { SpecQuestionForm } from "./SpecQuestionForm";
 import { countBlockingOpenQuestions } from "../lib/openQuestions";
-import { nextVersionLabel, parseCellPhase, parsePhasingStories } from "../lib/phaseScope";
+import { nextVersionLabel, parsePrdStories } from "../lib/buildScope";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
 import { CollabTextArea } from "../collab/CollabTextArea";
 import { SpecMdEditor } from "../collab/SpecMdEditor";
@@ -132,8 +132,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   // The build gate's 422 refusal, rendered as an actionable checklist (#372)
   // rather than one flattened alert string.
   const [gateRefusal, setGateRefusal] = useState<Array<{ field?: string; message: string }> | null>(null);
-  // The "Cut version" ceremony (#370/#372): Build first shows what the click
-  // does — the next version, the phase, its in-scope stories, the milestone —
+  // The "Cut version" ceremony (#369/#372): Build first shows what the click
+  // does — the next version, the stories in scope, the milestone —
   // and only a confirm POSTs. The backend cuts the real tag.
   const [cutDialogOpen, setCutDialogOpen] = useState(false);
   const [dependencyDrawerOpen, setDependencyDrawerOpen] = useState(false);
@@ -250,14 +250,25 @@ export function SpecView({ projectName }: { projectName: string }) {
   // requirements file (the seeded PRD). A manual click sets `selection` and
   // always wins over this default.
   const firstRequirements = files.find((f) => f.group === "requirements");
+  // A fresh project may hold no requirements file yet; fall back to whatever
+  // the spec view does list. Named for what it IS — any listed entry, which may
+  // be a structured path (`openapi.yaml`, a component `design.json`,
+  // `validation-criteria.json`) that renders as a read-only structured view
+  // rather than in the editor. That is the right fallback: showing the one
+  // artifact a bare project has beats showing an empty pane, and every path
+  // reaching here has a renderer.
+  //
+  // What must never reach it is a REFERENCE — `toSpecEntry` drops those, which
+  // is what keeps a v1 project's committed PDF out of the editor pane.
+  const firstListed = files[0];
   const effectiveSelection: SpecSelection =
     selection ??
     (agentInRoom && hasDesignCell
       ? { kind: "cell-diagram" }
       : firstRequirements
         ? { kind: "file", path: firstRequirements.path }
-        : files[0]
-          ? { kind: "file", path: files[0].path }
+        : firstListed
+          ? { kind: "file", path: firstListed.path }
           : { kind: "file", path: "" });
 
   // The concrete file entry when the selection is a file (else null: the
@@ -452,16 +463,10 @@ export function SpecView({ projectName }: { projectName: string }) {
     () => (prdContent.data ? countBlockingOpenQuestions(prdContent.data.content) : 0),
     [prdContent.data],
   );
-  const cellEntry = files.find((f) => f.path === "specs/design/design.cell") ?? null;
-  const cellContent = useSpecFileContent(
-    projectName,
-    cellEntry ? { path: cellEntry.path, sha: cellEntry.sha } : null,
-  );
   const cutPreview = useMemo(() => {
-    const phase = cellContent.data ? parseCellPhase(cellContent.data.content) : null;
-    const stories = phase !== null && prdContent.data ? parsePhasingStories(prdContent.data.content, phase) : [];
-    return { phase, stories, nextVersion: nextVersionLabel(tags.data?.latest) };
-  }, [cellContent.data, prdContent.data, tags.data?.latest]);
+    const stories = prdContent.data ? parsePrdStories(prdContent.data.content) : [];
+    return { stories, nextVersion: nextVersionLabel(tags.data?.latest) };
+  }, [prdContent.data, tags.data?.latest]);
 
   const seedChat = (message: string) =>
     setPendingSeed(chatKeyFor(orgHandle ?? "default", projectName), message);
@@ -493,6 +498,10 @@ export function SpecView({ projectName }: { projectName: string }) {
     void (async () => {
       try {
         await collab.flush(); // no-op when offline
+        // The cut drawer previews stories from the COMMITTED PRD; the flush
+        // may just have landed edits, so refresh the file listing (whose shas
+        // drive the PRD content query) before showing what the click will do.
+        await spec.refetch();
         setBuildPhase("checking");
         const { data, isError, error } = await preflight.refetch();
         if (isError || data === undefined) {
@@ -801,7 +810,7 @@ export function SpecView({ projectName }: { projectName: string }) {
               </Button>
             }
           >
-            <AlertTitle>Build refused — the design isn&apos;t complete for its phase</AlertTitle>
+            <AlertTitle>Build refused — the design isn&apos;t complete</AlertTitle>
             {gateRefusal.map((d, i) => (
               <Typography key={i} variant="body2">
                 • {d.field ? `${d.field}: ` : ""}
@@ -811,7 +820,7 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Alert>
         )}
 
-        {/* The "Cut version" ceremony (#370/#372): what the Build click does,
+        {/* The "Cut version" ceremony (#369/#372): what the Build click does,
             before it does it. The version shown is predictive — the BACKEND
             assigns the real tag at cut time. */}
         <Dialog data-testid="cut-version-dialog" open={cutDialogOpen} onClose={() => setCutDialogOpen(false)} maxWidth="xs" fullWidth>
@@ -822,9 +831,6 @@ export function SpecView({ projectName }: { projectName: string }) {
               against that snapshot, so you can keep editing afterwards.
             </Typography>
             <Stack spacing={0.5}>
-              <Typography variant="body2">
-                <b>Phase:</b> {cutPreview.phase ?? "not declared — the gate will refuse"}
-              </Typography>
               <Typography variant="body2">
                 <b>Stories in scope:</b>{" "}
                 {cutPreview.stories.length > 0 ? cutPreview.stories.join(", ") : "—"}
@@ -912,7 +918,6 @@ export function SpecView({ projectName }: { projectName: string }) {
             >
               <SpecFileList
                 files={files}
-                phase={cutPreview.phase}
                 selection={effectiveSelection}
                 onSelect={setSelection}
                 onAddArtifact={() => setAddArtifactOpen(true)}

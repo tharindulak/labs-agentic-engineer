@@ -29,7 +29,7 @@
  * preserved across turns.
  */
 
-import { hasToolCall, isStepCount, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import { hasToolCall, isStepCount, type FilePart, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 import {
   FileBundle,
   ASK_QUESTION_TOOL,
@@ -57,7 +57,7 @@ import {
 } from "../shared/model.js";
 import { loadMcpTools } from "../shared/mcp-client.js";
 import { turnTelemetry } from "../shared/telemetry.js";
-import type { Conversation, ConversationStore } from "../store/conversation-store.js";
+import type { Conversation, ConversationStore, TurnJournalEntry } from "../store/conversation-store.js";
 
 /** Thrown when a second turn starts for an id whose turn is still in flight (→ HTTP 409). */
 export class ConcurrentTurnError extends Error {
@@ -91,7 +91,7 @@ const DIVERGENCE_NOTE =
 
 function freshConversation(id: string): Conversation {
   const now = new Date(); // store re-stamps on save; this is the lazy-create placeholder
-  return { id, messages: [], status: "active", createdAt: now, updatedAt: now };
+  return { id, messages: [], turns: [], status: "active", createdAt: now, updatedAt: now };
 }
 
 /**
@@ -128,6 +128,15 @@ export interface RunConversationTurnInput {
    * no catalog, no `loadSkill`.
    */
   skillSource?: SkillSource;
+  /**
+   * Native file parts (currently: `.pdf` reference documents, #384) attached to
+   * THIS turn's user message alongside `instruction` — resolved by the caller
+   * from `TurnSpec.references` against the snapshot dir (`load-workspace.ts`'s
+   * `readReferenceAttachments`), since this function only sees `files`/
+   * `instruction`, never the raw `TurnSpec` or a filesystem path. Absent/empty
+   * → the message stays a plain string, byte-identical to a turn without it.
+   */
+  referenceAttachments?: FilePart[];
   /**
    * Skill names to inline into THIS turn's prompt up front (#335 latency):
    * bodies resolve through `skillSource` and ride the user prompt — never the
@@ -175,6 +184,13 @@ export interface RunConversationTurnInput {
    * evals) → the manifest usage carries `model: ""`.
    */
   modelId?: string;
+  /**
+   * The turn's journal entry (#463): the raw client-sent instruction + acting
+   * user, appended to `conv.turns` alongside the transcript in the same save —
+   * the display source the get-conversation read serves for user rows. Absent
+   * (older callers, evals) → no entry; the read falls back to the raw message.
+   */
+  journal?: Omit<TurnJournalEntry, "messageIndex" | "createdAt">;
   store: ConversationStore;
   guard: TurnGuard;
   onEvent: (p: StreamPart) => void;
@@ -278,12 +294,30 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // Stamps this turn's steps with the conversation they belong to, so two
     // projects generating at once are attributable in the trace UI.
     const telemetry = turnTelemetry(conv.id);
+    // Attachments dedupe against history by filename: a flow naming the same
+    // document a kickoff already attached must not re-enter it — one copy of a
+    // 5MB PDF per conversation, not one per flow invocation. The model reads
+    // the history copy either way.
+    const attachedAlready = new Set(
+      conv.messages.flatMap((m) =>
+        Array.isArray(m.content)
+          ? m.content.flatMap((part) => {
+              const f = part as { type?: string; filename?: string };
+              return f.type === "file" && f.filename ? [f.filename] : [];
+            })
+          : [],
+      ),
+    );
+    const freshAttachments = (input.referenceAttachments ?? []).filter(
+      (part) => !part.filename || !attachedAlready.has(part.filename),
+    );
     const startLen = conv.messages.length;
     const res = await runTurn({
       model: input.model,
       instructions,
       prompt: note + eagerBlock + buildPrompt(input.files, input.instruction),
       messages: conv.messages, // appended in place by runTurn
+      ...(freshAttachments.length ? { fileParts: freshAttachments } : {}),
       tools,
       // End the turn at a HITL question call (the question tools live on the
       // `files` set only, so these never fire on a task-plan turn).
@@ -318,7 +352,15 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       );
     }
 
-    // 7. persist the whole aggregate (history is append-only)
+    // 7. persist the whole aggregate (history is append-only). The journal
+    //    entry (#463) commits in the same save as the transcript it describes,
+    //    stamped with the INDEX of the user message this turn appended
+    //    (startLen — runTurn appends the prompt first): the display read pairs
+    //    entry↔message by that stated fact, so an un-journaled turn anywhere
+    //    in the history can never shift another turn's pairing.
+    if (input.journal) {
+      conv.turns = [...(conv.turns ?? []), { ...input.journal, messageIndex: startLen, createdAt: new Date() }];
+    }
     await input.store.save(conv);
 
     // 8. terminal manifest (D14) — emitted LAST, only on full success (any

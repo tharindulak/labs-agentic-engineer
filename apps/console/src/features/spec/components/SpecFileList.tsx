@@ -33,7 +33,8 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
-  Plus, RefreshCw,
+  Plus,
+  RefreshCw,
   Network,
   LayoutDashboard,
 } from "@wso2/oxygen-ui-icons-react";
@@ -64,7 +65,6 @@ function fileSel(path: string): SpecSelection {
 
 export function SpecFileList({
   files,
-  phase = null,
   selection,
   onSelect,
   onAddArtifact,
@@ -74,9 +74,6 @@ export function SpecFileList({
   failed,
 }: {
   files: SpecFileEntry[];
-  /** The design version's declared PRD phase (#370) — rendered next to the
-   *  Designs heading; null when the cell declares none. */
-  phase?: number | null;
   selection: SpecSelection | null;
   onSelect: (sel: SpecSelection) => void;
   onAddArtifact: () => void;
@@ -201,7 +198,7 @@ export function SpecFileList({
           }}
         >
           <Typography variant="overline" color="text.secondary">
-            Designs{phase !== null ? ` · Phase ${phase}` : ""}
+            Designs
           </Typography>
           {(design.hasComponents || design.overview.length > 0) && (
             <Tooltip
@@ -296,6 +293,7 @@ export function SpecFileList({
       </Box>
 
       {flatGroup("Validation", validation)}
+
     </Box>
   );
 }

@@ -397,19 +397,26 @@ export interface WorkspaceRef {
  *
  *  - `chat`  — an ordinary user message, sent verbatim.
  *  - `flow`  — a `/<skill>` command: load that skill and follow it, with the
- *              user's trailing text (if any) riding along.
+ *              user's trailing text (if any) riding along. `references` names
+ *              the attached reference documents exactly as on `start` — a flow
+ *              generates artifacts (wireframes above all) that must be
+ *              grounded in an attached sketch or spec.
  *  - `start` — the project kickoff. `idea` is what the user asked for, read by
  *              the BFF from `specs/.agentic-engineer.toml` — a dot-led path
  *              stripped from every turn snapshot, so the agent cannot read it
  *              itself. Absent/blank → the start skill asks the user instead.
+ *              `references` names the documents attached at project create
+ *              (paths under `specs/requirements/references/`, listed by the
+ *              BFF). Paths only: they are ordinary spec content the agent
+ *              reads from its own snapshot. Absent/empty → nothing is said.
  *  - `plan`  — Task planning. `scope` is the milestone's story coverage and
  *              `taskContext` the existing-Task renders; both are platform
  *              state, not repository files, so they cannot ride the snapshot.
  */
 export type TurnSpec =
   | { kind: "chat"; text: string }
-  | { kind: "flow"; skill: string; text?: string }
-  | { kind: "start"; idea?: string }
+  | { kind: "flow"; skill: string; text?: string; references?: string[] }
+  | { kind: "start"; idea?: string; references?: string[] }
   | { kind: "plan"; scope?: PlanScope; taskContext?: PlanContextFile[] };
 
 /** The turn kinds a `TurnSpec` may declare (the server's pre-stream 400 check). */
@@ -417,9 +424,20 @@ export const TURN_KINDS = ["chat", "flow", "start", "plan"] as const;
 
 export type TurnKind = (typeof TURN_KINDS)[number];
 
+/**
+ * A turn's display record (#463): the raw client-sent instruction and the
+ * acting user. `author` mirrors the console's live author shape
+ * (`{id: email, displayName}`) so a rehydrated row is attributable — and
+ * self-vs-teammate distinguishable — exactly like a live one; it is omitted
+ * for M2M callers with no human identity.
+ */
+export interface TurnJournal {
+  text: string;
+  author?: { id: string; displayName: string };
+}
+
 /** The milestone a plan turn is scoped to, and which of its stories already have Tasks. */
 export interface PlanScope {
-  phase: number;
   /** The spec tag the milestone is pinned to. */
   tag: string;
   stories: { number: number; title?: string; covered: boolean }[];
@@ -477,6 +495,15 @@ export interface TurnRequest {
    */
   mcp?: McpConfig;
   /**
+   * The turn's display record (#463): the raw client-sent instruction (exactly
+   * what the sender's UI rendered as the user bubble) plus a best-effort acting
+   * user. Journaled beside the transcript and served for user rows on the
+   * get-conversation read — never woven into the model prompt. Omitted (older
+   * callers, evals) → no journal entry; the read falls back to the raw stored
+   * message for that turn.
+   */
+  journal?: TurnJournal;
+  /**
    * Room-scoped turn (#86 phase 4): join this collab room as a live Yjs peer,
    * read files from the doc, apply ops to the doc, commit nothing. Omitted →
    * the committed-truth snapshot turn (byte-identical to today).
@@ -523,13 +550,14 @@ export function isTurnSpec(v: unknown): v is TurnSpec {
   const t = v as Record<string, unknown>;
   const str = (x: unknown): boolean => typeof x === "string";
   const optStr = (x: unknown): boolean => x === undefined || typeof x === "string";
+  const optStrArr = (x: unknown): boolean => x === undefined || (Array.isArray(x) && x.every(str));
   switch (t.kind) {
     case "chat":
       return str(t.text) && (t.text as string).trim() !== "";
     case "flow":
-      return str(t.skill) && (t.skill as string).trim() !== "" && optStr(t.text);
+      return str(t.skill) && (t.skill as string).trim() !== "" && optStr(t.text) && optStrArr(t.references);
     case "start":
-      return optStr(t.idea);
+      return optStr(t.idea) && optStrArr(t.references);
     case "plan":
       return isPlanScopeOrAbsent(t.scope) && isPlanContextOrAbsent(t.taskContext);
     default:
@@ -541,7 +569,7 @@ function isPlanScopeOrAbsent(v: unknown): boolean {
   if (v === undefined) return true;
   if (v === null || typeof v !== "object") return false;
   const s = v as Record<string, unknown>;
-  if (typeof s.phase !== "number" || typeof s.tag !== "string") return false;
+  if (typeof s.tag !== "string") return false;
   if (!Array.isArray(s.stories)) return false;
   return s.stories.every((row) => {
     if (row === null || typeof row !== "object") return false;

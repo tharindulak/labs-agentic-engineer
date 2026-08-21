@@ -679,7 +679,7 @@ const settledRun: BuildRunList = {
       endedAt: "2026-07-10T10:41:00Z",
       validation: {
         verdict: "partial",
-        issue: 12,
+        issue: 30,
         reportPath: "tests/validation/report.json",
       },
       cycles: [
@@ -704,7 +704,7 @@ const settledRun: BuildRunList = {
           prUrl: `${REPO_URL}/pull/4`,
           mergeSha: "5c0de1a77b3f2049",
           validationVerdict: "failed",
-          validationIssue: 12,
+          validationIssue: 30,
           createdAt: "2026-07-10T09:45:00Z",
           endedAt: "2026-07-10T10:02:00Z",
         },
@@ -731,7 +731,7 @@ const settledRun: BuildRunList = {
           prUrl: `${REPO_URL}/pull/6`,
           mergeSha: "7ab41c90ee31d5f0",
           validationVerdict: "partial",
-          validationIssue: 12,
+          validationIssue: 30,
           createdAt: "2026-07-10T10:24:00Z",
           endedAt: "2026-07-10T10:40:00Z",
         },
@@ -974,6 +974,22 @@ screen Orders "Shopper tracks past orders and their status"
     row "#10432 | Jul 8, 2026 | 3 | $302.00 | Shipped"
     row "#10391 | Jun 27, 2026 | 1 | $89.00 | Delivered"
     row "#10355 | Jun 15, 2026 | 2 | $168.00 | Delivered"
+
+// Two journeys over the same three screens, so mock mode exercises every
+// flow case the prototype has to render: a screen in one flow (Cart, Orders),
+// a screen both flows reach (Catalog → "Common" on the canvas), and a flow
+// picker with more than one entry.
+flow "Browse & buy"
+  role "Shopper"
+  description "A shopper finds products and checks out"
+  Catalog
+  Cart
+
+flow "Order tracking"
+  role "Shopper"
+  description "A signed-in shopper checks where a placed order is"
+  Catalog
+  Orders
 `;
 
 const catalogApiDesignJson = `{
@@ -1015,7 +1031,9 @@ const validationPlan = `# Demo Shop — Validation plan
 // aep:mock:validation switch swaps wholesale to reach every verdict.
 
 // Spec files as the Files API serves them (#113): repo-relative paths under
-// specs/, metadata (list-files) split from content (read-file).
+// specs/, metadata (list-files) split from content (read-file). Text only —
+// the Files API carries no binary (ADR-0017 took reference documents out of
+// git, and with them the base64 encoding field).
 interface MockSpecFile {
   path: string;
   content: string;
@@ -1088,7 +1106,7 @@ export function specFileMetas(files: MockSpecFile[]): FileMeta[] {
     .map((f) => ({
       path: f.path,
       sha: mockSha(f.path + f.content),
-      size: f.content.length,
+      size: byteLength(f.content),
     }))
     .sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -1110,6 +1128,92 @@ export const specFileNotFound = (path: string): ApiError => ({
   code: "not_found",
   message: `no spec file at ${path}`,
 });
+
+// Files written through the mock files/apply. Persisted per project to
+// localStorage (like created projects) so the Spec view still lists them after
+// a reload. Reference documents no longer come through here at all — they go
+// to the references endpoint and are never committed (ADR-0017).
+const APPLIED_FILES_KEY = "aep:mock:appliedFiles";
+
+interface AppliedFile extends MockSpecFile {
+  size: number;
+  sha: string;
+}
+
+type AppliedFilesByProject = Record<string, AppliedFile[]>;
+
+function loadAppliedFiles(): AppliedFilesByProject {
+  try {
+    const raw = localStorage.getItem(APPLIED_FILES_KEY);
+    return raw ? (JSON.parse(raw) as AppliedFilesByProject) : {};
+  } catch {
+    return {};
+  }
+}
+
+// The byte count the server would have recorded — measured ENCODED, not by
+// `String.length`, which counts UTF-16 code units and would under-report any
+// non-ASCII spec file.
+function byteLength(content: string): number {
+  return new TextEncoder().encode(content).byteLength;
+}
+
+export function recordAppliedFiles(
+  projectName: string,
+  writes: { path: string; content: string }[],
+): FileMeta[] {
+  const all = loadAppliedFiles();
+  const files = all[projectName] ?? [];
+  const applied = writes.map((w) => ({
+    path: w.path,
+    content: w.content,
+    size: byteLength(w.content),
+    sha: mockSha(w.path + w.content),
+  }));
+  for (const file of applied) {
+    const existing = files.findIndex((f) => f.path === file.path);
+    if (existing >= 0) files[existing] = file;
+    else files.push(file);
+  }
+  all[projectName] = files;
+  try {
+    localStorage.setItem(APPLIED_FILES_KEY, JSON.stringify(all));
+  } catch {
+    /* quota — non-fatal in mock mode */
+  }
+  return applied.map(({ path, sha, size }) => ({ path, sha, size }));
+}
+
+export function appliedFileMetas(projectName: string): FileMeta[] {
+  return (loadAppliedFiles()[projectName] ?? []).map((f) => ({
+    path: f.path,
+    sha: f.sha,
+    size: f.size,
+  }));
+}
+
+export function appliedFileContent(
+  projectName: string,
+  path: string,
+): FileContent | null {
+  const file = (loadAppliedFiles()[projectName] ?? []).find(
+    (f) => f.path === path,
+  );
+  if (!file) return null;
+  return { path: file.path, content: file.content, sha: file.sha };
+}
+
+export const applyFilesError: ApiError = {
+  code: "internal_error",
+  message: "Mock error scenario for files/apply",
+};
+
+// The create flow's reference upload (#383) failing — the surface behind the
+// confirm step's Retry / Continue-without-documents pair.
+export const uploadReferencesError: ApiError = {
+  code: "internal_error",
+  message: "Mock error scenario for the reference upload",
+};
 
 export const projectSectionError: ApiError = {
   code: "internal_error",

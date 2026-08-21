@@ -49,6 +49,23 @@ const START_INSTRUCTION = "Load the start skill and follow it.";
 const IDEA_PREFIX = "\n\nThe user's idea for this project:\n\n";
 
 /**
+ * The documents the user attached at project create, appended as PATHS. They
+ * are NOT spec content — nothing commits them (console ADR-0017); the platform
+ * overlays them into the turn's snapshot, so they are already in front of the
+ * agent and this points rather than pastes. It also says what they are FOR,
+ * because "some files exist" is not an instruction.
+ *
+ * Worded for start AND flow turns, which both carry references: "read them
+ * before interviewing" is meaningless on a `/design` turn, which interviews
+ * nobody. The shared line states their standing; each turn's own skill says
+ * what to do with them.
+ */
+const REFERENCES_PREFIX =
+  "\n\nThe user attached reference documents for this project. They are the " +
+  "primary brief for what is being built, and the idea above is the anchor. " +
+  "Read them before you plan or ask anything they already answer:\n\n";
+
+/**
  * The ONE surviving content steer for spec turns (#373): flow behaviour lives
  * in skills, but a file created at a bare filename lands in the wrong place and
  * no skill is loaded early enough to prevent it.
@@ -158,12 +175,17 @@ function specBody(turn: Exclude<TurnSpec, { kind: "plan" }>): string {
       // not-found and the agent says so, which is a better failure than a
       // client-side allowlist that goes stale against the org's catalog.
       const base = `Load the ${turn.skill} skill and follow it.`;
-      return turn.text?.trim() ? `${base}\n\n${turn.text.trim()}` : base;
+      const withText = turn.text?.trim() ? `${base}\n\n${turn.text.trim()}` : base;
+      // Reference documents ride flows the same way they ride start turns:
+      // a flow generates artifacts, and an attached sketch IS the brief for
+      // wireframes. No documents → byte-identical to a plain flow turn.
+      return withText + references(turn.references);
     }
     case "start":
       // A blank idea appends NOTHING, leaving a bare skill load — the start
-      // skill then asks the user for it.
-      return START_INSTRUCTION + idea(turn.idea);
+      // skill then asks the user for it. References behave the same way: no
+      // documents, no paragraph, so a docless kickoff is unchanged.
+      return START_INSTRUCTION + idea(turn.idea) + references(turn.references);
   }
 }
 
@@ -177,6 +199,11 @@ function idea(raw: string | undefined): string {
   return trimmed === "" ? "" : IDEA_PREFIX + trimmed;
 }
 
+function references(paths: string[] | undefined): string {
+  const listed = (paths ?? []).map((p) => p.trim()).filter((p) => p !== "");
+  return listed.length === 0 ? "" : REFERENCES_PREFIX + listed.map((p) => `- ${p}`).join("\n");
+}
+
 function target(raw: string | undefined): string {
   const trimmed = (raw ?? "").trim();
   return trimmed === "" ? "" : TARGET_PREFIX + trimmed + TARGET_CLOSE;
@@ -188,7 +215,7 @@ function target(raw: string | undefined): string {
  * rather than a re-plan.
  */
 function scopeBlock(scope: PlanScope | undefined): string {
-  if (!scope || scope.phase === 0 || scope.stories.length === 0) return "";
+  if (!scope || scope.stories.length === 0) return "";
   const rows = scope.stories
     .map((s) => {
       const status = s.covered ? "COVERED" : "NEEDS TASKS";
@@ -196,7 +223,7 @@ function scopeBlock(scope: PlanScope | undefined): string {
     })
     .join("\n");
   return (
-    `\n\n## Milestone scope — Phase ${scope.phase} (spec ${scope.tag})\n\n` +
+    `\n\n## Milestone scope (spec ${scope.tag})\n\n` +
     "Plan Tasks so every story marked NEEDS TASKS below is covered. COVERED stories already have Tasks — leave them alone.\n\n" +
     rows +
     "\n"

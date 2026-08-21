@@ -110,6 +110,47 @@ export function deployStageView(status: ProjectStatus): StageView {
   }
 }
 
+// The verdicts the loop repeats — delivery.ValidationVerdictFailsRun in the
+// console's terms. Every other verdict is final until something re-asks it, so
+// `awaiting-fix` beside one of those can only be poll skew.
+const VALIDATION_REPEATED = new Set(["failed", "unreported"]);
+
+/**
+ * The validation state to RENDER, from the two facts the console holds separately:
+ * `deploy.validation` (the loop's position, the only source of `running` and
+ * `awaiting-fix`) and the run row's stored verdict (the last attempt's answer).
+ *
+ * Both are needed because neither is sufficient. `RunValidation.verdict` is a
+ * COLUMN — six verdicts, no lifecycle — so a page reading it alone renders a fatal
+ * verdict as terminal while the platform is repairing it and about to validate
+ * again. deploy.validation carries the lifecycle but is scoped to the newest
+ * validating run on the deploy version's milestone, so the run story a page keyed
+ * itself on is the better source for the verdict itself.
+ *
+ * They are also two separate polls, so they can disagree by one interval. A
+ * lifecycle value is therefore honoured only over a verdict the loop actually
+ * repeats: a stale `awaiting-fix` beside a green verdict from the newer poll reads
+ * as the verdict, not as a repair of something that passed.
+ */
+export function validationState(deployValidation: string, verdict: string): string {
+  // `running` wins over ANY verdict, including a green one. It means a validation
+  // cycle is genuinely in flight, which no verdict can be stale about — and a
+  // revalidation is exactly that over a settled result, so guarding it would leave
+  // the chip reading "Validated" while the platform re-asks the question. The poll
+  // skew this once guarded against is one interval of a merely stale "Validating",
+  // where a revalidation mislabelled is persistent.
+  if (deployValidation === "running") return deployValidation;
+  // `awaiting-fix` keeps the guard: it can only sit over a verdict the loop repeats,
+  // so pairing it with a green one is skew by definition, not a state.
+  if (
+    deployValidation === "awaiting-fix" &&
+    (verdict === "" || VALIDATION_REPEATED.has(verdict))
+  ) {
+    return deployValidation;
+  }
+  return verdict;
+}
+
 // validationView maps deploy.validation to a label + tone, shared by the overview
 // deploy line (suffix) and the deployments board chip. null = nothing to show yet.
 //
@@ -125,6 +166,11 @@ export function deployStageView(status: ProjectStatus): StageView {
 // "Validation") and the distinction the vocabulary exists for would be sighted-only.
 // It is absent everywhere else, so the default stays "the name is the visible label"
 // and a caller that ignores the field is still correct for seven of the nine states.
+//
+// It is never the VISIBLE string. A caller with room says the hedge in its own prose
+// (the verdict tile's sentence, the deployments banner's); a caller without room
+// shows the mark. Substituting the spoken form for the label would put a third
+// wording on screen and make the mark unreachable.
 export function validationView(
   validation: string,
 ): { label: string; tone: StageTone; spoken?: string } | null {
@@ -154,11 +200,18 @@ export function validationView(
       return { label: "validated", tone: "success" };
     case "partial":
       // Something passed, nothing failed, and some criteria were never covered.
-      // Green like `passed` (#401 review): nothing about this run failed, and the
-      // deployments surface prints the actual counts ("3/6 passed") beside the
-      // chip, so the numbers carry the hedge the old asterisk did. The spoken
-      // form keeps the distinction screen readers can't get from a shared label.
-      return { label: "validated", tone: "success", spoken: "validated, partially" };
+      //
+      // The ASTERISK is the hedge and the TONE is the outcome, and separating them
+      // is the point: nothing about this run failed, so green is honest, but the
+      // bare word "validated" would claim a result for criteria nobody checked.
+      // A spell-out ("partially validated") is not wanted here — the mark is meant
+      // to be quiet, and the surfaces that have room say it in full a line later.
+      //
+      // `info` is NOT available for this, which is what makes the mark necessary
+      // rather than merely nice: `running` is the only other info, and
+      // deploymentStory's TONE_STATE maps info to `active` — the rail's hollow
+      // pulsing dot. A settled partial verdict would pulse there forever.
+      return { label: "validated*", tone: "success", spoken: "validated, partially" };
     case "failed":
       return { label: "validation failed", tone: "error" };
     case "inconclusive":
