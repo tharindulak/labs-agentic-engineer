@@ -50,9 +50,12 @@ import {
   SSE_DONE,
   isTurnSpec,
   isCollabConfig,
+  isSurface,
+  SURFACES,
   type CollabConfig,
   type McpConfig,
   type StreamPart,
+  type Surface,
   type Toolset,
   type TurnJournal,
   type TurnSpec,
@@ -160,6 +163,7 @@ export function createApp(deps: CreateAppDeps): Express {
       journal?: unknown;
       collab?: unknown;
       webSearch?: unknown;
+      surface?: unknown;
       eagerSkills?: unknown;
     };
 
@@ -195,6 +199,19 @@ export function createApp(deps: CreateAppDeps): Express {
     if (body.target !== undefined && typeof body.target !== "string") {
       res.status(400).json({ error: "target must be a string" });
       return;
+    }
+
+    // The caller's surface (#580): who is reading this turn's prose. The one
+    // turn property that cannot be derived — it is who is asking, not what is
+    // being asked for — so an unknown value is a 400 rather than a silent
+    // fallback that would narrate to the wrong audience.
+    let surface: Surface | undefined;
+    if (body.surface !== undefined) {
+      if (!isSurface(body.surface)) {
+        res.status(400).json({ error: `surface must be one of: ${SURFACES.join(", ")}` });
+        return;
+      }
+      surface = body.surface;
     }
     const instruction = composeInstruction(turn, {
       target: typeof body.target === "string" ? body.target : undefined,
@@ -397,6 +414,7 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(journal ? { journal: { ...journal, turnId } } : {}),
         ...(eagerSkills ? { eagerSkills } : {}),
         webSearch: body.webSearch === true,
+        ...(surface ? { surface } : {}),
         ...(roomPeer ? { collabPeer: roomPeer } : {}),
         model,
         ...(deps.modelId ? { modelId: deps.modelId } : {}),

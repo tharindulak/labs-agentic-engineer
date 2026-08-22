@@ -84,10 +84,12 @@ func (f *fakeTagger) TagSpec(context.Context, string, string) (*spec.SpecSaveRes
 type planSpy struct {
 	mu sync.Mutex
 
-	createdMilestones []string
-	nextNumber        int
-	activeRun         *delivery.MilestoneRun
-	refuseAdmit       bool
+	createdMilestones  []string
+	reopenedMilestones []int
+	nextNumber         int
+	activeRun          *delivery.MilestoneRun
+	judgingRun         *delivery.MilestoneRun
+	refuseAdmit        bool
 	// rows is what ListByProject answers — the version ledger the list read is
 	// built from, and the supersede lookup's input.
 	rows    []delivery.MilestoneRun
@@ -96,6 +98,10 @@ type planSpy struct {
 	admitted []delivery.MilestoneRun
 	planned  chan int
 	started  []delivery.StartRunRequest
+	// mintedIssues records anything the plan path files. It must stay empty:
+	// the click mints a MILESTONE, and the version's issues are the planning
+	// turn's and the gate resolver's to file.
+	mintedIssues []string
 }
 
 func newPlanSpy() *planSpy {
@@ -111,13 +117,41 @@ func (p *planSpy) CreateMilestone(_ context.Context, _, _ string, req sourcecont
 	return &sourcecontrol.MilestoneResult{Number: n, Created: true}, nil
 }
 func (p *planSpy) CloseMilestone(context.Context, string, string, int) error { return nil }
+func (p *planSpy) ReopenMilestone(_ context.Context, _, _ string, number int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reopenedMilestones = append(p.reopenedMilestones, number)
+	return nil
+}
 func (p *planSpy) ListMilestoneIssues(context.Context, string, string, sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
 	return nil, nil
 }
-func (p *planSpy) CloseIssue(context.Context, string, string, int, string) error { return nil }
 
-func (p *planSpy) ActiveSpecRunByProject(context.Context, string, string) (*delivery.MilestoneRun, error) {
+// The issue-write surface. Only CloseIssue is on the plan path (supersede); the
+// rest complete delivery.IssueOps so the spy can wear the domain's writer, and
+// a plan path that started minting would show up here rather than compiling.
+func (p *planSpy) CloseIssue(context.Context, string, string, int, string) error { return nil }
+func (p *planSpy) ReopenIssue(context.Context, string, string, int) error        { return nil }
+func (p *planSpy) CommentIssue(context.Context, string, string, int, string) error {
+	return nil
+}
+func (p *planSpy) AddLabels(context.Context, string, string, int, []string) error { return nil }
+func (p *planSpy) RemoveLabel(context.Context, string, string, int, string) error { return nil }
+func (p *planSpy) SetIssueMilestone(context.Context, string, string, int, int) error {
+	return nil
+}
+func (p *planSpy) CreateIssue(_ context.Context, _, _ string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.mintedIssues = append(p.mintedIssues, req.Title)
+	return &sourcecontrol.IssueResult{Number: 1}, nil
+}
+
+func (p *planSpy) ActiveDevRunByProject(context.Context, string, string) (*delivery.MilestoneRun, error) {
 	return p.activeRun, nil
+}
+func (p *planSpy) ActiveValidationRunByProject(context.Context, string, string) (*delivery.MilestoneRun, error) {
+	return p.judgingRun, nil
 }
 func (p *planSpy) TryAdmit(_ context.Context, run *delivery.MilestoneRun) (bool, *delivery.MilestoneRun, error) {
 	p.mu.Lock()
@@ -166,6 +200,20 @@ func (p *planSpy) awaitStart(t *testing.T) int {
 	return p.started[0].MilestoneNumber
 }
 
+// reopened is the milestones the click put back, read safely.
+func (p *planSpy) reopened() []int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]int(nil), p.reopenedMilestones...)
+}
+
+// startedRuns is what the click handed the supervisor, read safely.
+func (p *planSpy) startedRuns() []delivery.StartRunRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]delivery.StartRunRequest(nil), p.started...)
+}
+
 func (p *planSpy) milestones() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -181,7 +229,8 @@ func (p *planSpy) admittedRuns() []delivery.MilestoneRun {
 // withPlanPath wires the spy as the service's plan path.
 func withPlanPath(svc *build.Service, spy *planSpy) *build.Service {
 	svc.SetPlanPath(build.PlanPathDeps{
-		Milestones: spy, Runs: spy, Planner: spy, Gates: spy, Starter: spy,
+		Milestones: spy, Issues: delivery.NewIssueWriter(spy),
+		Runs: spy, Planner: spy, Gates: spy, Starter: spy,
 	})
 	return svc
 }
@@ -288,9 +337,19 @@ func TestBuild_CutsTheTagAndClaimsTheVersion(t *testing.T) {
 	}
 }
 
-func TestBuild_UnchangedSpec_ReturnsExistingTagAndStillStartsTheRun(t *testing.T) {
+// THE SPEC-SAVE STATUS IS THE WHOLE BRANCH, and this is the pair that pins it.
+// There is no second question asked anywhere — in particular not "was the last run
+// cancelled" — so what the click does after a cancel is decided by whether the
+// person edited the spec, and by nothing else.
+//
+// `unchanged` is the SAME tag, so the same milestone: reopen it and exactly the
+// issues a cancel closed inside it, and tell the run NOT to plan. The run must be
+// told, because a re-plan over a milestone whose issues were all closed would
+// recognise every title slug, mint nothing, and hand the loop an empty working set
+// to read as "delivered".
+func TestBuild_UnchangedSpec_ReopensTheIncrementAndDoesNotReplan(t *testing.T) {
 	spy := newPlanSpy()
-	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "unchanged", Tag: "v2", Version: 2}}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveUnchanged, Tag: "v2", Version: 2}}
 	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
 
 	code, body := postBuild(t, svc, "shop")
@@ -300,12 +359,39 @@ func TestBuild_UnchangedSpec_ReturnsExistingTagAndStillStartsTheRun(t *testing.T
 	if out := decodeBody[gen.BuildResponse](t, body); out.Tag != "v2" {
 		t.Errorf("tag = %q, want the existing v2", out.Tag)
 	}
-	// CreateMilestone is idempotent, so a re-build of an unchanged spec adopts
-	// the same milestone and re-plans into it (dedupe makes that additive-only).
+	// CreateMilestone is idempotent, so an unchanged spec adopts the same
+	// milestone — and the click puts it, and what the cancel closed in it, back.
 	spy.awaitStart(t)
+	if got := spy.reopened(); len(got) != 1 || got[0] != 9 {
+		t.Errorf("reopened milestones = %v, want the claimed one (9) reopened exactly once", got)
+	}
+	if req := spy.startedRuns()[0]; !req.Rebuild {
+		t.Errorf("started %+v, want Rebuild set so the run mints its gates and skips the planning turn", req)
+	}
 }
 
-// The spec-run mutex: a second click while a spec run is live is a 409, and it
+// `approved` is a NEW tag: the ordinary build path with nothing special about it.
+// It plans fresh, and it must not carry the rebuild flag — a version that was
+// never filled has to be.
+func TestBuild_ChangedSpec_PlansTheNewVersionFresh(t *testing.T) {
+	spy := newPlanSpy()
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: spec.SpecSaveApproved, Tag: "v3", Version: 3}}
+	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
+
+	code, body := postBuild(t, svc, "shop")
+	if code != 200 {
+		t.Fatalf("build: got %d body=%s", code, body)
+	}
+	spy.awaitStart(t)
+	if got := spy.reopened(); len(got) != 0 {
+		t.Errorf("a new version reopens nothing, got %v", got)
+	}
+	if req := spy.startedRuns()[0]; req.Rebuild {
+		t.Errorf("started %+v, want Rebuild clear — a new version has to be planned", req)
+	}
+}
+
+// The build mutex: a second click while a dev run is live is a 409, and it
 // never reaches the tagger — a rejected build claims no version.
 func TestBuild_SpecRunAlreadyLive_409_TaggerUntouched(t *testing.T) {
 	spy := newPlanSpy()
@@ -326,6 +412,63 @@ func TestBuild_SpecRunAlreadyLive_409_TaggerUntouched(t *testing.T) {
 	if len(spy.milestones()) != 0 {
 		t.Errorf("a rejected click minted a milestone: %v", spy.milestones())
 	}
+}
+
+// The build's OTHER refusal: this project's deployed version is being judged.
+//
+// A delivery run merging and promoting while validation asserts against the
+// deployment would be judging a moving target — the verdict would name criteria
+// that were true of neither the old release nor the new one. A validation run
+// deliberately sits outside the build mutex (it re-judges a version that already
+// shipped, so no database index refuses this), which is why the guard is an
+// explicit read and this test is the only thing enforcing it.
+//
+// Refused rather than queued, and the way past it is one click: cancel the
+// validation.
+func TestBuild_ValidationRunLive_409_TaggerUntouched(t *testing.T) {
+	spy := newPlanSpy()
+	spy.judgingRun = &delivery.MilestoneRun{
+		ID: "run-v", MilestoneNumber: 9, Kind: delivery.RunKindValidation,
+		State: delivery.RunStateRunning,
+	}
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v2"}}
+	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
+
+	code, body := postBuild(t, svc, "shop")
+	if code != 409 {
+		t.Fatalf("status = %d, want 409 (body=%s)", code, body)
+	}
+	e := componenttest.DecodeEnvelope(t, body)
+	if e.Code != "conflict" {
+		t.Fatalf("409 envelope = %+v", e)
+	}
+	// Its own message: "wait for a build" and "cancel the validation" send a user
+	// to different places.
+	if !strings.Contains(e.Message, "validated") {
+		t.Errorf("409 message = %q, want it to name the validation run", e.Message)
+	}
+	// Checked BEFORE the tag is cut, so a refused build claims no version.
+	if tagger.called != 0 {
+		t.Errorf("tagger called %d times behind the validation guard, want 0", tagger.called)
+	}
+	if len(spy.milestones()) != 0 {
+		t.Errorf("a rejected click minted a milestone: %v", spy.milestones())
+	}
+}
+
+// And it is only a refusal while the validation is LIVE: a settled one holds
+// nothing, so the next build proceeds normally.
+func TestBuild_NoLiveValidationRun_Proceeds(t *testing.T) {
+	spy := newPlanSpy()
+	spy.judgingRun = nil // the validation settled
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Status: "changed", Tag: "v3", Version: 3}}
+	svc := withPlanPath(newSvc(fakeRepos{}, tagger), spy)
+
+	code, body := postBuild(t, svc, "shop")
+	if code != 200 {
+		t.Fatalf("status = %d, want 200 (body=%s)", code, body)
+	}
+	spy.awaitStart(t)
 }
 
 // The DB index is the mutex's authority. When the pre-check passes but the
@@ -497,11 +640,11 @@ func TestListBuilds_NewestFirstOneEntryPerVersion(t *testing.T) {
 	ended := t0.Add(90 * time.Minute)
 	spy := newPlanSpy()
 	spy.rows = []delivery.MilestoneRun{
-		{MilestoneNumber: 12, MilestoneTitle: "v2", Origin: delivery.RunOriginSpecBuild,
+		{MilestoneNumber: 12, MilestoneTitle: "v2", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
 			State: delivery.RunStateRunning, CreatedAt: t0.Add(2 * time.Hour)},
-		{MilestoneNumber: 11, MilestoneTitle: "v1", Origin: delivery.RunOriginIncidentAdoption,
+		{MilestoneNumber: 11, MilestoneTitle: "v1", Kind: delivery.RunKindTask, Origin: delivery.RunOriginIncidentAdoption,
 			State: delivery.RunStateSucceeded, CreatedAt: t0.Add(time.Hour), EndedAt: &ended},
-		{MilestoneNumber: 11, MilestoneTitle: "v1", Origin: delivery.RunOriginSpecBuild,
+		{MilestoneNumber: 11, MilestoneTitle: "v1", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
 			State: delivery.RunStateFailed, TerminalReason: delivery.RunReasonCycleCeiling, CreatedAt: t0},
 	}
 	svc := withPlanPath(newSvc(fakeRepos{}, &fakeTagger{}), spy)
@@ -538,7 +681,7 @@ func TestListBuilds_NewestFirstOneEntryPerVersion(t *testing.T) {
 func TestListBuilds_FailedVersionCarriesItsTerminalReason(t *testing.T) {
 	spy := newPlanSpy()
 	spy.rows = []delivery.MilestoneRun{{
-		MilestoneNumber: 3, MilestoneTitle: "v1", Origin: delivery.RunOriginSpecBuild,
+		MilestoneNumber: 3, MilestoneTitle: "v1", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
 		State: delivery.RunStateFailed, TerminalReason: delivery.RunReasonNoProgress,
 	}}
 	svc := withPlanPath(newSvc(fakeRepos{}, &fakeTagger{}), spy)

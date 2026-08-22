@@ -44,6 +44,11 @@ import { useRunProgress, type RunProgressCycle } from "../hooks/useRunProgress";
 // The LINES inside a section stay oldest-first — a log read upwards is unreadable,
 // and that is a different tier of ordering from the boxes holding them.
 
+/**
+ * One cycle's accordion box. Exported because the VERSION feed renders the same
+ * box under a run heading (BuildFeed) — one cycle must read identically whether
+ * it is reached through its own run.
+ */
 function CycleSection({
   section,
   ordinal,

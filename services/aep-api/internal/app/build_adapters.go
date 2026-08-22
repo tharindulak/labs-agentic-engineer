@@ -97,7 +97,7 @@ func (b buildProvisionStatus) Ready(ctx context.Context, orgID, projectID, depNa
 
 // buildGateResolver adapts the provisioning feature onto the build plan path's
 // GateResolver port: author the version's dependencies and mint its
-// aep:provision gates INTO the version's milestone, so the run's dispatch
+// `provision` gates INTO the version's milestone, so the run's dispatch
 // predicate sees them.
 //
 // It collapses provisioning's per-dependency failure list into one error on

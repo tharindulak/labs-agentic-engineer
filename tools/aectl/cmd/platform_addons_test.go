@@ -102,7 +102,7 @@ func TestRunAddonInstall_DeclinedConfirmation(t *testing.T) {
 		},
 	}
 
-	if err := runAddonInstall(context.Background(), deps); err != nil {
+	if err := runAddonInstall(context.Background(), "", deps); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 	if newApplierCalled {
@@ -132,7 +132,7 @@ func TestRunAddonInstall_OperatorFailureSkipsAddon(t *testing.T) {
 		},
 	}
 
-	if err := runAddonInstall(context.Background(), deps); err != nil {
+	if err := runAddonInstall(context.Background(), "", deps); err != nil {
 		t.Fatalf("expected nil (failed operator is not a fatal error), got %v", err)
 	}
 	if !installCalled {
@@ -165,7 +165,7 @@ func TestRunAddonInstall_SuccessAppliesManifests(t *testing.T) {
 		},
 	}
 
-	if err := runAddonInstall(context.Background(), deps); err != nil {
+	if err := runAddonInstall(context.Background(), "", deps); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !installCalled {
@@ -173,5 +173,61 @@ func TestRunAddonInstall_SuccessAppliesManifests(t *testing.T) {
 	}
 	if got, want := len(fa.applied), len(first.Manifests); got != want {
 		t.Errorf("applied %d manifests, want %d", got, want)
+	}
+}
+
+// TestRunAddonInstall_OperatorVersion verifies how the resolved platform version
+// flows into each operator's Helm --version:
+//   - an addon whose OperatorSpec omits Version inherits a non-empty platformVersion;
+//   - an addon with an explicit Version keeps it (platformVersion is ignored);
+//   - an empty platformVersion leaves an unset Version empty (no --version pin).
+func TestRunAddonInstall_OperatorVersion(t *testing.T) {
+	tests := []struct {
+		name            string
+		addonID         string
+		platformVersion string
+		wantVersion     string
+	}{
+		{
+			name:            "empty operator version inherits platform version",
+			addonID:         "thunder-app", // OperatorSpec.Version == ""
+			platformVersion: "0.6.0-rc.17",
+			wantVersion:     "0.6.0-rc.17",
+		},
+		{
+			name:            "explicit operator version is preserved",
+			addonID:         "postgres-cnpg", // OperatorSpec.Version == "0.29.0"
+			platformVersion: "0.6.0-rc.17",
+			wantVersion:     "0.29.0",
+		},
+		{
+			name:            "empty platform version leaves unset version empty",
+			addonID:         "thunder-app",
+			platformVersion: "",
+			wantVersion:     "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := addonByID(t, tc.addonID)
+			fa := &fakeApplier{existing: existingForAddon(a)}
+			var got addons.OperatorSpec
+			deps := addonDeps{
+				multiSelect: selectByID(t, tc.addonID),
+				confirm:     func(string) bool { return true },
+				installOperator: func(_ context.Context, _ string, op addons.OperatorSpec) error {
+					got = op
+					return nil
+				},
+				newApplier: func(string) (manifestApplier, error) { return fa, nil },
+			}
+
+			if err := runAddonInstall(context.Background(), tc.platformVersion, deps); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Version != tc.wantVersion {
+				t.Errorf("operator Version = %q, want %q", got.Version, tc.wantVersion)
+			}
+		})
 	}
 }

@@ -8,10 +8,9 @@ this file defines what terms *mean*, not how anything works.
 **Skill**:
 A unit of procedural guidance — a `SKILL.md` (frontmatter `name` + `description`,
 markdown body) — that the main agent may follow while editing a spec bundle. The
-caller passes the candidate Skills (`name`, `description`, `content`) in the turn
-request payload. A Skill is *guidance*, not code: never executed, never uploaded
-to a model provider, never read from disk by the service (the caller — the eval —
-resolves Skills from the repo).
+turn's Skills come from the workspace's immutable skills snapshot, which the
+caller names by ref; bodies never cross the wire. A Skill is *guidance*, not
+code: never executed, never uploaded to a model provider.
 _Avoid_: plugin, capability, tool (a tool is the agent's executable action, e.g. `editFile`).
 
 **Skill catalog**:
@@ -23,7 +22,19 @@ the body is fetched on demand.
 **`loadSkill`**:
 The tool the agent calls to fetch a Skill's full `content` by name. The body enters
 context only when loaded, and then persists as a tool result in message history.
-This is the only way a Skill body reaches the model.
+This is the only way a *catalogued* Skill body reaches the model — the standing
+blocks (the org's defaults, the Surface's narration policy) are inlined instead,
+and are kept out of the catalog precisely because nothing needs to load them.
+
+**Surface**:
+Where the person reading a turn's prose is sitting — the console, or a terminal
+in the repository. The right vocabulary belongs to the Surface, not to the Skill:
+`design.cell` is exactly the right word for someone standing in the repo and
+names nothing on a console user's screen. A Surface names the narration policy
+its callers' turns carry, so the shared flow Skills stay byte-identical wherever
+they run.
+_Avoid_: client, channel, caller (the caller is who dispatches a turn; the
+Surface is who reads it).
 
 **Spec bundle**:
 The in-memory set of files (a snapshot, keyed by path) the main agent reads and

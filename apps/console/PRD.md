@@ -85,6 +85,23 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Spec view — the PRD is the interface: each PRD section carries a **code
+  lens** firing the command that belongs there — `/actor` on Actors,
+  `/feature` on the story list, `/expand` on each story, `/settle` over Open
+  Questions — and every flagged line (an `*assumed*` decision, an open
+  question) carries its own `/settle`, so the subject comes from what the user
+  clicked instead of their memory. Section lenses show at rest, line lenses on
+  hover, and all of them go inert while an agent holds the turn. Retires the
+  composer's `Actions ▾` menu of raw slash commands. **Open questions no longer
+  block Generate design** on either side — the console disable and the two
+  skill clauses both go — since a recorded gap is information, not corruption
+  (the reasoning that already settled dependencies in
+  [#526](https://github.com/wso2/labs-agentic-engineer/issues/526)); `deferred`
+  survives as the user's *"stop asking"*. A command names the user's intent and
+  resolves to a skill server-side, so `amend` stops being what a user reads and
+  `/settle` arrives as its own skill, because revision propagates. No contract
+  change —
+  [#579](https://github.com/wso2/labs-agentic-engineer/issues/579)
 - Create flow — says what's about to happen: the subtitle answers only *how
   much detail?* (*"Describe it in your own words — rough is fine."*), the
   repository field states that Agentic Engineer **creates** it in the user's

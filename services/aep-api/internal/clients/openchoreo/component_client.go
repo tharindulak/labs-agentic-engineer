@@ -162,6 +162,9 @@ type ComponentClient interface {
 
 type componentClient struct {
 	oc *ocgen.ClientWithResponses
+	// preferPlainHTTP picks the http external URL when a binding advertises both
+	// (Config.PreferPlainHTTPEndpoints explains why).
+	preferPlainHTTP bool
 }
 
 func NewComponentClient(cfg Config) ComponentClient {
@@ -169,7 +172,7 @@ func NewComponentClient(cfg Config) ComponentClient {
 	if err != nil {
 		panic(fmt.Errorf("init openchoreo component client: %w", err))
 	}
-	return &componentClient{oc: oc}
+	return &componentClient{oc: oc, preferPlainHTTP: cfg.PreferPlainHTTPEndpoints}
 }
 
 // -- Conversions -------------------------------------------------------------
@@ -281,7 +284,7 @@ func workflowRunToModel(run ocgen.WorkflowRun) gen.WorkflowRun {
 // deploymentFromReleaseBinding pulls the first public URL from the binding's
 // resolved endpoints. Cloud gateways populate `externalURLs.https` only;
 // local/HTTP listeners populate `http`. Prefer https when both exist.
-func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding) gen.Deployment {
+func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding, preferPlainHTTP bool) gen.Deployment {
 	var projectName, componentName, environment, releaseName string
 	if rb.Spec != nil {
 		projectName = rb.Spec.Owner.ProjectName
@@ -293,7 +296,7 @@ func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding) gen.Deployment {
 	var endpointURL string
 	if rb.Status != nil && rb.Status.Endpoints != nil {
 		for _, ep := range *rb.Status.Endpoints {
-			if u := publicEndpointURL(ep.ExternalURLs); u != "" {
+			if u := publicEndpointURL(ep.ExternalURLs, preferPlainHTTP); u != "" {
 				endpointURL = u
 				break
 			}
@@ -318,15 +321,22 @@ func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding) gen.Deployment {
 
 // publicEndpointURL prefers the HTTPS gateway URL when OpenChoreo resolved
 // one, else HTTP. Empty when the binding has no external URL at all.
-func publicEndpointURL(urls *ocgen.EndpointGatewayURLs) string {
+func publicEndpointURL(urls *ocgen.EndpointGatewayURLs, preferPlainHTTP bool) string {
 	if urls == nil {
 		return ""
 	}
-	if urls.Https != nil {
-		return formatEndpointURL(urls.Https)
+	// Whichever is preferred FIRST, then the other as a fallback — a binding may
+	// advertise only one, and answering "" when the unpreferred scheme is the only
+	// one present would lose a URL that works.
+	first, second := urls.Https, urls.Http
+	if preferPlainHTTP {
+		first, second = urls.Http, urls.Https
 	}
-	if urls.Http != nil {
-		return formatEndpointURL(urls.Http)
+	if first != nil {
+		return formatEndpointURL(first)
+	}
+	if second != nil {
+		return formatEndpointURL(second)
 	}
 	return ""
 }
@@ -966,7 +976,7 @@ func (c *componentClient) ListDeployments(ctx context.Context, orgName, projectN
 
 	items := make([]gen.Deployment, len(resp.JSON200.Items))
 	for i, rb := range resp.JSON200.Items {
-		items[i] = deploymentFromReleaseBinding(rb)
+		items[i] = deploymentFromReleaseBinding(rb, c.preferPlainHTTP)
 	}
 	return &gen.DeploymentList{Items: items}, nil
 }

@@ -226,9 +226,9 @@ The word had two referents. It now has one.
   ([#532](https://github.com/wso2/labs-agentic-engineer/issues/532)), so the label can be plain
   rather than cautionary.
 
-**defer** appears in a gate tooltip as something the user can do, but deferring means getting
-the word "deferred" into a PRD entry and no affordance exists for that. Left to
-[#527](https://github.com/wso2/labs-agentic-engineer/issues/527); do not invent one here.
+**defer** had been a gate tooltip's advice with no affordance behind it. The gate is gone
+([#539](https://github.com/wso2/labs-agentic-engineer/issues/539)) and deferring is now an outcome
+of the `/settle` conversation — see **Two kinds of unsettled**.
 
 ## The spec view's artifact rail
 
@@ -238,6 +238,21 @@ surface answers *what exists*, *what is happening* and *what comes next*, so the
 step bar and no second progress indicator competing with the overview's cards. Decided in
 [#527](https://github.com/wso2/labs-agentic-engineer/issues/527);
 [drawn here](https://claude.ai/code/artifact/fe3fc0c0-6ecd-49ed-9f75-ed65c2220cb1).
+
+**A reference between spec documents is a link, and it opens in place.** The PRD names its feature
+docs — depth lives in `features/<slug>.md` and the body stays lean — so the document is full of
+pointers to files sitting two rows away in the same rail. The shared schema parses a markdown link
+as an EXTERNAL one, which is wrong twice: a plain click inside the editor only places a caret, and
+a click that did follow the href would leave the console for a path it does not serve. A reference
+that resolves to a file the project HAS is styled as a link and selects that file; one naming a
+document nobody has written yet stays plain text, because a control that selects nothing is worse
+than prose. The link's text is the feature's **name** — the path is the href, never the label.
+
+**The PRD leads Requirements.** Everything else in that group elaborates it — a feature file is
+depth on a story the PRD defines — so the document the whole flow is written against cannot sit
+below its own footnotes. Path order alone puts `features/…` above `prd.md`, which
+[#579](https://github.com/wso2/labs-agentic-engineer/issues/579) made routine by giving `/expand` a
+lens on every story; the list pins the PRD instead, and everything behind it keeps path order.
 
 ### Section state
 
@@ -423,6 +438,16 @@ five surfaces fill themselves.
 | Validations | **Nothing validated yet.** After a build, your software is checked against the **acceptance criteria** in your spec; results appear here. | — |
 | Components *(overview)* | **No components yet.** Components are the services and apps your design is made of — they appear as agents build them. | — |
 | Recent activity *(overview)* | **No activity yet.** Agents report what they are doing here as they work. | — |
+| Chat | **Hi! I'm your Agent.** This is where we talk through what you're building. Ask about a decision, change what's in scope, or take up anything I marked as assumed. | the composer, plus three suggestions |
+
+**Chat's empty state is the one a user reaches last, not first.** Since
+[#522](https://github.com/wso2/labs-agentic-engineer/issues/522) fires the kickoff at project
+creation, the first transcript is never empty; this appears only after **New conversation**, on a
+project that already has a spec. The old string — *"Ask me to edit this project's spec — I join the
+shared workspace and you can watch the files change live"* — invited the user to start something
+that had already started, and narrated the *how* (a shared workspace, files changing) that nothing
+on screen calls by those names. Its suggestions offered to draft requirements that exist. Both now
+open a conversation **about** the spec.
 
 The **Validations** wording is load-bearing: renaming the artifact to *Acceptance criteria* while
 the section stayed *Validations* broke the link between the criteria and the runs against them, and
@@ -481,16 +506,20 @@ same as any label. But the agent runs in more than one place, and **the right vo
 the surface, not to the skill**: in an agentic coding tool the user is standing in the repo, so
 `design.cell` is exactly the right word. In the console it is not.
 
-**A console skill carries the difference.** The caller supplies an agent's skills, so the console
-includes it and a local run omits it — the shared flow skills (`start`, `design`, `amend`, …) stay
-identical in both. It is **standing policy inlined into every turn's system prompt**, not a
-catalog skill loaded on demand, following the `organization` skill's precedent: *"An agent that has
-to remember to load it asks questions the org already answered."* An agent that has to remember its
-narration rules will forget one and quote a path.
+**A console skill carries the difference** — `skills/console/`. Every caller names the **surface**
+its turn will be read on, so the BFF sends `surface: "console"` and a local playground run sends
+nothing; the shared flow skills (`start`, `design`, `amend`, …) stay identical in both. It is
+**standing policy inlined into every console turn's system prompt** under `# Narration policy`, not
+a catalog skill loaded on demand, following the `organization` skill's precedent: *"An agent that
+has to remember to load it asks questions the org already answered."* An agent that has to remember
+its narration rules will forget one and quote a path.
 
-It **outranks per-flow narration.** The system prompt today says *"A LOADED skill may define the
-narration for its own flow"*, and three skills used that freedom to mandate the very output this
-removes. Standing policy wins.
+It **outranks per-flow narration.** The system prompt used to say *"A LOADED skill may define the
+narration for its own flow"* flat; it now says *"unless a standing narration policy in this prompt
+overrides it"*, and the policy block is composed last, so it is the system prompt's final word.
+Three skills had used that freedom to mandate the very output this removes — and since their bodies
+are inlined into the *turn* rather than the standing instructions, the override is repeated there
+too, in the same message as the text it overrides.
 
 ### The rules it carries
 
@@ -506,17 +535,16 @@ removes. Standing policy wins.
 
 ### What changes in the shared skills
 
-Nothing is deleted from the trunk — a path pointer is genuinely useful in a local run, where the
-user can open it. These mandates simply stop being unconditional, and the console skill overrides
+The agent was obeying instructions, not improvising — so the instructions are what changed. A path
+pointer is genuinely useful in a local run, where the user can open it, so these mandates were not
+deleted from the trunk; they simply stopped being unconditional, and the console skill overrides
 them:
 
-| skill | today |
+| skill | the mandate |
 |---|---|
-| `design` | *"Close with three parts and nothing more: … a one-line pointer to `specs/design/`"* |
-| `architecture` | *"…and a one-line pointer to `specs/design/`"* |
-| `start` | *"point the user at the next step: review `specs/requirements/prd.md`, then run `/design`"* |
-
-The agent was obeying instructions, not improvising.
+| `design` | *"Close with three parts and nothing more: … a one-line pointer to `specs/design/`"* — kept, overridden on the console |
+| `architecture` | *"…and a one-line pointer to `specs/design/`"* — kept, overridden on the console |
+| `start` | *"review `specs/requirements/prd.md`, then run `/design`"* — **removed**: it named a command the console offers as a button, which is wrong on every surface once the button exists |
 
 ## Commands
 
@@ -530,16 +558,37 @@ renaming; it needed to stop being visible.
 | start from an idea | `/start with <idea>` | fired at project creation ([#522](https://github.com/wso2/labs-agentic-engineer/issues/522)); the idea rides along, cropped, so the user can see the agent is working from **their** words rather than a bare command ([#528](https://github.com/wso2/labs-agentic-engineer/issues/528)) |
 | add a feature | `/feature <idea>` | code lens on the story list |
 | add an actor | `/actor <who>` | code lens on Actors |
-| go deeper on a feature | `/expand <feature>` | code lens on the feature |
-| settle an assumption or an open question | `/settle <the point>` | clicking the flagged line itself |
+| go deeper on a feature | `/expand <story>` | code lens on the story, which carries itself as the subject |
+| settle an assumption or an open question | `/settle <the point>` | code lens on the flagged line |
 | take up the open questions | `/settle` over the section | code lens on **Open Questions** |
 
 **A command names the user's intent, never the document operation.** `/feature` says what they
 came to do; `/amend Add a feature` said what the system does to a file.
 
-Offering them **where the thing they change lives** — a lens on the section, a click on the
-flagged line — is what retires the `Actions ▾` menu as the way in. Their exact rendering in the
-transcript is [#530](https://github.com/wso2/labs-agentic-engineer/issues/530)'s call.
+Offering them **where the thing they change lives** — a lens on the section, a lens on the flagged
+line — is what retires the `Actions ▾` menu as the way in. Their exact rendering in the transcript
+is [#530](https://github.com/wso2/labs-agentic-engineer/issues/530)'s call.
+
+**A section lens is always on show; a line lens appears on its entry's hover.** The section lens is
+how a command is discovered at all, so it cannot hide; a twenty-story list with a lens on every
+line would be twenty controls competing with the prose they annotate. The flag itself never hides —
+an `*assumed*` run and an open question read as unsettled at rest, and only the control that acts
+on them waits for the pointer.
+
+That hover is what settled **`/expand` per story rather than one lens on the list**: a feature has
+no block of its own in the PRD — the contract keeps depth in feature files — so the nearest thing
+to "a feature" is the story line, and per-story is the only placement where the subject comes from
+the document instead of the user's memory. Decided against the rendered document, where the cost
+of per-line is a control that is only there while the pointer is.
+
+**The lens is a control beside the line, not the line made clickable.** The PRD is a collaborative
+editor: a line that fires a command on click is a line the user can no longer put a caret in.
+
+**A lens goes inert, saying which, while an agent holds the turn** — the same two conditions that
+gate the header's launchers, since firing a command mid-interview supersedes the live question form
+for the whole room.
+
+Shipped in [#579](https://github.com/wso2/labs-agentic-engineer/issues/579).
 
 ## Navigation
 

@@ -263,6 +263,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		WebSearch:              designOrCollabTurn(job),
 		Collab:                 collab,
 		Journal:                journalFor(job),
+		Surface:                agentsvc.SurfaceConsole,
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "genai: turn dispatch failed", "turn", job.turnID, "error", err)

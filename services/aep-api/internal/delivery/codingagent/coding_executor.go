@@ -488,6 +488,14 @@ type dispatchShape struct {
 // needs the milestone for its branch identity (the platform keys a merged pull
 // request back to its run by an `aep/m<milestone#>-…` branch); it reads it off
 // the issue, which is filed under that milestone at mint time.
+//
+// The reference is `Validates #N` and NOT a GitHub closing keyword. The platform
+// owns the validation task's lifecycle — it reopens the task for the next attempt
+// and must close it even on an ending where no pull request merged at all — and a
+// closing keyword would put two owners on one issue. The reference still has to
+// be there: the auto-merge policy requires a pull request to name an armed issue
+// in the milestone, so a body referencing nothing is read as somebody else's work
+// and never merges. See eventcore/resolves.go.
 func buildValidationPrompt(issueURL string, issueNumber int) string {
-	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `aep-validation` skill's workflow: read the validation context, author and run the e2e tests against the deployed system, commit the tests and report, and open a PR whose body includes `Closes #%d` so the platform links it back.", issueURL, issueNumber)
+	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `aep-validation` skill's workflow: read the validation context, author and run the e2e tests against the deployed system, commit the tests and report, and open a PR whose body includes `Validates #%d` so the platform links it back. Use `Validates`, never a closing keyword such as `Closes` or `Fixes`: the platform closes this task itself.", issueURL, issueNumber)
 }

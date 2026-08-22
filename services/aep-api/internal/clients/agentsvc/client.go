@@ -177,7 +177,21 @@ type TurnRequest struct {
 	// depending on the MCP minter being wired. Anthropic-only on the agents
 	// side; false/omitted is byte-identical to a turn without it.
 	WebSearch bool `json:"webSearch,omitempty"`
+	// Surface names where the person reading this turn's prose is sitting
+	// (#580). The agents service inlines that surface's narration skill into
+	// the system prompt as standing policy, so the agent names artifacts the
+	// way the UI names them instead of quoting repo paths. Every turn the BFF
+	// dispatches is read in the console, so every construction site sets
+	// SurfaceConsole; a local playground run omits it and the prompt is
+	// byte-identical to a surface-free turn. Pinned by @aep/agent-stream's
+	// Surface.
+	Surface string `json:"surface,omitempty"`
 }
+
+// SurfaceConsole is the only surface the BFF speaks for: it exists to serve the
+// console, so a turn it dispatches is always read there. Value pinned by
+// @aep/agent-stream's SURFACES.
+const SurfaceConsole = "console"
 
 // CollabBlock names the room and carries the prompting user's bearer,
 // forwarded request-scoped (#86 decision 7) — the collab server's oracle

@@ -32,7 +32,7 @@ import (
 // {dependencies/resources, gitrepo} — everything else is a local port.
 
 // IssueClient is the GitHub issue surface: list Task issues (to find/dedup
-// aep:provision gate issues and to reach the run's working set), create a gate
+// `provision` gate issues and to reach the run's working set), create a gate
 // issue, close it with a reference, comment (a failure, or the ADR-0004
 // resolved-wiring block), and stamp the aep:wired/<slug> marker that keeps that
 // comment idempotent. sourcecontrol.IssueService satisfies it.
@@ -66,7 +66,7 @@ type DesignReader interface {
 }
 
 // RepoLocator resolves an org+project to its GitHub repo full name ("owner/name").
-// The provision Execution row's Repo MUST match the aep:provision issue's repo
+// The provision Execution row's Repo MUST match the gate issue's repo
 // full name, or the funnel gate's LatestPerKind(repo, issue) cannot resolve the
 // run and the consumer never releases. Wired from repositories.
 type RepoLocator interface {

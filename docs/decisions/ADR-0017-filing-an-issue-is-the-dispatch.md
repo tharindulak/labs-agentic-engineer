@@ -35,15 +35,15 @@ That split was load-bearing in a way nobody wanted:
    flight). DB reads only.
 2. `EnsureComponent` when `componentName` was given — a fail-fast, before
    anything is written.
-3. File the issue in **one** GitHub call carrying `milestone`, `aep`, and
-   `aep:codingagent`.
+3. File the issue in **one** GitHub call carrying `milestone` and the arming
+   label `aep`.
 4. Start the run, or wake the one already parked on that milestone.
 
 `promote-from-issue` is deleted, along with `PromoteAndExecute`, `task.Commands`
 (its only method), the `ae_dispatch_coding_agent` MCP tool, and the SRE agent's
-dispatch wrapper. `AdoptIssue` stays: the `aep:codingagent` label a human adds
-in GitHub is still an adoption route, and the console's dispatch affordance
-reaches the same code.
+dispatch wrapper. `AdoptIssue` stays: the `aep` arming label a human adds in
+GitHub is still an adoption route, and it is the only one left for an issue that
+already exists.
 
 The two routes now share one tail, `startOrWake`, so neither can drift from the
 rule that matters most: never two agents on one branch.

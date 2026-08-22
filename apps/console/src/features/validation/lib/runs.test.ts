@@ -27,16 +27,28 @@ import {
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 
+// Origin is still on the wire beside kind, so a fixture that set one without the
+// other would not be a row the platform can produce.
+const ORIGIN_FOR_KIND: Record<
+  MilestoneRunView["kind"],
+  MilestoneRunView["origin"]
+> = {
+  dev: "spec-build",
+  task: "incident-adoption",
+  validation: "revalidate",
+};
+
 function run(
   id: string,
-  origin: MilestoneRunView["origin"],
+  kind: MilestoneRunView["kind"],
   cycles: MilestoneRunView["cycles"] = [],
 ): MilestoneRunView {
   return {
     id,
     milestoneNumber: 1,
     milestoneTitle: "v1",
-    origin,
+    kind,
+    origin: ORIGIN_FOR_KIND[kind],
     state: "succeeded",
     budgets: {
       cyclesTotal: cycles.length,
@@ -71,23 +83,20 @@ describe("validatingRun", () => {
   // unvalidated. The page was fixed; the deployments hook still read runs[0].
   it("skips a newer NON-validating run to find the one that asked", () => {
     const runs = [
-      run("run-incident", "incident-adoption"),
-      run("run-spec", "spec-build", [cycle("c2", "validation", "abc")]),
+      run("run-incident", "task"),
+      run("run-spec", "dev", [cycle("c2", "validation", "abc")]),
     ];
     expect(validatingRun(runs)?.id).toBe("run-spec");
   });
 
   // A revalidation exists to ask again, so when one is newer it owns the answer.
   it("prefers the newest run that DOES validate", () => {
-    const runs = [
-      run("run-reval", "revalidate"),
-      run("run-spec", "spec-build"),
-    ];
+    const runs = [run("run-reval", "validation"), run("run-spec", "dev")];
     expect(validatingRun(runs)?.id).toBe("run-reval");
   });
 
   it("is undefined when no run on the version ever asked", () => {
-    expect(validatingRun([run("run-incident", "incident-adoption")])).toBeUndefined();
+    expect(validatingRun([run("run-incident", "task")])).toBeUndefined();
   });
 });
 
@@ -97,7 +106,7 @@ describe("lastMergedValidationCycle", () => {
   // pin exists to prevent.
   it("skips an attempt still in flight and takes the last MERGED one", () => {
     const runs = [
-      run("run-1", "spec-build", [
+      run("run-1", "dev", [
         cycle("c1", "coding", "aaa"),
         cycle("c2", "validation", "bbb"),
         cycle("c3", "coding", "ccc"),
@@ -111,8 +120,8 @@ describe("lastMergedValidationCycle", () => {
   // same milestone — so the newest attempt is not always inside the newest run.
   it("looks across runs, newest attempt wins", () => {
     const runs = [
-      run("run-reval", "revalidate", [cycle("c9", "validation", "zzz")]),
-      run("run-spec", "spec-build", [cycle("c2", "validation", "bbb")]),
+      run("run-reval", "validation", [cycle("c9", "validation", "zzz")]),
+      run("run-spec", "dev", [cycle("c2", "validation", "bbb")]),
     ];
     expect(lastMergedValidationCycle(runs)?.id).toBe("c9");
   });
@@ -121,14 +130,14 @@ describe("lastMergedValidationCycle", () => {
   // a newer non-validating one must not hide it.
   it("finds an attempt under an older run when a newer one never validated", () => {
     const runs = [
-      run("run-incident", "incident-adoption", [cycle("c5", "coding", "ddd")]),
-      run("run-spec", "spec-build", [cycle("c2", "validation", "bbb")]),
+      run("run-incident", "task", [cycle("c5", "coding", "ddd")]),
+      run("run-spec", "dev", [cycle("c2", "validation", "bbb")]),
     ];
     expect(lastMergedValidationCycle(runs)?.id).toBe("c2");
   });
 
   it("is undefined when nothing has merged an attempt yet", () => {
-    const runs = [run("run-1", "spec-build", [cycle("c2", "validation")])];
+    const runs = [run("run-1", "dev", [cycle("c2", "validation")])];
     expect(lastMergedValidationCycle(runs)).toBeUndefined();
   });
 });
@@ -139,8 +148,8 @@ describe("lastMergedValidationCycle", () => {
 // as having nothing to show.
 describe("answeredRun / isRepairing", () => {
   const revalidating = () => {
-    const reval = run("run-reval", "revalidate");
-    const spec = run("run-spec", "spec-build", [cycle("c2", "validation", "bbb")]);
+    const reval = run("run-reval", "validation");
+    const spec = run("run-spec", "dev", [cycle("c2", "validation", "bbb")]);
     spec.validation = { verdict: "passed" };
     return [reval, spec];
   };
@@ -158,13 +167,13 @@ describe("answeredRun / isRepairing", () => {
   });
 
   it("calls a repeat on the answering run a repair", () => {
-    const healing = run("run-spec", "spec-build", [cycle("c2", "validation", "bbb")]);
+    const healing = run("run-spec", "dev", [cycle("c2", "validation", "bbb")]);
     healing.validation = { verdict: "failed" };
     expect(isRepairing([healing])).toBe(true);
   });
 
   it("is neither when nothing has answered yet", () => {
-    const first = run("run-spec", "spec-build");
+    const first = run("run-spec", "dev");
     expect(answeredRun([first])).toBeUndefined();
     expect(isRepairing([first])).toBe(false);
   });
@@ -172,7 +181,7 @@ describe("answeredRun / isRepairing", () => {
   // `skipped` IS an answer — the version was reached and passed over, which is a
   // result a revalidation exists to replace.
   it("counts skipped as an answer", () => {
-    const skipped = run("run-spec", "spec-build");
+    const skipped = run("run-spec", "dev");
     skipped.validation = { verdict: "skipped" };
     expect(answeredRun([skipped])?.id).toBe("run-spec");
   });

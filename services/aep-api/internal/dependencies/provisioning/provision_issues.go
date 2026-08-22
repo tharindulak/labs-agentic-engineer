@@ -33,7 +33,7 @@ type provisionDep struct {
 	resourceType string // platform-resource only
 }
 
-// EnsureProvisionIssues mints one aep:provision gate issue per distinct external
+// EnsureProvisionIssues mints one `provision` gate issue per distinct external
 // / platform-resource dependency in the project's approved design, deduped per
 // project (an open gate issue for a dependency name is never re-created). It is
 // idempotent and safe to call after every plan (dependency-management §3.6 step
@@ -43,10 +43,10 @@ type provisionDep struct {
 //
 // milestoneNumber joins each minted gate to the version's milestone AT CREATION
 // (one call, no follow-up PATCH) so the run's dispatch predicate — "no open
-// aep:provision issue in this milestone" — can see it. Zero leaves gates
+// `provision` issue in this milestone" — can see it. Zero leaves gates
 // unassigned.
 //
-// A gate is PROSE plus two labels (gate_labels.go): the aep:provision marker
+// A gate is PROSE plus two labels (gate_labels.go): the `provision` kind
 // and aep:dep/<slug>. designTag no longer appears anywhere on the issue — the
 // milestone IS the version.
 func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, designTag string, milestoneNumber int) (map[string]int, error) {
@@ -64,7 +64,7 @@ func (s *Service) EnsureProvisionIssues(ctx context.Context, orgID, projectID, d
 		return nil, err
 	}
 
-	// gateByDep maps a lowercased dep name → its OPEN aep:provision gate issue
+	// gateByDep maps a lowercased dep name → its OPEN `provision` gate issue
 	// number, for both pre-existing gates and the ones minted below. The build path
 	// threads these numbers directly into provisioning (read-your-write from the
 	// CreateIssue result) instead of re-looking them up via GitHub's
@@ -140,7 +140,7 @@ func distinctProvisionDeps(comps []spec.DesignComponent) map[string]provisionDep
 // races GitHub's eventually-consistent list, so the build path captures those
 // numbers from the CreateIssue result instead (issue #164).
 func (s *Service) openProvisionDeps(ctx context.Context, orgID, projectID string) (map[string]int, error) {
-	issues, err := s.issues.ListIssues(ctx, orgID, projectID, []string{delivery.LabelProvisionGate})
+	issues, err := s.issues.ListIssues(ctx, orgID, projectID, []string{delivery.KindProvision})
 	if err != nil {
 		return nil, fmt.Errorf("provisioning: list issues: %w", err)
 	}

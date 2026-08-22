@@ -30,36 +30,6 @@ import (
 // it, the refusal became an opaque 500, and the issue was never worked. Each
 // test below is one of the links in that chain.
 
-// An adopted issue that is not agent work is invisible to the dispatch
-// predicate — OpenNonGateWork counts the milestone's "aep" issues, so the run
-// starts, finds an empty working set and parks forever. Milestone membership
-// alone is NOT enough: ledger issues live in the milestone too.
-func TestAdoption_StampsTheAgentWorkLabel(t *testing.T) {
-	h := newHarness(t, succeededRun("run-1", 3))
-
-	if err := h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 31}); err != nil {
-		t.Fatalf("adopt: %v", err)
-	}
-	if !delivery.HasLabel(h.issues.labelsOn(31), delivery.LabelAgentWork) {
-		t.Fatalf("an adopted issue must be marked agent work or no run can ever work it, got %v",
-			h.issues.labelsOn(31))
-	}
-}
-
-// The same holds for the GitHub-side route. This is the flow the platform's own
-// red-main ledger issue tells a human to use ("Add the `aep:codingagent`
-// label"), so if that one label is not sufficient the instruction is a dead end.
-func TestAdoption_ByLabelAlsoStampsTheAgentWorkLabel(t *testing.T) {
-	h := newHarness(t, succeededRun("run-1", 9))
-
-	if err := h.deliver(t, "issues", issueBody("labeled", 31, 9, delivery.LabelAdopt, "human", false)); err != nil {
-		t.Fatalf("dispatch: %v", err)
-	}
-	if !delivery.HasLabel(h.issues.labelsOn(31), delivery.LabelAgentWork) {
-		t.Fatalf("adopting by label must also make the issue agent work, got %v", h.issues.labelsOn(31))
-	}
-}
-
 // THE REGRESSION. An incident raised by the very deployment a spec build is
 // performing arrives while that build is still running, so there is no
 // SUCCEEDED run to attach it to. Refusing there dropped the handoff for good —
@@ -103,38 +73,8 @@ func TestAdoption_NothingBuiltRefusesWithTheSharedSentinel(t *testing.T) {
 	if !errors.Is(err, delivery.ErrNoAdoptableMilestone) {
 		t.Fatalf("adoption with no version at all must refuse with the shared sentinel, got %v", err)
 	}
-	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 || len(h.issues.labelsOn(31)) != 0 {
+	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 || len(h.issues.labelled) != 0 {
 		t.Fatal("a refused adoption must write nothing")
-	}
-}
-
-// A run parked on an empty working set re-derives only when signalled. The
-// label adoption just wrote comes back as a platform echo and is suppressed, so
-// without an explicit wake the run stays parked with work sitting in front of
-// it — the exact "dispatched but never progresses" symptom.
-func TestAdoption_WakesARunParkedOnAnEmptyWorkingSet(t *testing.T) {
-	h := newHarness(t, aRun("run-1", 4, delivery.RunStateWaiting))
-	h.issues.withCounts(4, 0, 1, 1) // the adopted issue, now agent work
-
-	if err := h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 31}); err != nil {
-		t.Fatalf("adopt: %v", err)
-	}
-	if got := h.sup.named(delivery.SigRunWorkable); len(got) != 1 {
-		t.Fatalf("a parked run must be told its working set is no longer empty, got %v", got)
-	}
-}
-
-// A run mid-cycle re-reads its milestone at the next boundary on its own;
-// waking it would only race the agent already working.
-func TestAdoption_DoesNotWakeARunMidCycle(t *testing.T) {
-	h := newHarness(t, aRun("run-1", 4, delivery.RunStateRunning))
-	h.issues.withCounts(4, 0, 1, 1)
-
-	if err := h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 31}); err != nil {
-		t.Fatalf("adopt: %v", err)
-	}
-	if got := h.sup.named(delivery.SigRunWorkable); len(got) != 0 {
-		t.Fatalf("a running run needs no signal, got %v", got)
 	}
 }
 
@@ -151,9 +91,9 @@ func succeededRun(id string, milestone int) delivery.MilestoneRun {
 // state to protect. What has to hold is that the issue is never left half
 // adopted, and that a refusal is answered rather than swallowed.
 
-// The whole point of adopting at creation: the milestone and both labels ride
-// the CREATE call, so there is no window in which the issue exists but is not
-// yet workable. If either arrived as a follow-up write, a failure between them
+// The whole point of adopting at creation: the milestone and the arming label
+// ride the CREATE call, so there is no window in which the issue exists but is
+// not yet workable. If either arrived as a follow-up write, a failure between them
 // would leave an issue filed, in a milestone, and invisible to its own run.
 func TestAdoptOnCreate_FilesTheIssueAlreadyWorkable(t *testing.T) {
 	h := newHarness(t, succeededRun("run-1", 3))
@@ -173,10 +113,8 @@ func TestAdoptOnCreate_FilesTheIssueAlreadyWorkable(t *testing.T) {
 	if req.Milestone == nil || *req.Milestone != 3 {
 		t.Fatalf("the milestone must ride the create call, got %v", req.Milestone)
 	}
-	for _, label := range []string{delivery.LabelAgentWork, delivery.LabelAdopt} {
-		if !delivery.HasLabel(req.Labels, label) {
-			t.Fatalf("create must carry %s, got %v", label, req.Labels)
-		}
+	if !delivery.HasLabel(req.Labels, delivery.LabelAgentWork) {
+		t.Fatalf("create must arm the issue, got %v", req.Labels)
 	}
 	if len(h.issues.assigned) != 0 || len(h.issues.labelled) != 0 {
 		t.Fatalf("no follow-up write may be needed to make the issue workable: assigned=%v labelled=%v",
@@ -263,7 +201,9 @@ func TestAdoptOnCreate_DedupeLeavesTheDispatchToTheOwningRun(t *testing.T) {
 
 // Both adoption routes end in the same rule, and it is the one that matters
 // most: never two agents on one branch. A milestone already being worked gets
-// its run woken, not a second one started.
+// its run woken, not a second one started — and on this route the wake has to
+// come from here, because the issue was written by the platform's own credential
+// and the delivery it caused comes back as a suppressed echo.
 func TestAdoptOnCreate_NeverStartsASecondRunOnALiveMilestone(t *testing.T) {
 	h := newHarness(t, aRun("run-1", 4, delivery.RunStateWaiting))
 	h.issues.withCounts(4, 0, 1, 1)
@@ -281,5 +221,20 @@ func TestAdoptOnCreate_NeverStartsASecondRunOnALiveMilestone(t *testing.T) {
 	}
 	if got := h.sup.named(delivery.SigRunWorkable); len(got) != 1 {
 		t.Fatalf("the parked run must be told work arrived, got %v", got)
+	}
+}
+
+// A run mid-cycle re-reads its milestone at the next boundary on its own;
+// waking it would only race the agent already working.
+func TestAdoptOnCreate_DoesNotWakeARunMidCycle(t *testing.T) {
+	h := newHarness(t, aRun("run-1", 4, delivery.RunStateRunning))
+	h.issues.withCounts(4, 0, 1, 1)
+
+	if _, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "",
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"}); err != nil {
+		t.Fatalf("adopt on create: %v", err)
+	}
+	if got := h.sup.named(delivery.SigRunWorkable); len(got) != 0 {
+		t.Fatalf("a running run needs no signal, got %v", got)
 	}
 }

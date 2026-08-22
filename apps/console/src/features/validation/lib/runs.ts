@@ -22,37 +22,43 @@
 // #423, and the deployments hook still did after that was fixed.
 
 import type { components } from "../../../generated/aep-api";
+import { runKind } from "../../builds/lib/runView";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunCycleView = components["schemas"]["RunCycleView"];
 
 /**
- * The run origins that ask a version's validation criteria — the console's mirror of
- * delivery.RunValidates. A spec build validates the version it delivered, and a
- * revalidation exists to ask again; an incident adoption is absent on purpose,
- * because it fixes one thing in an already-judged version.
+ * The run kinds that ask a version's validation criteria — the console's mirror of
+ * delivery.RunValidates. A `dev` run validates the version it delivered, and a
+ * `validation` run exists to ask again; `task` is absent on purpose, because it
+ * fixes one thing in an already-judged version.
  */
-export const VALIDATING_ORIGINS: readonly string[] = ["spec-build", "revalidate"];
+export const VALIDATING_KINDS: readonly string[] = ["dev", "validation"];
+
+/** Does this run ask the version's criteria at all? */
+function validates(run: MilestoneRunView): boolean {
+  return VALIDATING_KINDS.includes(runKind(run));
+}
 
 /**
  * The run whose verdict is the version's answer, from a newest-first list.
  *
  * NOT the newest run. A milestone sees sequential runs across its life and only some
- * of them validate: an incident adoption never does, and `settle` stamps `skipped` on
- * any succeeded run that never did — so the newest run is routinely one whose verdict
+ * of them validate: a task run never does, and `settle` stamps `skipped` on any
+ * succeeded run that never did — so the newest run is routinely one whose verdict
  * means "I was never asked". Reading it made a single adopted issue report a
  * genuinely passed version as unvalidated (#423).
  */
 export function validatingRun(
   runs: readonly MilestoneRunView[],
 ): MilestoneRunView | undefined {
-  return runs.find((r) => VALIDATING_ORIGINS.includes(r.origin));
+  return runs.find(validates);
 }
 
 /**
  * The run holding the version's last ANSWER, which is not always the run being asked.
  *
- * A revalidation is a fresh run row on the same milestone: it enters the loop at
+ * A validation run is a fresh run row on the same milestone: it enters the loop at
  * validation with an empty verdict while the run that delivered the version still
  * holds `passed`. Reading the asking run's verdict there reported a validated version
  * as having nothing to show, because "no verdict on this row" was being taken to mean
@@ -65,10 +71,7 @@ export function validatingRun(
 export function answeredRun(
   runs: readonly MilestoneRunView[],
 ): MilestoneRunView | undefined {
-  return runs.find(
-    (r) =>
-      VALIDATING_ORIGINS.includes(r.origin) && (r.validation?.verdict ?? "") !== "",
-  );
+  return runs.find((r) => validates(r) && (r.validation?.verdict ?? "") !== "");
 }
 
 /**

@@ -545,11 +545,14 @@ export function ValidationPage({
   // reads as a chronology: the boxes are numbered from the oldest, so the numbers
   // count down the page.
   //
-  // A feed per run rather than one stream over the milestone because the progress
-  // endpoint is run-keyed, and the cost of that is near zero here: a settled run's
-  // stream is finite — the server sends `done` and closes, and the client stops
-  // without reattaching — so every historical attempt opens briefly and closes,
-  // leaving at most ONE connection held open, since only the newest run can be live.
+  // A feed per run rather than the version-wide stream, and the reason is this
+  // view's ordering rather than what the server can serve. `stream-build-progress`
+  // does span a version's runs, but it emits them OLDEST first — a chronology —
+  // while this page leads with the newest attempt on purpose. Per-run feeds are
+  // also near free here: a settled run's stream is finite — the server sends
+  // `done` and closes, and the client stops without reattaching — so every
+  // historical attempt opens briefly and closes, leaving at most ONE connection
+  // held open, since only the newest run can be live.
   const body = showLogs ? (
     <Stack spacing={2}>
       {feedRuns.map((r, i) => (

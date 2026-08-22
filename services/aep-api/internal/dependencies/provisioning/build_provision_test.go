@@ -383,7 +383,7 @@ func countProvisionRows(execs *fakeExecStore, depName string) int {
 // which is how the platform itself resolves it.
 func gateNumber(issues *fakeIssues, depName string) int {
 	for _, i := range issues.list {
-		if delivery.HasLabel(i.Labels, delivery.LabelProvisionGate) && gateDepFromLabels(i.Labels) == gateDepFromLabels(gateLabels(depName)) {
+		if delivery.IsDispatchGate(i.Labels) && gateDepFromLabels(i.Labels) == gateDepFromLabels(gateLabels(depName)) {
 			return i.Number
 		}
 	}

@@ -76,7 +76,7 @@ kubectl logs -f -n openchoreo-observability-plane deploy/ai-rca-agent | grep -vE
 #   reasoning is the `rationale` on the report, not in this line.
 ```
 
-Then confirm the artifacts: the GitHub issue (carrying `aep` + `aep:codingagent`
+Then confirm the artifacts: the GitHub issue (carrying the arming label `aep`
 and joined to the deployed version's milestone), the `milestone_runs` row for the
 incident run adoption started, and the coding-agent PR ("Closes #N"). The platform
 merges that PR itself once it resolves the run's milestone work, then builds and

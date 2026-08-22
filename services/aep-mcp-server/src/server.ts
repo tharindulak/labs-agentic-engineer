@@ -40,7 +40,7 @@ function errorResult(err: unknown) {
  * Two tools, not three. There is no dispatch tool: adoption moved into
  * create-issue, so filing an issue and handing it to the coding agent are one
  * call and cannot come apart. The other way to adopt an issue that already
- * exists is the `aep:codingagent` GitHub label, which AE's event plane watches —
+ * exists is the `aep` arming GitHub label, which AE's event plane watches —
  * a human's route, not this server's.
  */
 export function createAepMcpServer(client: AepClientOptions): McpServer {

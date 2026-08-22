@@ -39,7 +39,7 @@ import (
 // promote-task-from-issue, is gone too: it existed to hand an already-filed
 // issue to the coding agent, and adoption now happens where the issue is
 // created (create-issue's adopt flag). The remaining way to adopt an issue that
-// exists already is the `aep:codingagent` label, which the event plane watches.
+// exists already is the `aep` arming label, which the event plane watches.
 type Handler struct {
 	reads *Reads
 }

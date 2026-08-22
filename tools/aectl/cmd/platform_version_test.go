@@ -18,6 +18,64 @@ package cmd
 
 import "testing"
 
+// TestParsePlatformVersion covers the parsing/validation of `helm get metadata
+// -o json` output. Note that switching from `helm list -f` to `helm get metadata`
+// removes the "multiple matches" failure mode entirely — a metadata query targets
+// one exact release — so there is no such case to cover here.
+func TestParsePlatformVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		out     string
+		release string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "happy path reads version directly",
+			out:     `{"name":"aep-platform","chart":"aep-platform","version":"0.6.0-rc.17"}`,
+			release: "aep-platform",
+			want:    "0.6.0-rc.17",
+		},
+		{
+			// Chart name differs from release name: the old TrimPrefix approach
+			// would have mangled the version; reading .version is unaffected.
+			name:    "differing release and chart names",
+			out:     `{"name":"aep-platform","chart":"platform","version":"1.2.3"}`,
+			release: "aep-platform",
+			want:    "1.2.3",
+		},
+		{
+			name:    "release name mismatch is rejected",
+			out:     `{"name":"other-release","version":"1.2.3"}`,
+			release: "aep-platform",
+			wantErr: true,
+		},
+		{
+			name:    "empty version is rejected",
+			out:     `{"name":"aep-platform","version":""}`,
+			release: "aep-platform",
+			wantErr: true,
+		},
+		{
+			name:    "invalid json is rejected",
+			out:     `not json`,
+			release: "aep-platform",
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parsePlatformVersion([]byte(tc.out), tc.release)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("parsePlatformVersion() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && got != tc.want {
+				t.Errorf("parsePlatformVersion() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSplitVersion(t *testing.T) {
 	tests := []struct {
 		input   string

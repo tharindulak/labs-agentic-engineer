@@ -279,6 +279,12 @@ test("400 when the turn or workspace is missing; retired body shapes are rejecte
     const noWorkspace = await post({ turn: { kind: "chat", text: "x" } });
     assert.equal(noWorkspace.status, 400);
     assert.match(((await noWorkspace.json()) as { error: string }).error, /workspace is required/);
+
+    // An unknown surface is a 400, never a silent fallback: the wrong answer
+    // here narrates repo paths at someone who cannot see a file tree.
+    const badSurface = await post(wsBody({ surface: "terminal" }));
+    assert.equal(badSurface.status, 400);
+    assert.match(((await badSurface.json()) as { error: string }).error, /surface must be one of: console/);
   } finally {
     await close();
   }
@@ -593,6 +599,60 @@ test("409 when a turn is already in flight for the id", async () => {
     assert.deepEqual([s1, s2].sort(), [200, 409]);
   } finally {
     await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Narration policy (#580) ---------------------------------------------------
+
+const CONSOLE_SKILL_MD = `---
+name: console
+description: How the agent speaks to someone working in the console.
+metadata:
+  aep:
+    kind: platform
+    audience: [design]
+---
+
+## Never quote a repo path
+
+Name the artifact instead.
+`;
+
+/** The system instructions the model actually received for the turn's first step. */
+function systemPrompt(model: ReturnType<typeof mockModel>): string {
+  const prompt = model.doStreamCalls[0]!.prompt as unknown as { role: string; content: unknown }[];
+  const system = prompt.find((m) => m.role === "system");
+  return typeof system?.content === "string" ? system.content : JSON.stringify(system?.content ?? "");
+}
+
+test("a console turn carries the narration policy; the same turn without a surface does not", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" }, { dir: "console", content: CONSOLE_SKILL_MD });
+  const consoleModel = mockModel([{ kind: "text", text: "ok" }]);
+  const localModel = mockModel([{ kind: "text", text: "ok" }]);
+  const consoleRun = await boot(consoleModel, root);
+  const localRun = await boot(localModel, root);
+  try {
+    const token = await mintToken();
+    const post = (baseUrl: string, body: unknown) =>
+      fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(body, { token, org: WS_ORG }));
+
+    assert.equal((await post(consoleRun.baseUrl, wsBody({ surface: "console" }))).status, 200);
+    const consolePrompt = systemPrompt(consoleModel);
+    assert.match(consolePrompt, /# Narration policy/);
+    assert.match(consolePrompt, /Never quote a repo path/, "the BODY rides the prompt — nothing loads it");
+    // Standing policy, not a task: offering it in the catalog would invite a
+    // round-trip returning text the agent is already holding.
+    assert.doesNotMatch(consolePrompt, /- console:/);
+
+    // The local run reads the SAME skills snapshot and names no surface, so the
+    // rules stay absent — which is what keeps the shared flow skills usable in
+    // a terminal, where a repo path is the right word.
+    assert.equal((await post(localRun.baseUrl, wsBody())).status, 200);
+    assert.doesNotMatch(systemPrompt(localModel), /Narration policy/);
+  } finally {
+    await consoleRun.close();
+    await localRun.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

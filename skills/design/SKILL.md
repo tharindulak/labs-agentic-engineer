@@ -17,13 +17,22 @@ way to a clean Build is to follow the order below.
 
 ## The PRD is the brief
 
-Design FROM `specs/requirements/prd.md`. Do not interview the user again and
-do not widen or narrow the scope: what the PRD says is what gets designed. A
-missing or empty PRD means the user needs `/start` first — stop and say so.
+Design FROM `specs/requirements/prd.md`, and do not widen or narrow the scope:
+what the PRD says is what gets designed. A missing or empty PRD means the user
+needs `/start` first — stop and say so.
 
-**Open questions gate:** any PRD Open Question neither answered nor marked
-"deferred" blocks design — stop and point the user at the amend flow's
-resolve-open-questions branch. Deferred questions never block.
+**Ask at design altitude.** A call this step has to make and only the user can
+settle — which provider, which of two shapes the PRD deliberately left open —
+is an ordinary question, asked when it arises rather than assumed silently or
+deferred to a review that never happens. `grilling` carries the mechanics and
+the pacing. The PRD's own answers are settled: asking one back reads as the
+document being ignored.
+
+**Open questions never block design.** They are recorded gaps, not corruption:
+design what the PRD does say, and where one genuinely decides a call you are
+about to make, ask it as an ordinary question — the same way you ask anything
+else at design altitude. An entry marked "deferred" is one the user has already
+declined for now; leave it alone.
 
 ## Reference documents ground the design
 

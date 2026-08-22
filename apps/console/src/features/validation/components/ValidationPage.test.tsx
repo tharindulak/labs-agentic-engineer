@@ -81,6 +81,7 @@ function run(over: {
     id: "run-1",
     milestoneNumber: 1,
     milestoneTitle: "v1",
+    kind: "dev",
     origin: "spec-build",
     state: "succeeded",
     budgets: {
@@ -299,7 +300,13 @@ describe("ValidationPage cancel", () => {
     mockValidation = "running";
     mockRun = run({ cycles: [validationCycle] });
     mockNewerRuns = [
-      { ...run({ cycles: [validationCycle] }), id: "run-live", origin: "revalidate", state: "running" },
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-live",
+        kind: "validation",
+        origin: "revalidate",
+        state: "running",
+      },
     ];
 
     renderPage(undefined);
@@ -350,17 +357,24 @@ describe("ValidationPage cancel", () => {
     renderPage(undefined);
 
     expect(screen.getByText(/No validation has run yet/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Cancel run/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Cancel run/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides cancel once every run has settled", () => {
-    mockRun = run({ validation: { verdict: "passed" }, cycles: [validationCycle] });
+    mockRun = run({
+      validation: { verdict: "passed" },
+      cycles: [validationCycle],
+    });
     mockCriteria.data = { content: CRITERIA };
     mockReport.data = { content: REPORT };
 
     renderPage(undefined);
 
-    expect(screen.queryByRole("button", { name: /Cancel run/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Cancel run/ }),
+    ).not.toBeInTheDocument();
   });
 
   // A 503 means the workflow engine was unreachable and NOTHING was cancelled,
@@ -369,7 +383,13 @@ describe("ValidationPage cancel", () => {
     mockValidation = "running";
     mockRun = run({ cycles: [validationCycle] });
     mockNewerRuns = [
-      { ...run({ cycles: [validationCycle] }), id: "run-live", origin: "revalidate", state: "running" },
+      {
+        ...run({ cycles: [validationCycle] }),
+        id: "run-live",
+        kind: "validation",
+        origin: "revalidate",
+        state: "running",
+      },
     ];
     mockCancelError = new Error("the workflow engine is unavailable");
 
@@ -386,13 +406,17 @@ describe("ValidationPage across a milestone's runs", () => {
   // fetched at all.
   it("keeps the verdict when a later incident run never validated", () => {
     mockRun = run({
-      validation: { verdict: "passed", reportPath: "tests/validation/report.md" },
+      validation: {
+        verdict: "passed",
+        reportPath: "tests/validation/report.md",
+      },
       cycles: [validationCycle],
     });
     mockNewerRuns = [
       {
         ...run({ validation: { verdict: "skipped" } }),
         id: "run-incident",
+        kind: "task",
         origin: "incident-adoption",
       },
     ];
@@ -401,8 +425,12 @@ describe("ValidationPage across a milestone's runs", () => {
 
     renderPage(undefined);
 
-    expect(screen.queryByText(/This version was not validated/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/No validation has run yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/This version was not validated/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No validation has run yet/),
+    ).not.toBeInTheDocument();
   });
 
   // One feed per validating run, so the version reads as a chronology of attempts
@@ -415,6 +443,7 @@ describe("ValidationPage across a milestone's runs", () => {
       {
         ...run({ cycles: [validationCycle] }),
         id: "run-revalidate",
+        kind: "validation",
         origin: "revalidate",
       },
     ];
@@ -433,6 +462,7 @@ describe("ValidationPage across a milestone's runs", () => {
       {
         ...run({}),
         id: "run-incident",
+        kind: "task",
         origin: "incident-adoption",
       },
     ];
@@ -452,6 +482,7 @@ describe("ValidationPage across a milestone's runs", () => {
       {
         ...run({ cycles: [validationCycle] }),
         id: "run-revalidate",
+        kind: "validation",
         origin: "revalidate",
       },
     ];
@@ -482,6 +513,7 @@ describe("ValidationPage across a milestone's runs", () => {
       {
         ...run({ cycles: [validationCycle] }),
         id: "run-revalidate",
+        kind: "validation",
         origin: "revalidate",
       },
     ];
@@ -489,7 +521,9 @@ describe("ValidationPage across a milestone's runs", () => {
     renderPage(undefined);
 
     expect(
-      screen.getAllByTestId("run-feed").map((f) => f.getAttribute("data-expand-newest")),
+      screen
+        .getAllByTestId("run-feed")
+        .map((f) => f.getAttribute("data-expand-newest")),
     ).toEqual(["true", "false"]);
   });
 
@@ -504,6 +538,7 @@ describe("ValidationPage across a milestone's runs", () => {
       {
         ...run({ cycles: [validationCycle] }),
         id: "run-revalidate",
+        kind: "validation",
         origin: "revalidate",
       },
     ];
@@ -511,7 +546,9 @@ describe("ValidationPage across a milestone's runs", () => {
     renderPage(undefined);
 
     expect(
-      screen.getAllByTestId("run-feed").map((f) => f.getAttribute("data-run-number")),
+      screen
+        .getAllByTestId("run-feed")
+        .map((f) => f.getAttribute("data-run-number")),
     ).toEqual(["2", "1"]);
   });
 
@@ -524,7 +561,10 @@ describe("ValidationPage across a milestone's runs", () => {
 
     renderPage(undefined);
 
-    expect(screen.getByTestId("run-feed")).toHaveAttribute("data-run-number", "1");
+    expect(screen.getByTestId("run-feed")).toHaveAttribute(
+      "data-run-number",
+      "1",
+    );
   });
 
   // The ordinary case: one run validated the version, so there is no history to
@@ -536,7 +576,9 @@ describe("ValidationPage across a milestone's runs", () => {
     renderPage(undefined);
 
     expect(screen.getAllByTestId("run-feed")).toHaveLength(1);
-    expect(screen.queryByText("EARLIER VALIDATION RUNS")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("EARLIER VALIDATION RUNS"),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -575,7 +617,9 @@ describe("ValidationPage lifecycle", () => {
 
     renderPage(undefined);
 
-    expect(screen.queryByText(/No validation has run yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No validation has run yet/),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
   });
 
@@ -592,7 +636,9 @@ describe("ValidationPage lifecycle", () => {
 
     // The run story is fetched for v2 — the version the chip is talking about.
     expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
-    expect(screen.queryByText(/No validation has run yet/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No validation has run yet/),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the feed for a run whose validation failed", () => {
@@ -624,8 +670,14 @@ describe("ValidationPage lifecycle", () => {
     mockValidation = "awaiting-fix";
     mockRun = {
       ...run({
-        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
-        cycles: [validationCycle, { ...validationCycle, id: "cycle-3", kind: "coding" }],
+        validation: {
+          verdict: "failed",
+          reportPath: "tests/validation/report.json",
+        },
+        cycles: [
+          validationCycle,
+          { ...validationCycle, id: "cycle-3", kind: "coding" },
+        ],
       }),
       state: "running",
     };
@@ -636,7 +688,9 @@ describe("ValidationPage lifecycle", () => {
     // Chip AND tile headline, both from the shared mapper.
     expect(screen.getAllByText("Awaiting fix").length).toBe(2);
     expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
-    expect(screen.queryByText(/the milestone stays open for the fix/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/the milestone stays open for the fix/),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(
         "1 of 3 criteria failed. The implementation is being fixed. Validation will run again.",
@@ -645,8 +699,12 @@ describe("ValidationPage lifecycle", () => {
     // The failed report stays — it is the evidence of WHAT is being fixed, and the
     // coding cycle in flight has no validation log to show in its place.
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
-    expect(screen.getByText(/category option never appeared/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/category option never appeared/),
+    ).toBeInTheDocument();
   });
 
   // A repeat attempt has to read like the first one. This was unreachable while the
@@ -657,7 +715,10 @@ describe("ValidationPage lifecycle", () => {
     mockValidation = "running";
     mockRun = {
       ...run({
-        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        validation: {
+          verdict: "failed",
+          reportPath: "tests/validation/report.json",
+        },
         cycles: [validationCycle],
       }),
       state: "running",
@@ -670,7 +731,9 @@ describe("ValidationPage lifecycle", () => {
     // the fix is being re-checked. That it belongs to the last attempt is the tile's
     // job to say — twice, in the sentence and in the tally.
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // Chip and tile headline both, as with every other state.
     expect(screen.getAllByText("Validating").length).toBe(2);
     expect(screen.queryByText("Validation failed")).not.toBeInTheDocument();
@@ -689,7 +752,10 @@ describe("ValidationPage lifecycle", () => {
     mockValidation = "running";
     mockRun = {
       ...run({
-        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        validation: {
+          verdict: "failed",
+          reportPath: "tests/validation/report.json",
+        },
         cycles: [validationCycle],
       }),
       state: "running",
@@ -716,7 +782,10 @@ describe("ValidationPage lifecycle", () => {
   it("renders the joined report on a passed verdict", () => {
     mockValidation = "passed";
     mockRun = run({
-      validation: { verdict: "passed", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "passed",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
@@ -725,7 +794,9 @@ describe("ValidationPage lifecycle", () => {
 
     // The report, not the log.
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // Per-criterion state chips from the join.
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
@@ -757,7 +828,10 @@ describe("ValidationPage lifecycle", () => {
   it("renders the report, not the feed, for a PARTIAL verdict", () => {
     mockValidation = "partial";
     mockRun = run({
-      validation: { verdict: "partial", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "partial",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
@@ -772,7 +846,9 @@ describe("ValidationPage lifecycle", () => {
     // a screen reader hears nothing of the asterisk otherwise. Visually-hidden TEXT,
     // because a Chip with no onClick has no role and would ignore an aria-label.
     expect(screen.getByText("Validated, partially")).toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
   });
 
   it("renders the report for an INCONCLUSIVE verdict", () => {
@@ -790,7 +866,9 @@ describe("ValidationPage lifecycle", () => {
 
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
     expect(screen.getAllByText("Validation?").length).toBe(2);
-    expect(screen.getByText(/please validate them manually/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/please validate them manually/),
+    ).toBeInTheDocument();
   });
 
   // `unreported` means no report was committed at that commit, and the server
@@ -812,7 +890,9 @@ describe("ValidationPage lifecycle", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/report wasn't found/)).not.toBeInTheDocument();
     // The criteria still render — they live under specs/, not in the report.
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // And with no report there is nothing to count.
     expect(screen.queryByText(/\d+ passed/)).not.toBeInTheDocument();
   });
@@ -822,7 +902,10 @@ describe("ValidationPage lifecycle", () => {
   it("tallies the run's outcome once, in the tile", () => {
     mockValidation = "failed";
     mockRun = run({
-      validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "failed",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
@@ -830,7 +913,9 @@ describe("ValidationPage lifecycle", () => {
     renderPage(undefined);
 
     // 3 criteria: one pass, one fail, one manual.
-    expect(screen.getByText("1 failed · 1 passed · 1 manual")).toBeInTheDocument();
+    expect(
+      screen.getByText("1 failed · 1 passed · 1 manual"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Passed 1")).not.toBeInTheDocument();
     expect(screen.queryByText("Failed 1")).not.toBeInTheDocument();
   });
@@ -874,7 +959,9 @@ describe("ValidationPage lifecycle", () => {
     });
     mockCriteria.data = { content: CRITERIA };
     renderPage(undefined);
-    expect(screen.queryByRole("link", { name: /Validation issue #30/ })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: /Validation issue #30/ }),
+    ).toBeNull();
     // The pull request beside it is unaffected — the two links are independent.
     expect(
       screen.getByRole("link", { name: /Validation pull request #42/ }),
@@ -892,7 +979,9 @@ describe("ValidationPage lifecycle", () => {
     });
     mockCriteria.data = { content: CRITERIA };
     renderPage(undefined);
-    expect(screen.queryByRole("link", { name: /Validation issue #30/ })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: /Validation issue #30/ }),
+    ).toBeNull();
   });
 
   it("toggles to the log view via the View logs button", () => {
@@ -931,14 +1020,19 @@ describe("ValidationPage lifecycle", () => {
   it("renders a failure that carries only a location", () => {
     mockValidation = "failed";
     mockRun = run({
-      validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+      validation: {
+        verdict: "failed",
+        reportPath: "tests/validation/report.json",
+      },
       cycles: [validationCycle],
     });
     mockCriteria.data = { content: CRITERIA };
     mockReport.data = { content: LOCATION_ONLY_FAILURE };
     renderPage(undefined);
 
-    expect(screen.getByText("tests/e2e/specs/AC-001-b.spec.ts:42")).toBeInTheDocument();
+    expect(
+      screen.getByText("tests/e2e/specs/AC-001-b.spec.ts:42"),
+    ).toBeInTheDocument();
   });
 
   it("falls back to criteria-only with a note when the report is missing", () => {
@@ -952,7 +1046,9 @@ describe("ValidationPage lifecycle", () => {
     renderPage(undefined);
 
     expect(screen.getByText(/report wasn't found/)).toBeInTheDocument();
-    expect(screen.getByText("Shoppers can search the catalog.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shoppers can search the catalog."),
+    ).toBeInTheDocument();
     // No state chips without a report.
     expect(screen.queryByText("Passed")).not.toBeInTheDocument();
   });

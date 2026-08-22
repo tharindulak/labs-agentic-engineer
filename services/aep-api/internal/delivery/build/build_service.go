@@ -17,11 +17,11 @@
 // Package build is the public build surface (contract: build-project /
 // list-project-builds / get-build-preflight). POST validates the whole spec,
 // cuts the single `v<N>` version tag, claims the version (supersede the
-// previous milestone, mint this one, admit the run row that is the spec-run
-// mutex) and returns the tag, then plans the version's Tasks into its milestone
-// detached from the request — the one button that turns an approved spec into a
-// delivery increment. The list read is the version ledger, straight from the
-// run rows.
+// previous milestone, mint this one, admit the run row that is the build
+// mutex) and returns the tag — the one button that turns an approved spec into a
+// delivery increment. Filling the milestone (gates, then the planning turn) is
+// the run workflow's own first phase, not the click's. The list read is the
+// version ledger, straight from the run rows.
 package build
 
 import (
@@ -51,11 +51,26 @@ type EdgeError struct {
 
 func (e *EdgeError) Error() string { return e.Message }
 
-// ErrBuildAlreadyRunning is the "a spec run is already live for this project"
+// ErrBuildAlreadyRunning is the "a dev run is already live for this project"
 // sentinel the core build sequence returns. The HTTP edge maps it to a 409; the
 // non-HTTP StartProjectBuild entry point treats it as success (idempotent
 // trigger).
 var ErrBuildAlreadyRunning = errors.New("a build is already running for this project")
+
+// ErrValidationRunLive is the "this project's deployed version is being judged"
+// sentinel, and the second thing that refuses a build.
+//
+// It is a REFUSAL rather than a queue because the two activities contradict each
+// other: a validation run asserts against what is deployed, and a delivery run
+// merging and promoting underneath it would be judging a moving target — the
+// verdict would name criteria that were true of neither the old release nor the
+// new one. A validation run deliberately sits outside the build mutex (it
+// re-judges a version that already shipped, so no index refuses this), which is
+// why the guard is explicit here.
+//
+// The way past it is to cancel the validation, which is one click and already
+// supported. Treated as a conflict at the edge, exactly like the sentinel above.
+var ErrValidationRunLive = errors.New("this project's deployed version is being validated — cancel the validation run first")
 
 // Service backs the build endpoints (strict entry points in strict.go).
 type Service struct {
@@ -205,11 +220,17 @@ func (s *Service) StartProjectBuild(ctx context.Context, orgID, projectID string
 // inputs are applied but before the tag is cut — see the inline comment at
 // its call site for why that ordering matters.
 func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []BuildInputItem) (string, []InputFailure, error) {
-	// One live SPEC RUN per project — the milestone model's mutex (§5). The
+	// One live DEV RUN per project — the milestone model's mutex (§5). The
 	// partial unique index behind TryAdmit is the authority; this read is what
 	// turns the race into a conflict that names itself, and it runs BEFORE the
 	// tag is cut so a rejected second click claims no version.
-	if err := s.activeSpecRun(ctx, orgID, projectID); err != nil {
+	if err := s.activeDevRun(ctx, orgID, projectID); err != nil {
+		return "", nil, err
+	}
+	// And no live VALIDATION run anywhere in the project: a merge and promote
+	// under an in-flight verdict judges a moving target. Checked here, beside the
+	// mutex and before the tag is cut, so a refused build claims no version.
+	if err := s.activeValidationRun(ctx, orgID, projectID); err != nil {
 		return "", nil, err
 	}
 	// The repo must exist and be resolvable before a version is claimed — every
@@ -263,10 +284,26 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 	if err != nil {
 		return "", nil, mapTagError(err)
 	}
+	// THE SPEC-SAVE STATUS IS THE WHOLE BRANCH, and there is no second question
+	// asked anywhere — in particular not "was the last run cancelled".
+	//
+	//	approved  → a new tag. The ordinary path: supersede the predecessor, mint
+	//	            this version's milestone, plan it fresh.
+	//	unchanged → the SAME tag, so the same milestone. Reopen it and exactly the
+	//	            issues a cancel closed inside it, and DO NOT re-plan — plan
+	//	            dedupe is the title slug against the milestone's issues in any
+	//	            state, so a re-plan over a milestone whose issues were all
+	//	            closed would mint nothing and the run would settle an unbuilt
+	//	            version as delivered.
+	//
+	// A version nobody cancelled takes the same branch and reopens nothing, which
+	// is correct: rebuilding a delivered version re-derives no plan either way,
+	// and this spares it the LLM turn that used to mint nothing.
+	rebuild := res.Status == spec.SpecSaveUnchanged
 
 	// The milestone plan path (§5). Its synchronous half claims the version —
 	// supersede the previous milestone, mint `v<N>`, admit the run row that IS
-	// the spec-run mutex — and its detached half plans the Tasks into it.
+	// the build mutex — and its detached half plans the Tasks into it.
 	if s.plan != nil {
 		// The tag's story scope (#369) decides the milestone's identity: one
 		// milestone per version. A scope read
@@ -283,23 +320,29 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 		if cerr != nil {
 			return "", nil, cerr
 		}
+		// AFTER the admission, so a click the mutex refused reopens nothing: the
+		// winner is the run that will work this milestone, and two entrants both
+		// reopening it would race one another's writes.
+		if rebuild {
+			s.reopenIncrement(ctx, orgID, projectID, run.MilestoneNumber)
+		}
 		// Synchronous, and fast: this hands the version to the supervisor, which
 		// then fills the milestone as its own first phase. The click used to run
 		// the planning turn itself, in a detached goroutine, because an LLM turn
 		// must not hold a request open — and paid for it with a step that could
 		// not survive a restart, could not retry a blip, and left no history.
 		//
-		// A start that did not happen is settled HERE. The row is the spec-run
+		// A start that did not happen is settled HERE. The row is the build
 		// mutex; leaving it non-terminal with no workflow behind it would refuse
 		// every later build on this project, and nothing would ever heal it (the
 		// reconcile sweep reads such a row as live).
-		if serr := s.startRun(ctx, orgID, projectID, res.Tag, run, provInputs); serr != nil {
+		if serr := s.startRun(ctx, orgID, projectID, res.Tag, run, provInputs, rebuild); serr != nil {
 			return "", nil, serr
 		}
 	}
 
 	slog.InfoContext(ctx, "build started",
-		"org", orgID, "project", projectID, "tag", res.Tag, "specStatus", res.Status)
+		"org", orgID, "project", projectID, "tag", res.Tag, "specStatus", res.Status, "rebuild", rebuild)
 	return res.Tag, nil, nil
 }
 

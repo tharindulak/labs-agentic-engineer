@@ -307,12 +307,22 @@ belongs in the report, and you still open the PR (step 10).
 ```bash
 gh pr create \
   --title "Validation: <pass>/<total> e2e criteria passing (issue #<N>)" \
-  --body $'Closes #<N>\n\n<summary table: pass/fail/not_run + manual/scenario counts>\n\nReport: tests/validation/report.md'
+  --body $'Validates #<N>\n\n<summary table: pass/fail/not_run + manual/scenario counts>\n\nReport: tests/validation/report.md'
 ```
 
+**`Validates #<N>`, never `Closes` / `Fixes` / `Resolves`.** The
+platform owns this task's close: it reopens the task when a version is
+judged again, and it closes the task even on a run that never merged a
+PR at all. A GitHub closing keyword would put two owners on one issue.
+
+The reference still has to be there — the platform only auto-merges a
+PR that names an armed issue in the milestone, so a body referencing
+nothing sits unmerged until the run's deadline and the version reports
+`validation-unreported`.
+
 Open it **ready-for-review even when criteria fail** — the human reads
-the report and decides. Post a closing issue comment with the summary
-counts and the PR link.
+the report and decides. Post an issue comment with the summary counts
+and the PR link; the platform closes the issue itself.
 
 ## Do not
 

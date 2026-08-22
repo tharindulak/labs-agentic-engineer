@@ -40,6 +40,63 @@ func (e BuildInputItemKind) Valid() bool {
 	}
 }
 
+// Defines values for BuildProgressEventReason.
+const (
+	BuildProgressEventReasonNoLiveRun BuildProgressEventReason = "no_live_run"
+)
+
+// Valid indicates whether the value is a known member of the BuildProgressEventReason enum.
+func (e BuildProgressEventReason) Valid() bool {
+	switch e {
+	case BuildProgressEventReasonNoLiveRun:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildProgressEventType.
+const (
+	BuildProgressEventTypeCycle BuildProgressEventType = "cycle"
+	BuildProgressEventTypeDone  BuildProgressEventType = "done"
+	BuildProgressEventTypeLine  BuildProgressEventType = "line"
+)
+
+// Valid indicates whether the value is a known member of the BuildProgressEventType enum.
+func (e BuildProgressEventType) Valid() bool {
+	switch e {
+	case BuildProgressEventTypeCycle:
+		return true
+	case BuildProgressEventTypeDone:
+		return true
+	case BuildProgressEventTypeLine:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildProgressRunKind.
+const (
+	BuildProgressRunKindDev        BuildProgressRunKind = "dev"
+	BuildProgressRunKindTask       BuildProgressRunKind = "task"
+	BuildProgressRunKindValidation BuildProgressRunKind = "validation"
+)
+
+// Valid indicates whether the value is a known member of the BuildProgressRunKind enum.
+func (e BuildProgressRunKind) Valid() bool {
+	switch e {
+	case BuildProgressRunKindDev:
+		return true
+	case BuildProgressRunKindTask:
+		return true
+	case BuildProgressRunKindValidation:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BuildSummaryStatus.
 const (
 	BuildSummaryStatusCompleted  BuildSummaryStatus = "completed"
@@ -118,6 +175,27 @@ func (e ExternalDependencyValueState) Valid() bool {
 	case NotProvisioned:
 		return true
 	case Unset:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MilestoneRunViewKind.
+const (
+	MilestoneRunViewKindDev        MilestoneRunViewKind = "dev"
+	MilestoneRunViewKindTask       MilestoneRunViewKind = "task"
+	MilestoneRunViewKindValidation MilestoneRunViewKind = "validation"
+)
+
+// Valid indicates whether the value is a known member of the MilestoneRunViewKind enum.
+func (e MilestoneRunViewKind) Valid() bool {
+	switch e {
+	case MilestoneRunViewKindDev:
+		return true
+	case MilestoneRunViewKindTask:
+		return true
+	case MilestoneRunViewKindValidation:
 		return true
 	default:
 		return false
@@ -636,6 +714,43 @@ type BuildPreflight struct {
 	NeedsInput bool            `json:"needsInput"`
 }
 
+// BuildProgressEvent One SSE frame on the VERSION progress stream, which spans every run that has worked the version. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by id), `line` one RunProgressLine, and `done` says why the stream ended (the server then closes it). `cycle` and `line` frames also carry `run` — a version's story spans several executions, so a cycle is only identified once you know which run opened it.
+type BuildProgressEvent struct {
+	// Cycle One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
+	Cycle RunCycleView `json:"cycle,omitempty"`
+
+	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+	Line RunProgressLine `json:"line,omitempty"`
+
+	// Reason Why the stream ended — present only on the `done` frame, and deliberately NOT a run state. `no_live_run` means no run on the version's milestone is currently live, so there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later validation or task run may be admitted on the same milestone, and the console reopens the stream when its run-list poll shows one.
+	Reason BuildProgressEventReason `json:"reason,omitempty"`
+
+	// Run Which run a frame's cycle belongs to. The version's narrative spans several runs, so the run is the SECTION and the cycle is a step inside it — `RunProgressLine.cycleIndex` stays run-relative and is only unique when paired with `run.id`.
+	Run  BuildProgressRun       `json:"run,omitempty"`
+	Type BuildProgressEventType `json:"type"`
+}
+
+// BuildProgressEventReason Why the stream ended — present only on the `done` frame, and deliberately NOT a run state. `no_live_run` means no run on the version's milestone is currently live, so there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later validation or task run may be admitted on the same milestone, and the console reopens the stream when its run-list poll shows one.
+type BuildProgressEventReason string
+
+// BuildProgressEventType defines model for BuildProgressEvent.Type.
+type BuildProgressEventType string
+
+// BuildProgressRun Which run a frame's cycle belongs to. The version's narrative spans several runs, so the run is the SECTION and the cycle is a step inside it — `RunProgressLine.cycleIndex` stays run-relative and is only unique when paired with `run.id`.
+type BuildProgressRun struct {
+	// ID Milestone run id — the same id list-build-runs reports and cancel-run takes.
+	ID string `json:"id"`
+
+	// Index 1-based chronological position of this run among the version's runs, so the console can label a section without holding the whole run list — the same reason `cycleIndex` exists, one level up. Two runs of one kind are ordinary (a version can be repaired more than once), so the kind alone does not name a section.
+	Index int64 `json:"index"`
+
+	// Kind What the run DOES, and the section marker the console renders — `dev` delivered the version, `task` worked a defect inside it, `validation` re-judged it. Same vocabulary as MilestoneRunView.kind.
+	Kind BuildProgressRunKind `json:"kind"`
+}
+
+// BuildProgressRunKind What the run DOES, and the section marker the console renders — `dev` delivered the version, `task` worked a defect inside it, `validation` re-judged it. Same vocabulary as MilestoneRunView.kind.
+type BuildProgressRunKind string
+
 // BuildRequest defines model for BuildRequest.
 type BuildRequest struct {
 	Inputs []BuildInputItem `json:"inputs,omitempty"`
@@ -1051,7 +1166,7 @@ type IssueResult struct {
 	// Adopted Whether the issue was adopted — filed into a version's milestone as agent work, with a run started or woken over it. False when the caller passed adopt=false, when creation deduped onto an existing issue (the run that created it owns its dispatch), or when adoption could not proceed; adoptionError says which.
 	Adopted bool `json:"adopted,omitempty"`
 
-	// AdoptionError Why adoption did not happen, when it was asked for and did not. The issue still exists — it is a ledger entry, and adding the `aep:codingagent` label hands it to the coding agent later.
+	// AdoptionError Why adoption did not happen, when it was asked for and did not. The issue still exists — it is a ledger entry, and adding the `aep` arming label hands it to the coding agent later.
 	AdoptionError string `json:"adoptionError,omitempty"`
 	Deduped       bool   `json:"deduped,omitempty"`
 	NodeID        string `json:"nodeId"`
@@ -1075,15 +1190,18 @@ type MilestoneRunView struct {
 	CreatedAt time.Time  `json:"createdAt"`
 
 	// Cycles Oldest first — one record per dispatch.
-	Cycles          []RunCycleView `json:"cycles"`
-	EndedAt         *time.Time     `json:"endedAt,omitempty"`
-	ID              string         `json:"id"`
-	MilestoneNumber int64          `json:"milestoneNumber"`
+	Cycles  []RunCycleView `json:"cycles"`
+	EndedAt *time.Time     `json:"endedAt,omitempty"`
+	ID      string         `json:"id"`
+
+	// Kind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's acceptance criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
+	Kind            MilestoneRunViewKind `json:"kind"`
+	MilestoneNumber int64                `json:"milestoneNumber"`
 
 	// MilestoneTitle The milestone's GitHub title at creation. Display only — the number is the key, and the version this run builds is the list's tag.
 	MilestoneTitle string `json:"milestoneTitle"`
 
-	// Origin Why this run was started. `revalidate` asks a version's criteria again against the already-deployed system; it enters the loop at validation rather than at the working set, and is deliberately outside the one-active-spec-run mutex so it never holds up the next build.
+	// Origin Where this run was started from. A label on the trigger — the behaviour is the run's kind.
 	Origin    MilestoneRunViewOrigin `json:"origin"`
 	StartedAt *time.Time             `json:"startedAt,omitempty"`
 
@@ -1097,7 +1215,10 @@ type MilestoneRunView struct {
 	Validation RunValidation `json:"validation"`
 }
 
-// MilestoneRunViewOrigin Why this run was started. `revalidate` asks a version's criteria again against the already-deployed system; it enters the loop at validation rather than at the working set, and is deliberately outside the one-active-spec-run mutex so it never holds up the next build.
+// MilestoneRunViewKind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's acceptance criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
+type MilestoneRunViewKind string
+
+// MilestoneRunViewOrigin Where this run was started from. A label on the trigger — the behaviour is the run's kind.
 type MilestoneRunViewOrigin string
 
 // MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
@@ -1669,19 +1790,22 @@ type TaskDetail struct {
 	ExecutionHistory []ExecutionView          `json:"executionHistory"`
 	Executions       map[string]ExecutionView `json:"executions"`
 
-	// ExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+	// ExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 	ExecutorClass TaskDetailExecutorClass `json:"executorClass"`
 	Hold          bool                    `json:"hold"`
 	IssueNumber   int64                   `json:"issueNumber"`
 	IssueURL      string                  `json:"issueUrl"`
-	Lineage       Lineage                 `json:"lineage"`
-	Operation     string                  `json:"operation,omitempty"`
-	Origin        string                  `json:"origin,omitempty"`
-	Rationale     string                  `json:"rationale,omitempty"`
-	Title         string                  `json:"title"`
+
+	// Kind The issue's raw label kind: `development` for planned work minted from the spec, `bug` for a defect, `conflict` for a pull request that will not merge, `validation` for the version's validation task, `provision` for a dispatch gate. Absent when the issue carries no kind label (a ledger issue, or one a human armed without classifying); a consumer that does not recognise a kind should render the row untagged rather than guess.
+	Kind      string  `json:"kind,omitempty"`
+	Lineage   Lineage `json:"lineage"`
+	Operation string  `json:"operation,omitempty"`
+	Origin    string  `json:"origin,omitempty"`
+	Rationale string  `json:"rationale,omitempty"`
+	Title     string  `json:"title"`
 }
 
-// TaskDetailExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+// TaskDetailExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 type TaskDetailExecutorClass string
 
 // TaskStreamEvent One SSE frame on the task-log stream. `type` discriminates the payload: `task` carries the full TaskView (client upserts by issue), `execution` one ExecutionView (client upserts by id), `line` one TimelineEvent (client appends, deduped by executionId+seq), and `done` the settled derivedStatus (the server then closes the stream).
@@ -1711,22 +1835,25 @@ type TaskView struct {
 	DerivedStatus string                   `json:"derivedStatus"`
 	Executions    map[string]ExecutionView `json:"executions"`
 
-	// ExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+	// ExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 	ExecutorClass TaskViewExecutorClass `json:"executorClass"`
 	Hold          bool                  `json:"hold"`
 	IssueNumber   int64                 `json:"issueNumber"`
 	IssueURL      string                `json:"issueUrl"`
-	Lineage       Lineage               `json:"lineage"`
-	Operation     string                `json:"operation,omitempty"`
-	Origin        string                `json:"origin,omitempty"`
-	Rationale     string                `json:"rationale,omitempty"`
-	Title         string                `json:"title"`
+
+	// Kind The issue's raw label kind: `development` for planned work minted from the spec, `bug` for a defect, `conflict` for a pull request that will not merge, `validation` for the version's validation task, `provision` for a dispatch gate. Absent when the issue carries no kind label (a ledger issue, or one a human armed without classifying); a consumer that does not recognise a kind should render the row untagged rather than guess.
+	Kind      string  `json:"kind,omitempty"`
+	Lineage   Lineage `json:"lineage"`
+	Operation string  `json:"operation,omitempty"`
+	Origin    string  `json:"origin,omitempty"`
+	Rationale string  `json:"rationale,omitempty"`
+	Title     string  `json:"title"`
 
 	// Usage Actual token usage for one unit of agent work or an aggregate (#245,
 	Usage Usage `json:"usage,omitempty"`
 }
 
-// TaskViewExecutorClass Label-derived kind of the issue, and the only classification the platform makes of one: `coding` for agent work (the `aep` label), `provision` for a dispatch gate (`aep:provision`), `validation` for the run's validation issue, `ledger` for a bare human issue that joined the milestone carrying none of them. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
+// TaskViewExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 type TaskViewExecutorClass string
 
 // TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.

@@ -45,7 +45,12 @@ type SpecStage = components["schemas"]["SpecStage"];
 type BuildStage = components["schemas"]["BuildStage"];
 type DeployStage = components["schemas"]["DeployStage"];
 
-const noSpec: SpecStage = { exists: false, version: "", dirty: false, design: false };
+const noSpec: SpecStage = {
+  exists: false,
+  version: "",
+  dirty: false,
+  design: false,
+};
 const idleBuild: BuildStage = { version: "", status: "idle" };
 const noDeploy: DeployStage = {
   version: "",
@@ -404,13 +409,21 @@ const designDependencies: ComponentDependencies[] = [
   {
     componentName: "catalog-api",
     dependencies: [
-      { kind: "platform-resource", name: "shop-db", resourceType: "postgres-cnpg" },
+      {
+        kind: "platform-resource",
+        name: "shop-db",
+        resourceType: "postgres-cnpg",
+      },
     ],
   },
   {
     componentName: "orders-api",
     dependencies: [
-      { kind: "platform-resource", name: "shop-db", resourceType: "postgres-cnpg" },
+      {
+        kind: "platform-resource",
+        name: "shop-db",
+        resourceType: "postgres-cnpg",
+      },
       sharedAuthDependency,
       {
         kind: "external",
@@ -434,7 +447,6 @@ export function projectDependencies(
   // No design yet, nothing to declare dependencies.
   return s === "fresh" || s === "repo-error" ? [] : designDependencies;
 }
-
 
 // The OpenAPI contract served by GET .../components/:name/openapi — a
 // `{ spec }` envelope carrying a raw document, exactly as aep-api returns it
@@ -520,7 +532,12 @@ const buildingTasks: TaskView[] = [
   // a tagged ROW here as well: a provisioned connection is part of the
   // version's record, not just a reason nothing is moving.
   {
-    ...task(8, "Provision resource: orders-db (postgres-cnpg)", "pending", "provision"),
+    ...task(
+      8,
+      "Provision resource: orders-db (postgres-cnpg)",
+      "pending",
+      "provision",
+    ),
     executions: {
       provision: {
         id: "exec-provision-8",
@@ -531,10 +548,28 @@ const buildingTasks: TaskView[] = [
       },
     },
   },
-  task(12, "Checkout flow with cart persistence", "pending", "coding", "storefront"),
-  task(10, "Product catalog CRUD endpoints", "pending", "coding", "catalog-api"),
+  task(
+    12,
+    "Checkout flow with cart persistence",
+    "pending",
+    "coding",
+    "storefront",
+  ),
+  task(
+    10,
+    "Product catalog CRUD endpoints",
+    "pending",
+    "coding",
+    "catalog-api",
+  ),
   task(9, "Scaffold storefront app shell", "merged", "coding", "storefront"),
-  task(11, "Orders service payment integration", "pending", "coding", "orders-api"),
+  task(
+    11,
+    "Orders service payment integration",
+    "pending",
+    "coding",
+    "orders-api",
+  ),
   // Filed by a human against this version: ledger only, never worked.
   task(21, "Checkout is slow on mobile", "pending", "ledger"),
 ];
@@ -603,6 +638,7 @@ function milestoneRun(over: Partial<MilestoneRunView> = {}): MilestoneRunView {
     id: "run-v1-1",
     milestoneNumber: 1,
     milestoneTitle: "v1",
+    kind: "dev",
     origin: "spec-build",
     state: "running",
     budgets: {
@@ -742,6 +778,7 @@ const settledRun: BuildRunList = {
     // something to collapse, and its detail something to show.
     milestoneRun({
       id: "run-0",
+      kind: "task",
       origin: "incident-adoption",
       state: "cancelled",
       terminalReason: "cancelled",
@@ -855,10 +892,7 @@ export const projectBuilds: Record<
 const noTags: TagList = { tags: [] };
 const v1Tags: TagList = { tags: ["v1"], latest: "v1", specDirty: false };
 
-export const projectTags: Record<
-  Exclude<ProjectScenario, "error">,
-  TagList
-> = {
+export const projectTags: Record<Exclude<ProjectScenario, "error">, TagList> = {
   fresh: noTags,
   spec: noTags,
   "spec-failed": noTags,

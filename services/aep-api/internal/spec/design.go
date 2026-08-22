@@ -221,7 +221,7 @@ func (c DesignComponent) OrgServiceDependsOn() []string {
 // (config-collection) and platform-resource (resource-provisioning). org-service
 // is gated at PROCEED, not dispatch, so it is excluded. Used by the funnel's
 // dependency-kind-aware gate to hold a consumer coding task until each provision
-// dependency's aep:provision issue derives deployed.
+// dependency's `provision` gate issue derives deployed.
 func (c DesignComponent) ProvisionDependsOn() []string {
 	out := make([]string, 0, len(c.Dependencies))
 	for _, d := range c.Dependencies {

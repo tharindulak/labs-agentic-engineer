@@ -258,6 +258,62 @@ export const projectHandlers = [
       });
     },
   ),
+  // The VERSION feed: ONE SSE stream over every run the milestone has seen, in
+  // chronological order, each frame carrying the run it belongs to. It settles
+  // whenever no run is live — which is NOT "the version is finished", so the
+  // frame says `reason`, never a run state.
+  http.get(
+    "*/api/v1/projects/:projectName/builds/:tag/progress",
+    ({ request }) => {
+      const s = scenario();
+      if (s === "error") {
+        return HttpResponse.json(projectSectionError, { status: 500 });
+      }
+      // Oldest first: the run list is newest-first, and the narrative reads the
+      // other way.
+      const runs = [...projectBuildRuns[s].runs].reverse();
+      const encoder = new TextEncoder();
+
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const send = (data: string) =>
+            controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+          const delay = (ms: number) =>
+            new Promise((resolve) => setTimeout(resolve, ms));
+
+          let seq = 0;
+          for (const [r, run] of runs.entries()) {
+            const attribution = { id: run.id, kind: run.kind, index: r + 1 };
+            for (const [i, cycle] of run.cycles.entries()) {
+              if (request.signal.aborted) return controller.close();
+              send(JSON.stringify({ type: "cycle", run: attribution, cycle }));
+              for (const line of runCycleLines(cycle, i, seq)) {
+                if (request.signal.aborted) return controller.close();
+                send(JSON.stringify({ type: "line", run: attribution, line }));
+                seq = (line.seq ?? seq) + 1;
+                await delay(120);
+              }
+            }
+          }
+          if (runs.some((run) => !isTerminalRunState(run.state))) {
+            // A live run holds the stream open, exactly as the server does — the
+            // property the console's reconnect logic is written against.
+            return;
+          }
+          send(JSON.stringify({ type: "done", reason: "no_live_run" }));
+          send("[DONE]");
+          controller.close();
+        },
+      });
+
+      return new HttpResponse(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+        },
+      });
+    },
+  ),
   // Task page (#173): one task with its execution history…
   http.get("*/api/v1/projects/:projectName/tasks/:issueNumber", ({ params }) => {
     const s = scenario();

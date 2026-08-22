@@ -469,14 +469,14 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 	if gateByDep["stripe"] != 0 || gateByDep["orders-db"] == 0 {
 		t.Fatalf("EnsureProvisionIssues must return the minted gate number per dep, got %+v", gateByDep)
 	}
-	// A gate is PROSE plus two labels: the aep:provision marker and the
+	// A gate is PROSE plus two labels: the `provision` kind and the
 	// aep:dep/<slug> that keys it to its dependency. It never carries the `aep`
 	// working-set label — it is a hold on dispatch, never agent work — and its
 	// body carries no machine block, because nothing parses it.
 	var deps []string
 	for _, req := range issues.created {
-		if !contains(req.Labels, delivery.LabelProvisionGate) {
-			t.Errorf("gate issue missing aep:provision label: %v", req.Labels)
+		if !contains(req.Labels, delivery.KindProvision) {
+			t.Errorf("gate issue missing the provision kind: %v", req.Labels)
 		}
 		if contains(req.Labels, delivery.LabelAgentWork) {
 			t.Errorf("a gate must never be agent work: %v", req.Labels)
@@ -507,7 +507,7 @@ func TestEnsureProvisionIssues_MintsPerDepDeduped(t *testing.T) {
 }
 
 // A gate must land IN the version's milestone, or the run's dispatch predicate
-// ("no open aep:provision issue in this milestone") can never see the hold. The
+// ("no open `provision` issue in this milestone") can never see the hold. The
 // number rides the CREATE — one call, no follow-up PATCH. A gate deliberately
 // does not carry the `aep` working-set label: it is a dispatch hold, never
 // agent work.
@@ -771,8 +771,8 @@ func TestRequestAccess_CreatesRequestAndProviderIssue(t *testing.T) {
 	if got := gateDepFromLabels(issues.created[0].Labels); got != "inventory" {
 		t.Fatalf("org-publish gate dep label = %q, want inventory", got)
 	}
-	if !contains(issues.created[0].Labels, delivery.LabelProvisionGate) {
-		t.Fatalf("org-publish gate missing the aep:provision marker: %v", issues.created[0].Labels)
+	if !contains(issues.created[0].Labels, delivery.KindProvision) {
+		t.Fatalf("org-publish gate missing the provision kind: %v", issues.created[0].Labels)
 	}
 	if ar.ProviderIssueNumber == 0 {
 		t.Fatalf("access request must link the provider issue number")
@@ -886,7 +886,7 @@ func TestSaveValues_WrongKind400(t *testing.T) {
 // ---- helpers ---------------------------------------------------------------
 
 // provisionGateIssue builds a seeded gate issue exactly as the platform mints
-// one: prose, the aep:provision marker, and the aep:dep/<slug> label that keys
+// one: prose, the `provision` kind, and the aep:dep/<slug> label that keys
 // it to its dependency. That label pair IS the index — nothing reads the body.
 func provisionGateIssue(number int, depName string) sourcecontrol.IssueInfo {
 	return sourcecontrol.IssueInfo{

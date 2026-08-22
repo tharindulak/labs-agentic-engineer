@@ -16,7 +16,6 @@
  * under the License.
  */
 
-import type { ReactNode } from "react";
 import { Box, Chip, Divider, IconButton, Stack, TextField, Typography } from "@wso2/oxygen-ui";
 import { FolderOpen, Send } from "@wso2/oxygen-ui-icons-react";
 
@@ -30,7 +29,6 @@ export function ChatInput({
   disabled,
   contextLabel,
   hint,
-  actions,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -39,15 +37,12 @@ export function ChatInput({
   contextLabel: string;
   /** Why the input is locked (teammate turn), or null when free. */
   hint?: string | null;
-  /** Launcher slot, rendered on the context row ahead of the session chip. */
-  actions?: ReactNode;
 }) {
   return (
     <Box>
       <Divider />
       <Box sx={{ p: 1.5 }}>
         <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center" }}>
-          {actions}
           <Chip
             size="small"
             variant="outlined"

@@ -535,6 +535,39 @@ test("manifest: a removed file lands in deleted; an added file is hashed", async
   assert.deepEqual(manifest.files, { "specs/notes.md": sha256Hex("note\n") });
 });
 
+// #578: the uncapped interview rests on this — `start` writes the PRD as soon
+// as the spine answers land and asks the NEXT round in the same turn. A turn
+// that ends awaiting-human still emits its manifest, so the document the user
+// is about to be asked about is committed rather than held until the interview
+// converges.
+test("manifest: a file written before the question is committed with the awaiting-human turn", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+
+  const PRD = "specs/requirements/prd.md";
+  const model = mockModel([
+    {
+      kind: "toolCall",
+      toolCallId: "e1",
+      toolName: "editFile",
+      input: { path: PRD, oldString: "- Developer — calls the API", newString: "- Developer *assumed* — calls the API" },
+    },
+    {
+      kind: "toolCall",
+      toolCallId: "q1",
+      toolName: "ask_questions",
+      input: { questions: [{ question: "Which of these did I get wrong?", options: [] }] },
+    },
+  ]);
+  const conv = await runConversationTurn({ id: "m2b", instruction: "/start", files: SEED_FILES, model, store, guard, onEvent });
+
+  assert.equal(conv.status, "awaiting-human");
+  const expected = SEED_FILES[PRD]!.replace("- Developer — calls the API", "- Developer *assumed* — calls the API");
+  const manifest = lastManifest(events);
+  assert.deepEqual(manifest.files, { [PRD]: sha256Hex(expected) });
+});
+
 test("manifest: a chat-only turn emits the EMPTY manifest (files toolset)", async () => {
   const store = new InMemoryConversationStore();
   const guard = new TurnGuard();

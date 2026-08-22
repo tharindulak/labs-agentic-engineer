@@ -182,6 +182,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		AuthProvider:           seam.AuthProvider,
 		RequestAuthStrategy:    seam.RequestAuthStrategy,
 		ImpersonateOrgResolver: seam.ImpersonateOrgResolver,
+		// A plane whose gateway does not terminate TLS serves only plain http,
+		// while OpenChoreo advertises an https URL beside it regardless. See
+		// Config.PreferPlainHTTPEndpoints.
+		PreferPlainHTTPEndpoints: !cfg.PlatformAPI.DataPlaneGatewayTLS,
 	}
 	projectClient := openchoreo.NewProjectClient(ocConfig)
 	namespaceClient := openchoreo.NewNamespaceClient(ocConfig)
@@ -278,6 +282,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	gitOpsService := sourcecontrol.NewGitOpsService(credResolver, workspaceEngine)
 	artifactSvcGit := spec.NewArtifactService(repoRepo, gitOpsService)
 	issueService := sourcecontrol.NewIssueService(repoRepo, gitHost, credResolver)
+	// THE delivery-side issue-write surface: every issue the delivery domain
+	// mints, closes, reopens or labels goes through this one writer, so the
+	// label vocabulary and the dedupe contract are decided once rather than once
+	// per sub-package. Its slices (eventcore, task, validation, build) each hold
+	// it; nothing else in delivery writes an issue.
+	deliveryIssues := delivery.NewIssueWriter(issueService)
 	webhookRegService := sourcecontrol.NewWebhookService(repoRepo, gitHost, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
 	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
 	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, gitHost)
@@ -428,7 +438,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// satisfy the task consumer ports directly.
 	taskReads := task.NewReads(issueService, repoService, executionRepo, milestoneRunRepo)
 	taskPlan := task.NewPlanService(repoService, artifactSvcGit, gitOpsService,
-		anthropicKeyForGenAI, agentsvcClient, issueService, workspaceEngine, task.SkillsRepoResolver(skillsRepoForTurns))
+		anthropicKeyForGenAI, agentsvcClient, issueService, deliveryIssues, workspaceEngine,
+		task.SkillsRepoResolver(skillsRepoForTurns))
 
 	// Eagerly provision each org's skills repo on project creation.
 	projectService.SetSkillsProvisioner(skillSvc)
@@ -632,6 +643,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Runs:   eventcoreRuns{runs: milestoneRunRepo},
 		Cycles: eventcoreCycles{cycles: runCycleRepo},
 		Issues: issueService,
+		Writer: deliveryIssues,
 		PRs:    issueService,
 		Merger: issueService,
 		Repos:  repoLocator{db: db},
@@ -793,7 +805,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// ResourceTypes, Task 3 — no longer the external_resources table) and the
 	// org published endpoints + platform resource types (OC Resource-model
 	// client). The provisioning surface (value/param collection + the
-	// aep:provision issue funnel) is wired in the Phase-6 block further below.
+	// `provision` gate issue funnel) is wired in the Phase-6 block further below.
 	resourceClient := openchoreo.NewResourceClient(ocConfig)
 	// The resolver collaborators (repo locator + design reader) let the endpoint
 	// catalog discover each org-service's real OpenAPI contract + repo coords
@@ -948,7 +960,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	artifactStore.SetOrgServiceResolver(orgEndpointCatalog)
 
 	// Dependency provisioning (dependency-management Phase 6): the value/param
-	// collection surface + the aep:provision gate funnel. The provisioner cores
+	// collection surface + the `provision` gate funnel. The provisioner cores
 	// author the OC Resource model; the service drives gate issues + provision
 	// Executions (Kind=provision) and closes each issue with a no-secrets
 	// reference; the readiness watcher observes platform-resource bindings'
@@ -1037,7 +1049,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// Cancel signals the supervisor AND deletes the cycle's agent
 		// Component, which is what actually stops the pod and frees the org's
 		// billing concurrency slot. Revalidate is the event plane's.
-		RunCommands: runread.NewCommands(milestoneRunRepo, runSupervisor, eventcoreRevalidator{events: eventPlane}).
+		RunCommands: runread.NewCommands(milestoneRunRepo, milestoneRunRepo, runSupervisor, eventcoreRevalidator{events: eventPlane}).
 			WithCycleReaper(codingagent.NewCycleReaper(componentClient, runCycleRepo)),
 		RunCycleBuilds: runCycleBuilds,
 	}
@@ -1050,11 +1062,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		return nil, fmt.Errorf("assemble delivery domain: %w", err)
 	}
 	params.Deps.Delivery = deliveryHandlers
-	// The project's single aep:validation issue. The RUN mints it, at
+	// The project's single validation task. The RUN mints it, at
 	// deployed-green: minting it at plan time would put an issue in the working
 	// set that nothing can work until every component is deployed.
 	validationSvc := validation.NewService(validation.Deps{
 		Issues:   issueService,
+		Writer:   deliveryIssues,
 		Criteria: validationCriteria{files: filesSvc},
 	})
 	// A planned Task's prose body names the App Path the agent works in — the
@@ -1077,12 +1090,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	provisioningSvc.SetProviderBuildTrigger(providerBuildTrigger{build: buildSvc})
 	// The milestone plan path (issue-driven execution §5): once the build's
 	// whole-spec gate cuts `v<N>`, the click supersedes the previous milestone,
-	// mints this version's, admits the run row that IS the one-spec-run-per-
-	// project mutex, then (detached) plans the version's Tasks into the milestone
-	// and mints its gates. Set here rather than in build.Deps because its gate
+	// mints this version's and admits the run row that IS the project's build
+	// mutex; the run then fills the milestone (gates, then the planning turn) as
+	// its own first phase. Set here rather than in build.Deps because its gate
 	// resolver is provisioningSvc, which is constructed after buildSvc.
 	buildSvc.SetPlanPath(build.PlanPathDeps{
 		Milestones: issueService,
+		Issues:     deliveryIssues,
 		Runs:       milestoneRunRepo,
 		Planner:    taskPlan,
 		Gates:      buildGateResolver{prov: provisioningSvc},
@@ -1246,6 +1260,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			Deploy:       deploymentService,
 			Deployments:  deploymentService,
 			DeployIssues: eventPlane,
+			// The halt: a failed run's leftovers are marked so the reconcile sweep
+			// does not restart them with fresh budgets. Same plane, same reason —
+			// the supervisor decides, the plane writes the issue.
+			Halter: eventPlane,
+			// The cancel's other half: a cancelled run's in-flight issues are closed
+			// and stamped so the sweep does not restart the run the user just
+			// stopped, and so a rebuild of the same spec knows what to reopen.
+			Canceller: eventPlane,
 			// The planning phase. These are the same two collaborators the build
 			// click used to drive in a detached goroutine; behind an activity they
 			// are durable across a restart and retried on a blip.

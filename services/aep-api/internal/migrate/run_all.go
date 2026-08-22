@@ -127,7 +127,7 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		dbStep("tasks_github_native", RunTasksGitHubNative),
 		// dependency-management (§3.6): the external-resource catalog +
 		// cross-project access-request tables. Two idempotent CREATE TABLEs only —
-		// no component_tasks ALTER (dependency gating lives on aep:provision GitHub
+		// no component_tasks ALTER (dependency gating lives on `provision` GitHub
 		// issues + the funnel depsGate, not DB columns).
 		ctxStep("phase9_dependency_mgmt", RunPhase9DependencyMgmt),
 		// workflow_runs: the retired devflow lookup index. Its model is gone and
@@ -145,10 +145,9 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// (issues #154, #155, BE handshake #156). One idempotent CREATE TABLE
 		// + its (org_id, created_at) list index.
 		ctxStep("phase10_rca_agent_reports", RunPhase10RcaAgentReports),
-		// milestone_runs (AutoMigrated from the model) gains the spec-run mutex:
-		// a partial unique index admitting one non-terminal spec-build run per
-		// (org, project). Fresh schema — nothing to backfill from the legacy
-		// executions/workflow_runs tables.
+		// milestone_runs (AutoMigrated from the model) gains the one-live-run-
+		// per-milestone partial unique index, which AutoMigrate cannot express.
+		// The per-project build mutex is milestone_run_kind's, below.
 		ctxStep("milestone_runs", RunMilestoneRuns),
 		// run_cycle_logs: RETIRED tombstone. Writers deleted (grill Q2); step
 		// kept for frozen order and no longer creates the table (see
@@ -183,6 +182,12 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		ctxStep("project_conversations", RunProjectConversations),
 		// Drop leftover sm_api_* columns. secret_ref_* stay.
 		ctxStep("phase14_drop_sm_api_columns", RunPhase14DropSMAPIColumns),
+		// milestone_runs.kind: backfill the kind from the origin, then move the
+		// per-project build mutex onto it. Ordered AFTER the milestone_runs step
+		// that owns the per-milestone index, and last overall because the list is
+		// append-only. The backfill MUST precede the index creation — see
+		// milestone_run_kind.go.
+		ctxStep("milestone_run_kind", RunMilestoneRunKind),
 	}
 }
 

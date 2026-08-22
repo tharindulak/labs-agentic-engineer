@@ -713,6 +713,12 @@ func Test202Flow_PreviewOnlyAndStreamReplays(t *testing.T) {
 	if sent.req.Workspace.TurnID != turnID {
 		t.Errorf("dispatched turnId = %s, want %s", sent.req.Workspace.TurnID, turnID)
 	}
+	// #580: every turn the BFF dispatches is read in the console, so it names
+	// that surface and the agents service inlines the console's narration rules.
+	// Unset, the agent narrates repo paths at someone who cannot see a file tree.
+	if sent.req.Surface != agentsvc.SurfaceConsole {
+		t.Errorf("dispatched surface = %q, want %q", sent.req.Surface, agentsvc.SurfaceConsole)
+	}
 	wantConv := "org_" + testOrg + "--proj_" + testProj + "--general--" + convUUID
 	if sent.req.Workspace.ConversationID != wantConv || !strings.Contains(sent.path, wantConv) {
 		t.Errorf("namespaced conversation = %q (path %q), want %q", sent.req.Workspace.ConversationID, sent.path, wantConv)

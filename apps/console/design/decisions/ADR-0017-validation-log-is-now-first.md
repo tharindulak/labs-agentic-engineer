@@ -98,11 +98,11 @@ Validation attempts are the first kind, rendered as the second.
 
    *Rejected: numbering runs over the milestone's whole run list.* It would make `N`
    cross-referenceable in principle, but a run that never validated has no box here, so
-   `[spec-build, incident-adoption, revalidate]` would print `Run 3` and `Run 1` with no
+   `[dev, task, validation]` would print `Run 3` and `Run 1` with no
    `Run 2` anywhere. There is nothing to cross-reference against anyway: no other surface
-   numbers runs — `RunHistoryList` and `RunStory` identify one by origin chip and
-   timestamp, and `runView.ts:277-281` states that "the origin is the only thing that
-   tells them apart".
+   numbers runs — `RunHistoryList` and `RunStory` identify one by its kind chip and
+   timestamp, and `runView.ts`'s `runKindLabel` states that the kind "is the only thing
+   that tells them apart".
 
 ## Consequences
 

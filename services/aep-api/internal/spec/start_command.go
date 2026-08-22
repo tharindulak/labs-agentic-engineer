@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// `/<skill>` flow commands — RECOGNISED by the server, for every token (#373).
+// `/<command>` flow commands — RECOGNISED by the server, for every token (#373).
 //
 // Clients send commands VERBATIM, and the server turns one into a TurnSpec: a
 // statement of what the turn is for. It does not compose the instruction text —
@@ -68,10 +68,12 @@ const startCommand = "/start"
 var slashCommandPattern = regexp.MustCompile(`^/([a-z0-9-]+)(?:\s+([\s\S]+))?$`)
 
 // turnSpecFor classifies a raw instruction. Non-command text is an ordinary
-// chat turn with an empty flow. A `/<skill>` command names the skill; `/start`
-// additionally carries the project idea (typed inline wins, else read from the
-// descriptor at `at` — best-effort: no descriptor, no idea, and the start skill
-// asks the user instead).
+// chat turn with an empty flow. A `/<command>` rides on as its token — most
+// tokens ARE a skill name, and the few that name a branch of one (`/feature`)
+// resolve in the agents service, where wording lives. `/start` additionally
+// carries the project idea (typed inline wins, else read from the descriptor at
+// `at` — best-effort: no descriptor, no idea, and the start skill asks the user
+// instead).
 func (s *Service) turnSpecFor(ctx context.Context, ref sourcecontrol.RepoRef, at, raw string) (agentsvc.TurnSpec, string) {
 	m := slashCommandPattern.FindStringSubmatch(strings.TrimSpace(raw))
 	if m == nil {

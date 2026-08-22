@@ -134,6 +134,12 @@ func mapBuildRunError(err error) error {
 	if errors.Is(err, ErrBuildAlreadyRunning) {
 		return apierr.Conflict("a build is already running for this project")
 	}
+	// The same 409 shape for the other refusal: a live validation run on the
+	// project. Its own message, because the two send a user to different places —
+	// one is "wait", the other is "cancel the validation".
+	if errors.Is(err, ErrValidationRunLive) {
+		return apierr.Conflict(ErrValidationRunLive.Error())
+	}
 	var ee *EdgeError
 	if !errors.As(err, &ee) {
 		return apierr.Internal("internal error")

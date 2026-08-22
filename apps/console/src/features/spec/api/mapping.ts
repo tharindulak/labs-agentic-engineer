@@ -29,6 +29,13 @@ type FileMeta = components["schemas"]["FileMeta"];
 
 export type SpecGroup = "requirements" | "designs" | "validation";
 
+/**
+ * The PRD. Named here because more than one surface has to recognise it: the
+ * file list pins it to the top of its group, and the editor carries the code
+ * lenses for this path alone.
+ */
+export const PRD_PATH = "specs/requirements/prd.md";
+
 export interface SpecFileEntry {
   /** Full repo-relative path (e.g. specs/requirements/prd.md) — also the
    *  collab doc key and the Files API read path. */

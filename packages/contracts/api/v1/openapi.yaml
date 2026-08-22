@@ -784,6 +784,56 @@ paths:
       summary: List a version's milestone runs and their cycles
       tags:
       - Runs
+  /projects/{projectName}/builds/{tag}/progress:
+    get:
+      operationId: stream-build-progress
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+          never by matching titles against GitHub.
+        in: path
+        name: tag
+        required: true
+        schema:
+          description: Spec version tag
+          type: string
+      responses:
+        '200':
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/BuildProgressEvent'
+          description: 'ONE SSE stream stitching every cycle of every run that has worked this version,
+            in chronological run order, so a version reads as one narrative rather than as several
+            executions. The frames are stream-run-progress''s, plus a `run` object on each naming the
+            run the cycle belongs to and its KIND (`dev` | `task` | `validation`) — the section marker
+            the console renders. `line.cycleIndex` stays the cycle''s position WITHIN ITS RUN, so
+            `(run.id, cycleIndex)` is the section key and no cycle is renumbered by being read here.
+            One `data:` JSON frame per event (a BuildProgressEvent discriminated by `type`), each
+            stamped `id: <seq>`; `: keep-alive` comments pace idle waits. The stream holds open while
+            ANY run on the version''s milestone is live and settles with a `done` frame carrying
+            `reason: no_live_run`, `data: [DONE]` and a server close when none is — which is NOT a
+            statement that the version is finished, because a later validation or task run may be
+            admitted on the same milestone; the console reopens the stream when its run-list poll shows
+            one. Reconnects are idempotent — the client upserts cycles by id and dedups lines by
+            cycleId+seq.'
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Stream a version's per-cycle agent progress across every run, as SSE
+      tags:
+      - Runs
   /projects/{projectName}/builds/{tag}/revalidate:
     post:
       description: >-
@@ -2087,10 +2137,12 @@ paths:
       - userJWT: []
       summary: List a project's issues (live from GitHub), optionally scoped to one spec/build version
         tag by milestone membership. Every row carries the label-derived `executorClass` the console
-        sections on — agent work, a dispatch gate, or a bare human ledger issue. The aep:validation
-        issue is excluded (it is a phase of the run, surfaced with the run's verdict on the deployment
-        surface); get-task still serves it by number. Ledger issues have no label to query by, so they
-        are only discoverable through milestone membership and appear only on a `tag`-scoped read.
+        sections on — agent work, a dispatch gate, or a bare human ledger issue — plus the finer
+        `kind` (development | bug | conflict | validation | provision) for the row's own chip. The
+        validation task is excluded (it is a phase of the run, surfaced with the run's verdict on the
+        deployment surface); get-task still serves it by number. Ledger issues carry no label to query
+        by, so they are only discoverable through milestone membership and appear only on a
+        `tag`-scoped read.
       tags:
       - Tasks
   /projects/{projectName}/tasks/{issueNumber}:
@@ -2973,6 +3025,74 @@ components:
       required:
       - version
       - status
+      type: object
+    BuildProgressEvent:
+      additionalProperties: false
+      description: 'One SSE frame on the VERSION progress stream, which spans every run that has worked
+        the version. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by
+        id), `line` one RunProgressLine, and `done` says why the stream ended (the server then closes
+        it). `cycle` and `line` frames also carry `run` — a version''s story spans several executions,
+        so a cycle is only identified once you know which run opened it.'
+      properties:
+        cycle:
+          $ref: '#/components/schemas/RunCycleView'
+        line:
+          $ref: '#/components/schemas/RunProgressLine'
+        reason:
+          description: 'Why the stream ended — present only on the `done` frame, and deliberately NOT
+            a run state. `no_live_run` means no run on the version''s milestone is currently live, so
+            there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later
+            validation or task run may be admitted on the same milestone, and the console reopens the
+            stream when its run-list poll shows one.'
+          enum:
+          - no_live_run
+          type: string
+          x-enum-varnames:
+          - BuildProgressEventReasonNoLiveRun
+        run:
+          $ref: '#/components/schemas/BuildProgressRun'
+        type:
+          enum:
+          - cycle
+          - line
+          - done
+          type: string
+          x-enum-varnames:
+          - BuildProgressEventTypeCycle
+          - BuildProgressEventTypeLine
+          - BuildProgressEventTypeDone
+      required:
+      - type
+      type: object
+    BuildProgressRun:
+      additionalProperties: false
+      description: Which run a frame's cycle belongs to. The version's narrative spans several runs, so
+        the run is the SECTION and the cycle is a step inside it — `RunProgressLine.cycleIndex` stays
+        run-relative and is only unique when paired with `run.id`.
+      properties:
+        id:
+          description: Milestone run id — the same id list-build-runs reports and cancel-run takes.
+          type: string
+        index:
+          description: 1-based chronological position of this run among the version's runs, so the
+            console can label a section without holding the whole run list — the same reason
+            `cycleIndex` exists, one level up. Two runs of one kind are ordinary (a version can be
+            repaired more than once), so the kind alone does not name a section.
+          format: int64
+          type: integer
+        kind:
+          description: What the run DOES, and the section marker the console renders — `dev` delivered
+            the version, `task` worked a defect inside it, `validation` re-judged it. Same vocabulary
+            as MilestoneRunView.kind.
+          enum:
+          - dev
+          - task
+          - validation
+          type: string
+      required:
+      - id
+      - kind
+      - index
       type: object
     BuildRunList:
       additionalProperties: false
@@ -4052,7 +4172,7 @@ components:
         adoptionError:
           description: Why adoption did not happen, when it was asked for and
             did not. The issue still exists — it is a ledger entry, and adding
-            the `aep:codingagent` label hands it to the coding agent later.
+            the `aep` arming label hands it to the coding agent later.
           type: string
       required:
       - number
@@ -4157,6 +4277,18 @@ components:
           x-go-type: '*time.Time'
         id:
           type: string
+        kind:
+          description: What this run DOES, and the value every platform predicate is written on.
+            `dev` delivers a version — it plans its own milestone, and is the only kind that takes
+            the one-active-build-per-project mutex. `task` works a defect inside a version already
+            delivered; task runs execute concurrently on their own milestones. `validation` asks a
+            shipped version's acceptance criteria again — it has no working set, builds nothing, and
+            is outside the mutex so it never holds up the next build.
+          enum:
+          - dev
+          - task
+          - validation
+          type: string
         milestoneNumber:
           format: int64
           type: integer
@@ -4165,10 +4297,8 @@ components:
             key, and the version this run builds is the list's tag.
           type: string
         origin:
-          description: Why this run was started. `revalidate` asks a version's criteria again against
-            the already-deployed system; it enters the loop at validation rather than at the working
-            set, and is deliberately outside the one-active-spec-run mutex so it never holds up the
-            next build.
+          description: Where this run was started from. A label on the trigger — the behaviour is
+            the run's kind.
           enum:
           - spec-build
           - incident-adoption
@@ -4203,6 +4333,7 @@ components:
           $ref: '#/components/schemas/RunValidation'
       required:
       - id
+      - kind
       - milestoneNumber
       - milestoneTitle
       - origin
@@ -5339,18 +5470,31 @@ components:
           type: object
         executorClass:
           description: >-
-            Label-derived kind of the issue, and the only classification the
-            platform makes of one: `coding` for agent work (the `aep` label),
-            `provision` for a dispatch gate (`aep:provision`), `validation` for
-            the run's validation issue, `ledger` for a bare human issue that
-            joined the milestone carrying none of them. Nothing here is parsed
-            out of the body — issue bodies are prose the platform writes for
-            the agent and never reads back.
+            WHO works this issue, derived from its labels: `coding` for anything
+            a coding agent is dispatched at (planned work, a bug, a merge
+            conflict — all armed with the `aep` label), `provision` for a
+            dispatch gate the platform resolves, `validation` for the version's
+            validation task, `ledger` for a bare human issue that joined the
+            milestone unarmed. Deliberately coarser than `kind`: the three
+            coding kinds are dispatched identically, so they are one class here
+            and are told apart by `kind`. Nothing here is parsed out of the body
+            — issue bodies are prose the platform writes for the agent and never
+            reads back.
           enum:
           - coding
           - provision
           - validation
           - ledger
+          type: string
+        kind:
+          description: >-
+            The issue's raw label kind: `development` for planned work minted
+            from the spec, `bug` for a defect, `conflict` for a pull request
+            that will not merge, `validation` for the version's validation
+            task, `provision` for a dispatch gate. Absent when the issue carries
+            no kind label (a ledger issue, or one a human armed without
+            classifying); a consumer that does not recognise a kind should render
+            the row untagged rather than guess.
           type: string
         hold:
           type: boolean
@@ -5444,18 +5588,31 @@ components:
           type: object
         executorClass:
           description: >-
-            Label-derived kind of the issue, and the only classification the
-            platform makes of one: `coding` for agent work (the `aep` label),
-            `provision` for a dispatch gate (`aep:provision`), `validation` for
-            the run's validation issue, `ledger` for a bare human issue that
-            joined the milestone carrying none of them. Nothing here is parsed
-            out of the body — issue bodies are prose the platform writes for
-            the agent and never reads back.
+            WHO works this issue, derived from its labels: `coding` for anything
+            a coding agent is dispatched at (planned work, a bug, a merge
+            conflict — all armed with the `aep` label), `provision` for a
+            dispatch gate the platform resolves, `validation` for the version's
+            validation task, `ledger` for a bare human issue that joined the
+            milestone unarmed. Deliberately coarser than `kind`: the three
+            coding kinds are dispatched identically, so they are one class here
+            and are told apart by `kind`. Nothing here is parsed out of the body
+            — issue bodies are prose the platform writes for the agent and never
+            reads back.
           enum:
           - coding
           - provision
           - validation
           - ledger
+          type: string
+        kind:
+          description: >-
+            The issue's raw label kind: `development` for planned work minted
+            from the spec, `bug` for a defect, `conflict` for a pull request
+            that will not merge, `validation` for the version's validation
+            task, `provision` for a dispatch gate. Absent when the issue carries
+            no kind label (a ledger issue, or one a human armed without
+            classifying); a consumer that does not recognise a kind should render
+            the row untagged rather than guess.
           type: string
         hold:
           type: boolean

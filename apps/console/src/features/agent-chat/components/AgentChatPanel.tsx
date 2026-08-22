@@ -28,6 +28,7 @@ import {
   Avatar,
   AvatarGroup,
   Box,
+  Button,
   Chip,
   Dialog,
   DialogActions,
@@ -61,7 +62,6 @@ import { buildFeed, participantsOf, type FeedBlock } from "../feed";
 import { answerableQuestionIds } from "../questionCards";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
-import { Button, Menu, MenuItem } from "@wso2/oxygen-ui";
 import {
   DESIGN_COMMAND,
   START_COMMAND,
@@ -77,10 +77,17 @@ const WIDTH_KEY = "aep.chat.panelWidth";
 
 // Empty-state starter prompts — one click prefills the composer (mirrors
 // ProjectCreate's example-prompt pattern, scaled to a chip).
+/**
+ * The empty state is reachable only after **New conversation** (#522 fires the
+ * kickoff at project creation, so the first transcript is never empty), which
+ * means the project already HAS a spec by the time anyone reads this. The
+ * suggestions therefore open a conversation ABOUT that spec rather than offer
+ * to draft one.
+ */
 const SUGGESTIONS = [
-  "Draft the requirements for this project",
-  "Add acceptance criteria to the spec",
-  "Add a returns-policy section",
+  "What's still assumed in this spec?",
+  "Add a feature to this project",
+  "Walk me through the design",
 ] as const;
 
 const clampWidth = (n: number): number =>
@@ -156,13 +163,6 @@ export function AgentChatPanel({
   // delivered user message. One O(n) pass per log change.
   const answerableIds = useMemo(() => answerableQuestionIds(messages), [messages]);
 
-  // The Actions menu (#372): the complete scoped-flow set behind one button.
-  const [actionsAnchor, setActionsAnchor] = useState<HTMLElement | null>(null);
-  const runAction = (instruction: string | null, prefill?: string) => {
-    setActionsAnchor(null);
-    if (instruction) send(instruction);
-    else if (prefill) setDraft(prefill);
-  };
   const awaiting = !isSending && answerableIds.size > 0;
 
   // A teammate's running turn locks the composer (a concurrent send 409s
@@ -484,8 +484,9 @@ export function AgentChatPanel({
               </Avatar>
               <Typography variant="subtitle2">Hi! I&apos;m your Agent.</Typography>
               <Typography variant="body2" color="text.secondary">
-                Ask me to edit this project&apos;s spec — I join the shared
-                workspace and you can watch the files change live.
+                This is where we talk through what you&apos;re building. Ask
+                about a decision, change what&apos;s in scope, or take up
+                anything I marked as assumed.
               </Typography>
               <Stack
                 direction="row"
@@ -517,10 +518,11 @@ export function AgentChatPanel({
         </Box>
       </Box>
 
-      {/* Composer — the Actions menu (#372) leads the context row, so every
-          scoped launcher sits with the input it feeds. Direct-send items start
-          their interview immediately; prefill items need the user's subject
-          first. */}
+      {/* Composer. The scoped launchers used to sit here behind an `Actions ▾`
+          menu of raw slash commands (#372); each one changes a specific place
+          in the PRD, so each is now offered AT that place as a code lens
+          (#579) — where the subject comes from the line the user clicked
+          rather than from their memory. */}
       <ChatInput
         value={draft}
         onChange={setDraft}
@@ -528,34 +530,6 @@ export function AgentChatPanel({
         disabled={inputDisabled}
         contextLabel={displayName ?? projectName}
         hint={hint}
-        actions={
-          <>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={(e: React.MouseEvent<HTMLElement>) => setActionsAnchor(e.currentTarget)}
-              disabled={inputDisabled}
-              sx={{ flexShrink: 0 }}
-            >
-              Actions ▾
-            </Button>
-            <Menu
-              anchorEl={actionsAnchor}
-              open={actionsAnchor !== null}
-              onClose={() => setActionsAnchor(null)}
-            >
-              <MenuItem onClick={() => runAction("/amend Add a feature")}>+ Feature</MenuItem>
-              <MenuItem onClick={() => runAction("/amend Add an actor")}>+ Actor</MenuItem>
-              <MenuItem onClick={() => runAction(null, "/amend Go deeper on ")}>Go deeper on…</MenuItem>
-              <MenuItem onClick={() => runAction("/amend Resolve the open questions")}>
-                Resolve open questions
-              </MenuItem>
-              <MenuItem onClick={() => runAction("/design Start the next phase — delta pass, protect shipped components")}>
-                Start next phase
-              </MenuItem>
-            </Menu>
-          </>
-        }
       />
       <Dialog open={confirmNewOpen} onClose={() => setConfirmNewOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Start a new conversation?</DialogTitle>

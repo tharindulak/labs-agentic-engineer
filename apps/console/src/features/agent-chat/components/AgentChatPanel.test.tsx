@@ -379,3 +379,24 @@ describe("AgentChatPanel — generation CTAs", () => {
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 });
+
+// The scoped launchers are gone from the composer (#579): each one changes a
+// specific place in the PRD and is now offered there, as a code lens on the
+// section it changes. The gate they carried — inert while a question form is
+// live, since firing one is not an answer and would supersede everyone's form —
+// moved with them (`SpecMdEditor`'s `lenses` binding, `SpecView`'s
+// `lensBusyReason`).
+describe("AgentChatPanel — the composer offers no flow launchers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    consumePendingSeed(KEY);
+    replaceMessages(KEY, []);
+    mockMessages = [];
+    mockConversationReady = true;
+  });
+
+  it("has no Actions menu", () => {
+    renderPanel();
+    expect(screen.queryByRole("button", { name: /Actions/ })).toBeNull();
+  });
+});

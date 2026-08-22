@@ -131,8 +131,19 @@ func TestBuildValidationPrompt_StaysIssueAnchored(t *testing.T) {
 	if !strings.Contains(got, "https://github.com/acme/widgets/issues/9") {
 		t.Errorf("validation prompt must name its issue URL, got %q", got)
 	}
-	if !strings.Contains(got, "Closes #9") {
-		t.Errorf("validation prompt must keep its Closes #N link contract, got %q", got)
+	// `Validates #N`, and NOT a closing keyword. The platform owns the validation
+	// task's lifecycle — it reopens the task for the next attempt and closes it even
+	// on an ending where no pull request merged — so a closing keyword would put two
+	// owners on one issue. The reference still has to be there: the auto-merge policy
+	// requires a pull request to name an armed issue in the milestone.
+	if !strings.Contains(got, "Validates #9") {
+		t.Errorf("validation prompt must carry its `Validates #N` link contract, got %q", got)
+	}
+	for _, closing := range []string{"Closes #9", "Fixes #9", "Resolves #9"} {
+		if strings.Contains(got, closing) {
+			t.Errorf("validation prompt must not use a GitHub closing keyword (%q): the platform "+
+				"closes this task itself, got %q", closing, got)
+		}
 	}
 	if strings.Contains(got, "milestone") {
 		t.Errorf("validation dispatch must stay issue-anchored, got %q", got)

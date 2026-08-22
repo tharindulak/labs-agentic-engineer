@@ -396,9 +396,12 @@ export interface WorkspaceRef {
  * prompt wording — that is the whole point of this type.
  *
  *  - `chat`  — an ordinary user message, sent verbatim.
- *  - `flow`  — a `/<skill>` command: load that skill and follow it, with the
- *              user's trailing text (if any) riding along. `references` names
- *              the attached reference documents exactly as on `start` — a flow
+ *  - `flow`  — a `/<command>`: load a skill and follow it, with the user's
+ *              trailing text (if any) riding along. `skill` carries the
+ *              command's TOKEN as typed; most tokens are the skill name, and
+ *              the few that name a branch of one instead resolve in the agents
+ *              service, which is where wording lives. `references` names the
+ *              attached reference documents exactly as on `start` — a flow
  *              generates artifacts (wireframes above all) that must be
  *              grounded in an attached sketch or spec.
  *  - `start` — the project kickoff. `idea` is what the user asked for, read by
@@ -520,6 +523,33 @@ export interface TurnRequest {
    * the tool map is byte-identical to a turn without it.
    */
   webSearch?: boolean;
+  /**
+   * Where the person reading this turn's prose is sitting (#580). The right
+   * vocabulary belongs to the SURFACE, not to the skill: in a local run the
+   * user is standing in the repo, so `design.cell` is the right word; in the
+   * console it names nothing on screen. The agents service inlines the
+   * surface's narration skill into the system prompt — see
+   * `buildNarrationBlock`. Omitted → no narration policy, and the prompt is
+   * byte-identical to a turn without it (the playground's case).
+   *
+   * This is the one turn property that genuinely cannot be derived: it is who
+   * is asking, not what is being asked for.
+   */
+  surface?: Surface;
+}
+
+/**
+ * The surfaces a turn's prose can be read on. A surface's narration policy is
+ * the skill of the SAME NAME (`skills/console/`), so there is no second table
+ * mapping one to the other.
+ */
+export const SURFACES = ["console"] as const;
+
+export type Surface = (typeof SURFACES)[number];
+
+/** Runtime guard for a `Surface` value. */
+export function isSurface(v: unknown): v is Surface {
+  return (SURFACES as readonly unknown[]).includes(v);
 }
 
 /**

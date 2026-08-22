@@ -38,7 +38,7 @@ import {
   Network,
   LayoutDashboard,
 } from "@wso2/oxygen-ui-icons-react";
-import type { SpecFileEntry } from "../api/mapping";
+import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
 import {
   buildDesignSection,
   selectionKey,
@@ -90,7 +90,14 @@ export function SpecFileList({
   const selKey = selection ? selectionKey(selection) : null;
   const isSel = (sel: SpecSelection) => selKey === selectionKey(sel);
 
-  const requirements = files.filter((f) => f.group === "requirements");
+  // The PRD leads, whatever it sorts as. Everything else under Requirements
+  // elaborates it — a feature file is depth on a story the PRD defines — and on
+  // path alone `features/…` sorts ABOVE `prd.md`, burying the document the
+  // whole flow is written against beneath its own footnotes. `files` arrives
+  // path-sorted and sort is stable, so the rest keeps that order.
+  const requirements = files
+    .filter((f) => f.group === "requirements")
+    .sort((a, b) => Number(b.path === PRD_PATH) - Number(a.path === PRD_PATH));
   const validation = files.filter((f) => f.group === "validation");
   const design = buildDesignSection(files);
 
