@@ -117,7 +117,53 @@ Key wiring:
 | `manifests/docker-build-workflow.yaml` | `dockerfile-builder` ClusterWorkflow (Argo CWTs) |
 | `single-cluster/values-thunder.yaml` | Thunder helm values + bootstrap scripts (users, OAuth apps) |
 | `single-cluster/values-cp.yaml` | OC Control Plane helm values |
-| `single-cluster/values-dp.yaml` | OC Data Plane helm values |
+| `single-cluster/values-dp.yaml` | OC Data Plane helm values (gateway HTTP 19080 + HTTPS 19443) |
+| `.local/openchoreoapis-ca.crt` | Exported data-plane gateway CA (gitignored, rewritten per setup run) |
+
+## Calling a deployed endpoint
+
+The data-plane gateway serves every deployed component on **both** schemes, and
+the platform advertises both — `http://<env>-<dp>.openchoreoapis.localhost:19080/<path>`
+and `https://<env>-<dp>.openchoreoapis.localhost:19443/<path>`. The console shows
+the https one, because `publicEndpointURL` (aep-api) prefers it.
+
+HTTP needs nothing:
+
+```bash
+curl http://development-default.openchoreoapis.localhost:19080/my-project-my-svc-http/health
+```
+
+HTTPS is terminated with a certificate from a **local CA created at setup time**
+(`create_gateway_tls_cert`, `scripts/utils.sh`), which nothing on your machine
+trusts by default. Verify against the exported CA:
+
+```bash
+curl --cacert deployments/.local/openchoreoapis-ca.crt \
+  https://development-default.openchoreoapis.localhost:19443/my-project-my-svc-http/health
+```
+
+To make plain `curl` and the browser accept the console's link without flags,
+trust that CA once — your call, since it edits your OS trust store, and it must
+be redone after a cluster rebuild mints a new CA:
+
+```bash
+# macOS
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain deployments/.local/openchoreoapis-ca.crt
+# Linux (Debian/Ubuntu)
+sudo cp deployments/.local/openchoreoapis-ca.crt \
+  /usr/local/share/ca-certificates/aep-openchoreoapis.crt && sudo update-ca-certificates
+```
+
+Without trusting it, `curl` reports `(60) SSL certificate problem: unable to get
+local issuer certificate` — the connection reached a real listener and only the
+signature was unverifiable. That is a different failure from
+`(35) SSL_ERROR_SYSCALL`, which meant no HTTPS listener existed at all and the
+k3d serverlb closed the socket mid-handshake.
+
+Validation runners inside the cluster do not need any of this: they probe every
+advertised URL and validate against whichever answers (ADR-0021), which on a
+local plane is the http one, since the pod does not carry the CA either.
 
 ## Credentials
 

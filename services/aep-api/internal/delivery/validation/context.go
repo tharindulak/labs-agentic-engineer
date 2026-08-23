@@ -32,7 +32,19 @@ var ErrCycleNotFound = errors.New("validation: cycle not found for org")
 // e2e target.
 type ComponentEndpoint struct {
 	Component string `json:"component"`
-	URL       string `json:"url"`
+	// URL is the platform's preferred URL, kept so an older runner keeps working.
+	URL string `json:"url"`
+	// URLs is EVERY URL the deployment advertises for this component, preferred
+	// first. The runner probes them and validates against whichever answers.
+	//
+	// One URL was not enough, and the reason is worth keeping: "advertised" and
+	// "reachable" are different facts. A gateway can publish both an http and an
+	// https external URL while serving only one of them, and which one it serves
+	// differs between a local plane and a cloud one — so no static preference is
+	// correct everywhere. The runner already probes endpoints before it starts the
+	// agent, so it is the one place that can settle this by measurement instead of
+	// by assumption (ADR-0021).
+	URLs []string `json:"urls,omitempty"`
 }
 
 // ValidationContextResponse is the secure runtime-inputs payload the runner

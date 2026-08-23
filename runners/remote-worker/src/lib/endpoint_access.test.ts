@@ -92,6 +92,35 @@ test("curlResolveEntries defaults the port from the scheme", async () => {
   );
 });
 
+// The regression that made this pin every candidate: the gateway advertises both
+// schemes on DIFFERENT ports, `resolve` is keyed by host:port, and this runs
+// BEFORE probeEndpoints chooses between them. Pinning only the preferred URL
+// left the agent curling an unpinned host:port — RFC 6761 loopback — whenever
+// the probe adopted the other one.
+test("curlResolveEntries pins every advertised candidate, not just the preferred one", async () => {
+  const lookup = stubLookup();
+  const entries = await curlResolveEntries(
+    [
+      {
+        component: "service1",
+        url: "https://development-default.openchoreoapis.localhost:19443/service1",
+        urls: [
+          "https://development-default.openchoreoapis.localhost:19443/service1",
+          "http://development-default.openchoreoapis.localhost:19080/service1",
+        ],
+      },
+    ],
+    lookup.fn,
+  );
+  assert.deepEqual(
+    entries.map((e) => [e.host, e.port]),
+    [
+      ["development-default.openchoreoapis.localhost", 19443],
+      ["development-default.openchoreoapis.localhost", 19080],
+    ],
+  );
+});
+
 test("curlResolveEntries emits one entry per host:port", async () => {
   const lookup = stubLookup();
   const entries = await curlResolveEntries(

@@ -292,7 +292,47 @@ That list matters twice: the **auto-merge predicate** needs at least one
 `Resolves` reference to an agent-work issue in this milestone (a PR listing none
 is treated as somebody else's work and left alone), and GitHub closes each
 referenced issue **when the PR merges** — one you finished but didn't list gets
-worked again next cycle. **The platform merges the PR; no human reviews it.**
+worked again next cycle. **The platform merges the PR; no human reviews it** —
+except for incident fixes, below.
+
+### Incident fixes: declare your confidence
+
+If **any** issue you are resolving carries the `sre-agent` label, it came from a
+production incident and your fix goes straight at a running system. Add one line
+of its own to the PR body:
+
+```
+Confidence: high
+```
+
+`high` or `low`, nothing else. **Either way the pull request merges** — this
+line does not gate your work, it decides what happens to the ISSUE behind it.
+`high` closes it. `low`, and a missing or misspelled line, leaves it **open as an
+unverified fix**: shipped and recorded, worked by nobody, waiting for a human to
+confirm or for the incident to come back. Declaring `low` costs you nothing and
+holds nothing up, so declare it honestly.
+
+Declare **`high` only when all four are true**:
+
+1. Your change addresses **the root cause the issue names**, not a plausible
+   neighbouring one.
+2. You can **point at the code path** the evidence implicates — you read it, you
+   did not infer it from the symptom.
+3. The failure mode is now **covered by a test or check** that would have caught
+   it.
+4. **Nothing material was guessed at.** Everything you needed was available.
+
+Miss any one, or feel unsure, and it is `low`. Unsure is `low`.
+
+Criterion 3 asks for a test **where the project can carry one**. A repository
+with no test harness, or a component the contract forbids you to run, cannot
+satisfy it — say so in your `## Why confidence is low` section and judge the
+other three on their own. What it never means is "no test, therefore `high`".
+
+**A `## Recurrence` section in the issue body means a merged fix for it already
+failed.** Find the PR that closed it (`gh pr list --state merged --search "<the
+issue number>"`), read what it tried, and do something different. Arriving at
+`high` after a recurrence takes more evidence, not less.
 
 **A component stayed red** → the same PR, but `--draft` and a `[build-failed]`
 title prefix. A draft is the platform's signal that you are not finished and is
@@ -302,6 +342,35 @@ for under an `## Error` heading (the ~40 lines, fenced) and `## What was tried`.
 
 **Leave every issue you did not finish open**, with a comment carrying the same
 diagnostic: what you tried and why it stopped.
+
+### When no code change can resolve an issue
+
+Sometimes the answer is that the code is not where the problem is — most often
+because the behaviour being reported is what `specs/` REQUIRES. A demo that is
+specified to time out will keep timing out; a required error log will keep being
+logged. Changing that would break the acceptance criteria the version is
+validated against.
+
+When that is genuinely the case, **close the issue as not planned**:
+
+```bash
+gh issue close <number> --reason "not planned" --comment "<why>"
+```
+
+Your comment is the whole record, so make it answer the next reader: which
+acceptance criteria mandate the behaviour, what you checked in the code, and what
+would actually have to change (an alert rule, a spec) and by whom. Cite the AC
+ids.
+
+This **ends the cycle** — the platform sees the work resolved and settles the run
+instead of waiting for a pull request that is never coming — and it is
+**durable**: later alerts with the same signature will point at your decision
+instead of filing again. So do it only when you are sure. If you merely could not
+finish, leave the issue open instead (above); if the fix is real but you doubt
+it, open the pull request and declare `Confidence: low`.
+
+Never close an issue as not planned to avoid difficult work, and never close one
+you did not examine.
 
 ### Be idempotent
 
@@ -386,7 +455,9 @@ web search. The rest belongs to the run:
 - Open a pull request with no `Resolves #<issue-number>` line — the platform
   cannot link it and will not merge it. Or open more than one for this cycle.
 - Run `gh pr merge`, `gh pr close`, `gh repo create`, `gh repo delete`,
-  `gh repo fork`, or `gh repo edit`.
+  `gh repo fork`, or `gh repo edit`. (`gh issue close --reason "not planned"` on
+  an issue of YOUR OWN working set is the one close you may perform — see
+  **When no code change can resolve an issue**.)
 - Touch a ledger issue (no `aep`), a `provision` gate, or a `validation` issue.
 - Delete remote branches (`git push --delete`, `git push origin :branch`).
 - Modify branch protection, secrets, repository settings, collaborators, or

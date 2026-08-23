@@ -126,6 +126,22 @@ type IssueClient interface {
 	// adopted issue as agent work, which is what puts it in the run's working
 	// set; adding a label an issue already carries is a no-op on the host.
 	AddLabels(ctx context.Context, orgID, projectID string, number int, labels []string) error
+	// GetIssue reads one issue by number. The unverified-merge path needs it
+	// because by then the issue is CLOSED, so no milestone listing (which reads
+	// open issues) can see it.
+	GetIssue(ctx context.Context, orgID, projectID string, number int) (*sourcecontrol.IssueInfo, error)
+	// ReopenIssue puts a closed issue back. Used when a merged incident fix was
+	// not vouched for: GitHub closed the issue on the closing keyword, and the
+	// platform undoes exactly that.
+	ReopenIssue(ctx context.Context, orgID, projectID string, number int) error
+	// RemoveLabel takes one label off an issue. Removing `aep` is what turns a
+	// fixed-but-unverified issue into a ledger entry: still open and on the
+	// version's record, no longer in any run's working set.
+	RemoveLabel(ctx context.Context, orgID, projectID string, number int, label string) error
+	// CommentIssue posts a comment. The unverified reopen explains itself on the
+	// issue, because an issue that reopens seconds after closing is otherwise
+	// indistinguishable from a glitch.
+	CommentIssue(ctx context.Context, orgID, projectID string, number int, body string) error
 }
 
 // PRReader reads a pull request's live state (the ground-truth check before

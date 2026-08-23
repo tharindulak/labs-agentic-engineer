@@ -469,6 +469,48 @@ A project with no version to adopt into cannot adopt at all. That refusal is
 `ErrNoAdoptableMilestone`, and it leaves the issue as a ledger entry rather than
 losing it — nothing retries an adoption.
 
+### Recurrence
+The same incident happening again after the platform believed it had fixed it —
+an alert whose dedupe fingerprint matches an issue that is closed as *completed*
+and carries `sre-agent`. The platform **reopens that issue** rather than filing a
+new one: the evidence is appended as a `## Recurrence <n>` section, the issue is
+**re-homed** into the currently adoptable milestone (the one it was fixed in is
+settled by now) and adopted again. One incident, one thread, however many
+attempts. Not bounded by time. A human's `not_planned` close never recurs.
+
+**Escalation** past attempt 3 is loud and nothing more: the recurrence is
+reported on the issue and the console, and worked anyway. See ADR-0018.
+
+### Confidence declaration
+The `Confidence: high|low` line a coding agent puts in its pull request body,
+read for pull requests resolving `sre-agent` work and nothing else — spec builds
+never need one. It does not decide whether the fix merges; everything merges. It
+decides whether the issue behind it closes: `high` closes it, and `low`, missing
+or unparseable leaves an **Unverified fix**.
+
+### No-change verdict
+A coding agent's conclusion that no code change can resolve an incident, recorded
+by closing the issue as `not_planned` with its reasoning. Ends the cycle (the
+working set empties under a pull-request-less cycle → `SigRunNoWork` →
+`cycleNoWork`, which is not a failure), and **suppresses** the next alert with the
+same dedupe key. Reopening the issue reverses both. See ADR-0020.
+
+### Suppression
+The handoff filing nothing because a no-change verdict already answers this
+signature. The RCA report still records the incident in full; the issue and the
+coding cycle are what stop.
+
+### Unverified fix
+A merged incident fix whose author did not vouch for it. It ships like any other
+fix; the platform then reopens its issue and removes `aep`, leaving it open on
+the version's record and in no run's working set — a **ledger issue**. A human
+closes it when satisfied, a recurrence continues that same thread, and supersede
+closes it if the version moves on first.
+
+**Merge hold** is retired. Holding the merge could not survive a project with no
+test harness, where the confidence bar can never be met and every fix was held.
+See ADR-0019.
+
 ### Terminal reason
 Why a non-succeeded run stopped. Each value names exactly ONE failure class —
 `redispatch-budget`, `dispatch-failed`, `build-retrigger-budget`,

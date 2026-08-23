@@ -3509,6 +3509,13 @@ components:
           type: string
         dispatched:
           type: boolean
+        recurrence:
+          description: Which attempt this incident is on — 1 for a first filing,
+            2 for the first recurrence, and so on. Greater than 1 means a fix the
+            platform already merged for this incident did not resolve it, and its
+            issue was reopened rather than re-filed. 0 when unknown.
+          format: int64
+          type: integer
         issueExcerpt:
           type: string
         issueNumber:
@@ -4150,8 +4157,10 @@ components:
       additionalProperties: false
       description: Issue metadata after create. deduped=true means an open issue
         with the same dedupeKey already existed — number/url refer to it.
-        adopted answers the only other question a caller has — will anything
-        work this issue?
+        reopened=true means the opposite kind of match — a CLOSED issue under
+        the same dedupeKey, i.e. the incident recurring — so it was appended to,
+        reopened and re-adopted. adopted answers the only other question a
+        caller has — will anything work this issue?
       properties:
         number:
           format: int64
@@ -4162,6 +4171,30 @@ components:
           type: string
         deduped:
           type: boolean
+        suppressed:
+          description: Whether nothing was filed because a coding agent already
+            examined this exact signature and closed its issue as needing no code
+            change (GitHub `not_planned`). number/url point at that decided issue.
+            Distinct from deduped, which means the work is live and owned by a
+            run; this means the question already has an answer. Reopen the issue
+            to have it worked again.
+          type: boolean
+        reopened:
+          description: Whether this create was a RECURRENCE. The dedupeKey
+            matched an issue closed as completed and carrying `sre-agent`,
+            meaning a fix the platform already merged did not resolve the
+            incident. The issue was appended to with the new evidence, reopened,
+            re-homed into the currently adoptable milestone and handed back to
+            the coding agent. Never true at the same time as deduped — they are
+            opposite outcomes (ADR-0018).
+          type: boolean
+        recurrence:
+          description: Which attempt this is — 1 for a first filing, 2 for the
+            first recurrence, and so on. Reported so a human triaging sees
+            "attempt 3" rather than a bare "issue created". Omitted when the
+            call could not establish it.
+          format: int64
+          type: integer
         adopted:
           description: Whether the issue was adopted — filed into a version's
             milestone as agent work, with a run started or woken over it. False
@@ -4761,6 +4794,14 @@ components:
           description: Whether the coding agent has been dispatched for the linked issue (false in issue-only/manual-dispatch
             mode until a human dispatches)
           type: boolean
+        recurrence:
+          description: Which attempt this incident is on — 1 for a first filing, 2
+            for the first recurrence, and so on. Greater than 1 means a fix the
+            platform already merged did not resolve this incident and its issue was
+            reopened rather than re-filed; from the escalation threshold it is worth
+            a human deciding whether this is a code fault at all. 0 when unknown.
+          format: int64
+          type: integer
         id:
           type: string
         issueExcerpt:

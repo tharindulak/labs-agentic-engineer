@@ -84,6 +84,11 @@ tools/aepctl/aepctl
 # Compiled setup-local binary (built from deployments/scripts)
 deployments/scripts/setup-local
 
+# Per-cluster material exported by the setup scripts (the data-plane gateway CA
+# used to verify https endpoints). Regenerated on every cluster build, so a
+# committed copy would be a certificate that trusts nothing.
+deployments/.local/
+
 # Local PR-evidence screenshots (attached to PRs by hand, never committed)
 /.screenshots-*/
 # Local session artifacts — dev-tool config and working notes, not repo content

@@ -90,6 +90,7 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
         "Create a GitHub issue on a project's repo AND hand it to the AE coding agent. Creating the issue IS the dispatch — there is no second call. " +
         "Use this for a code-level fix; config-level changes do not belong here. " +
         "Pass a stable dedupeKey so concurrent callers reporting the same incident share one issue: if an OPEN issue with the same key exists, it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). " +
+        "If instead a CLOSED issue with that key is found — the same incident recurring after a fix was merged — it is reopened with this call's body appended as a `## Recurrence <n>` section, moved into the currently deployed version's milestone and handed back to the coding agent; the result then carries `reopened: true` and `recurrence` (which attempt this is). " +
         "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked.",
       inputSchema: {
         project: z.string().describe("OpenChoreo/AE project name"),

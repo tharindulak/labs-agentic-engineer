@@ -64,11 +64,18 @@ func (f *fakeGitHub) ListIssues(_ context.Context, _, _ string, _ secrets.Creden
 	defer f.mu.Unlock()
 	var out []IssueInfo
 	for _, iss := range f.issues {
+		// AND, matching GitHub's REST `?labels=a,b` — the recurrence lookup
+		// depends on it to narrow a dedupe key to incident issues, so a fake
+		// that ORed would prove the opposite of what the real host does.
+		match := true
 		for _, want := range labels {
-			if hasLabel(iss, want) {
-				out = append(out, iss)
+			if !hasLabel(iss, want) {
+				match = false
 				break
 			}
+		}
+		if match {
+			out = append(out, iss)
 		}
 	}
 	return out, nil

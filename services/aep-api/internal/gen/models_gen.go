@@ -946,8 +946,11 @@ type CreateRcaAgentReportRequest struct {
 	IssueTitle   string `json:"issueTitle,omitempty"`
 	IssueURL     string `json:"issueUrl,omitempty"`
 	Project      string `json:"project"`
-	Summary      string `json:"summary"`
-	Title        string `json:"title"`
+
+	// Recurrence Which attempt this incident is on — 1 for a first filing, 2 for the first recurrence, and so on. Greater than 1 means a fix the platform already merged for this incident did not resolve it, and its issue was reopened rather than re-filed. 0 when unknown.
+	Recurrence int64  `json:"recurrence,omitempty"`
+	Summary    string `json:"summary"`
+	Title      string `json:"title"`
 }
 
 // CreateSkillInput defines model for CreateSkillInput.
@@ -1161,7 +1164,7 @@ type IssueInfo struct {
 	URL    string   `json:"URL"`
 }
 
-// IssueResult Issue metadata after create. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it. adopted answers the only other question a caller has — will anything work this issue?
+// IssueResult Issue metadata after create. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it. reopened=true means the opposite kind of match — a CLOSED issue under the same dedupeKey, i.e. the incident recurring — so it was appended to, reopened and re-adopted. adopted answers the only other question a caller has — will anything work this issue?
 type IssueResult struct {
 	// Adopted Whether the issue was adopted — filed into a version's milestone as agent work, with a run started or woken over it. False when the caller passed adopt=false, when creation deduped onto an existing issue (the run that created it owns its dispatch), or when adoption could not proceed; adoptionError says which.
 	Adopted bool `json:"adopted,omitempty"`
@@ -1171,7 +1174,16 @@ type IssueResult struct {
 	Deduped       bool   `json:"deduped,omitempty"`
 	NodeID        string `json:"nodeId"`
 	Number        int64  `json:"number"`
-	URL           string `json:"url"`
+
+	// Recurrence Which attempt this is — 1 for a first filing, 2 for the first recurrence, and so on. Reported so a human triaging sees "attempt 3" rather than a bare "issue created". Omitted when the call could not establish it.
+	Recurrence int64 `json:"recurrence,omitempty"`
+
+	// Reopened Whether this create was a RECURRENCE. The dedupeKey matched an issue closed as completed and carrying `sre-agent`, meaning a fix the platform already merged did not resolve the incident. The issue was appended to with the new evidence, reopened, re-homed into the currently adoptable milestone and handed back to the coding agent. Never true at the same time as deduped — they are opposite outcomes (ADR-0018).
+	Reopened bool `json:"reopened,omitempty"`
+
+	// Suppressed Whether nothing was filed because a coding agent already examined this exact signature and closed its issue as needing no code change (GitHub `not_planned`). number/url point at that decided issue. Distinct from deduped, which means the work is live and owned by a run; this means the question already has an answer. Reopen the issue to have it worked again.
+	Suppressed bool   `json:"suppressed,omitempty"`
+	URL        string `json:"url"`
 }
 
 // LLMProjection defines model for LLMProjection.
@@ -1463,6 +1475,9 @@ type RcaAgentReport struct {
 	IssueTitle  string `json:"issueTitle,omitempty"`
 	IssueURL    string `json:"issueUrl,omitempty"`
 	Project     string `json:"project"`
+
+	// Recurrence Which attempt this incident is on — 1 for a first filing, 2 for the first recurrence, and so on. Greater than 1 means a fix the platform already merged did not resolve this incident and its issue was reopened rather than re-filed; from the escalation threshold it is worth a human deciding whether this is a code fault at all. 0 when unknown.
+	Recurrence int64 `json:"recurrence,omitempty"`
 
 	// Summary Short RCA summary; the console truncates this further for list rows
 	Summary string `json:"summary"`

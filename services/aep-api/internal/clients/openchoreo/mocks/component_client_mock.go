@@ -57,6 +57,9 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //			ListComponentsFunc: func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*gen.ComponentList, error) {
 //				panic("mock out the ListComponents method")
 //			},
+//			ListDeploymentEndpointCandidatesFunc: func(ctx context.Context, orgName string, projectName string, componentName string) ([]string, error) {
+//				panic("mock out the ListDeploymentEndpointCandidates method")
+//			},
 //			ListDeploymentsFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.DeploymentList, error) {
 //				panic("mock out the ListDeployments method")
 //			},
@@ -123,6 +126,9 @@ type ComponentClientMock struct {
 
 	// ListComponentsFunc mocks the ListComponents method.
 	ListComponentsFunc func(ctx context.Context, orgName string, projectName string, limit int, cursor string) (*gen.ComponentList, error)
+
+	// ListDeploymentEndpointCandidatesFunc mocks the ListDeploymentEndpointCandidates method.
+	ListDeploymentEndpointCandidatesFunc func(ctx context.Context, orgName string, projectName string, componentName string) ([]string, error)
 
 	// ListDeploymentsFunc mocks the ListDeployments method.
 	ListDeploymentsFunc func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.DeploymentList, error)
@@ -290,6 +296,17 @@ type ComponentClientMock struct {
 			// Cursor is the cursor argument value.
 			Cursor string
 		}
+		// ListDeploymentEndpointCandidates holds details about calls to the ListDeploymentEndpointCandidates method.
+		ListDeploymentEndpointCandidates []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgName is the orgName argument value.
+			OrgName string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
+		}
 		// ListDeployments holds details about calls to the ListDeployments method.
 		ListDeployments []struct {
 			// Ctx is the ctx argument value.
@@ -405,6 +422,7 @@ type ComponentClientMock struct {
 	lockGetReleaseBindingStatus                sync.RWMutex
 	lockGetWorkflowRun                         sync.RWMutex
 	lockListComponents                         sync.RWMutex
+	lockListDeploymentEndpointCandidates       sync.RWMutex
 	lockListDeployments                        sync.RWMutex
 	lockListInternalComponents                 sync.RWMutex
 	lockListProjectReleaseBindings             sync.RWMutex
@@ -956,6 +974,50 @@ func (mock *ComponentClientMock) ListComponentsCalls() []struct {
 	mock.lockListComponents.RLock()
 	calls = mock.calls.ListComponents
 	mock.lockListComponents.RUnlock()
+	return calls
+}
+
+// ListDeploymentEndpointCandidates calls ListDeploymentEndpointCandidatesFunc.
+func (mock *ComponentClientMock) ListDeploymentEndpointCandidates(ctx context.Context, orgName string, projectName string, componentName string) ([]string, error) {
+	if mock.ListDeploymentEndpointCandidatesFunc == nil {
+		panic("ComponentClientMock.ListDeploymentEndpointCandidatesFunc: method is nil but ComponentClient.ListDeploymentEndpointCandidates was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+	}{
+		Ctx:           ctx,
+		OrgName:       orgName,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+	}
+	mock.lockListDeploymentEndpointCandidates.Lock()
+	mock.calls.ListDeploymentEndpointCandidates = append(mock.calls.ListDeploymentEndpointCandidates, callInfo)
+	mock.lockListDeploymentEndpointCandidates.Unlock()
+	return mock.ListDeploymentEndpointCandidatesFunc(ctx, orgName, projectName, componentName)
+}
+
+// ListDeploymentEndpointCandidatesCalls gets all the calls that were made to ListDeploymentEndpointCandidates.
+// Check the length with:
+//
+//	len(mockedComponentClient.ListDeploymentEndpointCandidatesCalls())
+func (mock *ComponentClientMock) ListDeploymentEndpointCandidatesCalls() []struct {
+	Ctx           context.Context
+	OrgName       string
+	ProjectName   string
+	ComponentName string
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+	}
+	mock.lockListDeploymentEndpointCandidates.RLock()
+	calls = mock.calls.ListDeploymentEndpointCandidates
+	mock.lockListDeploymentEndpointCandidates.RUnlock()
 	return calls
 }
 

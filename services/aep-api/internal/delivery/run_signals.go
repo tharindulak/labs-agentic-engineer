@@ -40,6 +40,14 @@ const (
 	// SigRunConflict — the cycle's pull request could not be merged and a
 	// conflict issue naming it was minted into the milestone.
 	SigRunConflict = "run-conflict"
+	// SigRunNoWork — the milestone's working set emptied while a cycle was in
+	// flight that had opened no pull request. The agent examined the work and
+	// closed it out rather than changing code (ADR-0020).
+	//
+	// A fact, like the rest, and the one the landing deadline cannot infer: an
+	// agent that finishes having decided nothing needs changing looks exactly
+	// like one that died, and the deadline calls it death.
+	SigRunNoWork = "run-no-work"
 	// SigRunCancel — a human abandoned the increment. It is the ONLY expiry the
 	// unbounded wait state has, and like every other signal here it is a WAKE-UP
 	// rather than evidence: the cancel surface stamps the request on the run row

@@ -54,6 +54,10 @@ type ComponentService interface {
 
 	// Deploy (read-only — autoDeploy on the Component drives the chain)
 	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*gen.DeploymentList, error)
+	// ListDeploymentEndpointCandidates returns every external URL the
+	// component's deployment advertises. Validation probes them instead of
+	// trusting the single preferred one, which is chosen for a human to click.
+	ListDeploymentEndpointCandidates(ctx context.Context, orgName, projectName, componentName string) ([]string, error)
 
 	// OpenAPI for the Test tab. Reads the spec from
 	// `specs/design/components/<name>/openapi.yaml`. The Test tab's
@@ -282,6 +286,10 @@ func (s *componentService) ListDeployments(ctx context.Context, orgName, project
 		return nil, err
 	}
 	return list, nil
+}
+
+func (s *componentService) ListDeploymentEndpointCandidates(ctx context.Context, orgName, projectName, componentName string) ([]string, error) {
+	return s.client.ListDeploymentEndpointCandidates(ctx, orgName, projectName, componentName)
 }
 
 func (s *componentService) TriggerBuild(ctx context.Context, orgName, projectName, componentName string) (*gen.WorkflowRun, error) {

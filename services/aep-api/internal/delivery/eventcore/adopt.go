@@ -55,10 +55,20 @@ type AdoptTarget struct {
 // The rules, in order:
 //
 //   - An issue that already has a milestone keeps it. The human put it there.
+//
 //   - A bare issue joins the milestone of the version it is an incident
 //     against: the deployed one, or — when nothing has been deployed yet — the
 //     spec build currently in flight. With neither, the caller gets
 //     delivery.ErrNoAdoptableMilestone rather than a guess.
+//
+//     This second rule is also RE-HOMING, which is what a reopened incident
+//     issue needs. Its milestone was assigned by adoption months ago, to a
+//     version that is no longer deployed and whose milestone is settled — so
+//     the recurrence path calls this with a bare target on purpose, and the
+//     issue is resolved into the current adoptable milestone rather than left
+//     in history. "The human put it there" is true of a milestone a human
+//     chose; it was never true of one adoption itself assigned (ADR-0018).
+//
 //   - If a run is already live on that milestone, no second run starts —
 //     that would put two agents on one branch. A run parked on that milestone is
 //     woken by the same webhook delivery that carried the arming label, not by
@@ -206,6 +216,59 @@ func (e *Events) AdoptOnCreate(
 			Issue:  issue,
 			Reason: "an open issue for the same dedupe key already exists and is already being worked",
 		}, nil
+	}
+
+	if issue.Suppressed {
+		// A coding agent already examined this exact signature and closed it as
+		// needing no code change. Dispatching another one asks the same question
+		// and pays another cycle for the same answer; the caller is told where
+		// the decision lives so it can say so rather than look ignored.
+		slog.InfoContext(ctx, "eventcore: create suppressed — this signature is already decided",
+			"project", projectID, "issue", issue.Number)
+		return &CreateAdoptResult{
+			Issue: issue,
+			Reason: fmt.Sprintf("a coding agent already decided issue #%d needs no code change; "+
+				"reopen it to have this worked again", issue.Number),
+		}, nil
+	}
+
+	if issue.Reopened {
+		// A recurrence: the create side appended the new evidence and reopened a
+		// CLOSED issue, so none of the create-time milestone and label work above
+		// reached GitHub. Adoption has to happen the after-the-fact way, and it
+		// is handed a BARE target deliberately — that is what re-homes the issue
+		// out of the settled milestone it was fixed in and into the version
+		// deployed now. AdoptIssue is reused rather than reimplemented so the
+		// recurrence route cannot drift from adoption's rules; in particular it
+		// ends in the same startOrWake, which is what keeps two agents off one
+		// branch.
+		//
+		// The ARMING is this path's own, and it has to be: AdoptIssue refuses to
+		// stamp `aep` because arming is the act of adoption and the write that
+		// reaches it is a human's. Nothing human happened here — the platform
+		// reopened this issue off a dedupe key — so if this path does not arm it,
+		// nothing does, and the recurrence lands in the milestone as a ledger
+		// entry no run will ever work. It is the same reasoning that puts `aep`
+		// on the create call above: on THIS path the platform is the adopter.
+		//
+		// Stamped BEFORE the re-home and the wake, so the run that is woken can
+		// already see the issue in its working set.
+		if e.p.Issues != nil {
+			if lerr := e.p.Issues.AddLabels(ctx, orgID, projectID, issue.Number,
+				[]string{delivery.LabelAgentWork}); lerr != nil {
+				slog.WarnContext(ctx, "eventcore: incident recurred but could not be re-armed",
+					"project", projectID, "issue", issue.Number, "error", lerr)
+				return &CreateAdoptResult{Issue: issue, Reason: lerr.Error()}, nil
+			}
+		}
+		if aerr := e.AdoptIssue(ctx, orgID, projectID, AdoptTarget{Number: issue.Number}); aerr != nil {
+			slog.WarnContext(ctx, "eventcore: incident recurred but could not be re-adopted",
+				"project", projectID, "issue", issue.Number, "error", aerr)
+			return &CreateAdoptResult{Issue: issue, Reason: aerr.Error()}, nil
+		}
+		slog.InfoContext(ctx, "eventcore: incident recurred — reopened issue re-homed and re-adopted",
+			"project", projectID, "issue", issue.Number, "attempt", issue.Recurrence)
+		return &CreateAdoptResult{Issue: issue, Adopted: true}, nil
 	}
 
 	// The issue is adopted from here on — it is in the milestone and carries the

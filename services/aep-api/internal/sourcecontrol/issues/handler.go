@@ -78,10 +78,13 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 		return nil, mapCreateError(err, "")
 	}
 	return gen.CreateIssue200JSONResponse(gen.IssueResult{
-		Number:  int64(issue.Number),
-		URL:     issue.URL,
-		NodeID:  issue.NodeID,
-		Deduped: issue.Deduped,
+		Number:     int64(issue.Number),
+		URL:        issue.URL,
+		NodeID:     issue.NodeID,
+		Deduped:    issue.Deduped,
+		Reopened:   issue.Reopened,
+		Suppressed: issue.Suppressed,
+		Recurrence: int64(issue.Recurrence),
 	}), nil
 }
 
@@ -101,6 +104,9 @@ func (h *Handler) createAdopted(
 		URL:           adoption.Issue.URL,
 		NodeID:        adoption.Issue.NodeID,
 		Deduped:       adoption.Issue.Deduped,
+		Reopened:      adoption.Issue.Reopened,
+		Suppressed:    adoption.Issue.Suppressed,
+		Recurrence:    int64(adoption.Issue.Recurrence),
 		Adopted:       adoption.Adopted,
 		AdoptionError: adoption.Reason,
 	}), nil

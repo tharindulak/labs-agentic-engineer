@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 
@@ -89,6 +90,10 @@ func (l validationCycleLocator) LookupCycleProject(ctx context.Context, orgHandl
 // endpoint resolver needs (satisfied structurally by *component.componentService).
 type componentDeployLister interface {
 	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*gen.DeploymentList, error)
+	// ListDeploymentEndpointCandidates returns every URL the component's
+	// deployment advertises. Validation probes them rather than trusting the
+	// single preferred one, which is chosen for a human to click.
+	ListDeploymentEndpointCandidates(ctx context.Context, orgName, projectName, componentName string) ([]string, error)
 }
 
 // validationEndpointResolver adapts the design read + ComponentService to
@@ -125,9 +130,19 @@ func (r validationEndpointResolver) ResolveEndpoints(ctx context.Context, orgHan
 			return nil, fmt.Errorf("list deployments for %s: %w", name, lerr)
 		}
 		// No resolved URL yet (empty list / no external endpoint) — skip.
-		if url := firstDeploymentURL(list); url != "" {
-			out = append(out, validation.ComponentEndpoint{Component: name, URL: url})
+		url := firstDeploymentURL(list)
+		if url == "" {
+			continue
 		}
+		// Every advertised URL, so the runner can probe rather than trust. A
+		// failure here is not fatal: the preferred URL still goes out on its own
+		// and the preflight behaves exactly as it did before.
+		candidates, cerr := r.comp.ListDeploymentEndpointCandidates(ctx, orgHandle, projectID, name)
+		if cerr != nil {
+			slog.WarnContext(ctx, "validation: could not list endpoint candidates — falling back to the preferred URL",
+				"component", name, "error", cerr)
+		}
+		out = append(out, validation.ComponentEndpoint{Component: name, URL: url, URLs: candidates})
 	}
 	return out, nil
 }

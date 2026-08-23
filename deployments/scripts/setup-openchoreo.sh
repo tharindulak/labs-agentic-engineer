@@ -111,9 +111,21 @@ echo ""
 # Data Plane
 # ============================================================================
 echo "2️⃣  Data Plane"
+# Unconditionally, and before the chart: the Gateway's https listener references
+# the Secret this issues, and kgateway leaves a listener whose certificateRef
+# does not resolve unprogrammed, so the port would never bind. Idempotent, and
+# run on every path because it also re-exports the CA — which a cluster rebuild
+# replaces and which is gitignored, so it is absent on a fresh checkout.
+create_gateway_tls_cert openchoreo-data-plane "${GATEWAY_CA_FILE}"
+
 # Only a `deployed` release counts as installed — a `failed`/`pending` release
-# falls through to re-drive `helm upgrade --install` (self-healing).
-if helm_release_deployed openchoreo-data-plane openchoreo-data-plane; then
+# falls through to re-drive `helm upgrade --install` (self-healing). The listener
+# check is the same idea applied to a values change: a cluster built before HTTPS
+# was enabled holds a `deployed` release whose Gateway has only the http
+# listener, and skipping on the release alone would leave every advertised
+# https endpoint dead with no way back short of a teardown.
+if helm_release_deployed openchoreo-data-plane openchoreo-data-plane \
+    && gateway_https_listener_present; then
     echo "⏭️  Already installed"
 else
     echo "📦 Installing OpenChoreo Data Plane..."
@@ -186,8 +198,13 @@ done
 # (default = http://localhost:8090) and every retry failed silently because
 # the patch call below masks stderr. Rely on the env-var here and let the
 # user override via PUBLIC_CONSOLE_URL in .env.
+# The https origin is listed alongside the http one because the data-plane
+# gateway serves BOTH (values-dp.yaml), and a deployed SPA reaching Thunder
+# carries the origin it was itself loaded from — so a user who opened the
+# console's https endpoint link would fail the /oauth2/* preflight on an
+# allowlist that only named http.
 CORS_PATCH=$(cat <<EOF
-[{"op":"replace","path":"/spec/rules/0/filters","value":[{"type":"CORS","cors":{"allowOrigins":["http://localhost:19080","http://*.openchoreoapis.localhost:19080","${PUBLIC_CONSOLE_URL}","${PUBLIC_THUNDER_URL}"],"allowMethods":["GET","POST","PUT","PATCH","DELETE","OPTIONS"],"allowHeaders":["Content-Type","Authorization","Accept","Origin"],"allowCredentials":true,"maxAge":3600}}]}]
+[{"op":"replace","path":"/spec/rules/0/filters","value":[{"type":"CORS","cors":{"allowOrigins":["http://localhost:19080","http://*.openchoreoapis.localhost:19080","https://*.openchoreoapis.localhost:19443","${PUBLIC_CONSOLE_URL}","${PUBLIC_THUNDER_URL}"],"allowMethods":["GET","POST","PUT","PATCH","DELETE","OPTIONS"],"allowHeaders":["Content-Type","Authorization","Accept","Origin"],"allowCredentials":true,"maxAge":3600}}]}]
 EOF
 )
 # Retry the patch + verify. On a fresh cluster the kgateway controller's

@@ -66,6 +66,16 @@ type RcaAgentReport struct {
 	// (false in issue-only/manual-dispatch mode until a human dispatches —
 	// console issue #155's "Coding Handover" stage).
 	Dispatched bool `gorm:"not null;default:false"`
+	// Recurrence: which attempt this incident is on — 1 for a first filing, 2 for
+	// the first recurrence, and so on. Above 1 it means a fix the platform
+	// already merged did not resolve this incident, so its issue was reopened
+	// rather than re-filed (ADR-0018). It is the report's whole record of the
+	// loop's own track record, and the only place a human triaging sees "this is
+	// the third try" without opening GitHub.
+	//
+	// 0 is "unknown", not "first": an SRE agent older than the field sends
+	// nothing, and claiming a first attempt on its behalf would be a guess.
+	Recurrence int `gorm:"not null;default:0"`
 	// Deployed: whether the resulting fix has been deployed — the "Verify Fix"
 	// threshold, not merely PR-merged.
 	Deployed   bool `gorm:"not null;default:false"`

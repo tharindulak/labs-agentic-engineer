@@ -258,7 +258,7 @@ func (e *Events) OnPullRequest(ctx context.Context, _, _ string, payload []byte)
 	if err != nil {
 		return err
 	}
-	decision := decideAutoMerge(refs, validates, work)
+	decision := decideAutoMerge(refs, validates, work, p.PullRequest.Body)
 	// The verdict is recorded for the AGENT's pull request whichever way it went:
 	// a declined merge is the loudest silence this loop has — the cycle sits at
 	// its landing deadline with a green agent log and nothing else to say.
@@ -292,6 +292,14 @@ func (e *Events) OnPullRequestClosed(ctx context.Context, _, _ string, payload [
 		return err
 	}
 	mergeSHA := p.PullRequest.MergeCommitSHA
+	// Before anything else reacts to the merge: an incident fix nobody vouched
+	// for must not leave its issues closed behind it. Runs first because the
+	// build fan-out below can take a while, and the window where the issue reads
+	// as "fixed and closed" should be as short as GitHub allows.
+	if unverifiedMerge(p.PullRequest.Body) {
+		e.keepUnverifiedIssuesOpen(ctx, owner.orgID, owner.projectID,
+			p.PullRequest.Number, parseResolvesRefs(p.PullRequest.Body))
+	}
 	// Only the agent's own pull request closes the cycle. A human's merge moves
 	// main (so it still rebuilds), but it is not the cycle's outcome.
 	if owner.agentBranch {
@@ -417,7 +425,70 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	if !ok {
 		return nil // an issue outside every milestone belongs to no run
 	}
-	return e.wakeIfWorkable(ctx, orgID, projectID, ms.Number)
+	// Two opposite readings of one predicate: work arriving wakes a parked run,
+	// work leaving ends a cycle that has nothing left to land.
+	if err := e.wakeIfWorkable(ctx, orgID, projectID, ms.Number); err != nil {
+		return err
+	}
+	return e.noteWorkExhausted(ctx, orgID, projectID, ms.Number)
+}
+
+// noteWorkExhausted tells a RUNNING cycle that its work is gone.
+//
+// It is wakeIfWorkable's mirror image, for the opposite state of the same
+// predicate: that one wakes a PARKED run when work arrives, this one ends a
+// cycle whose work left. Both exist because the dispatch predicate is the only
+// definition of "this milestone can be worked", and a run must not disagree with
+// it in either direction.
+//
+// The guard that matters is the pull request. A cycle that has opened one is
+// waiting for a merge, and a merge empties the working set too — signalling
+// there would race the landing it is about to get. So only a cycle holding NO
+// pull request can end this way, which is exactly the shape an agent leaves
+// behind when it closes the work out instead of changing code (ADR-0020).
+func (e *Events) noteWorkExhausted(ctx context.Context, orgID, projectID string, milestoneNumber int) error {
+	run, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestoneNumber)
+	if err != nil || run == nil || run.State != delivery.RunStateRunning {
+		return err
+	}
+	cycle := e.openCycle(ctx, run)
+	if cycle == nil || cycle.PRNumber != 0 {
+		return nil
+	}
+	// VALIDATION cycles are exempt, and the reason is the one label decision
+	// that keeps producing opposite consequences: the validation issue carries
+	// `aep:validation` and deliberately NOT `aep`, so it is excluded from the
+	// working set by design. An empty working set is therefore a validation
+	// cycle's NORMAL state, not evidence that its work was resolved — and
+	// reading it as evidence aborted validation 3.6 seconds after it started,
+	// twice, ending the run at `validation-unreported`.
+	//
+	// Only cycles whose work IS the working set can conclude anything from it
+	// being empty.
+	if cycle.Kind == delivery.CycleKindValidation {
+		return nil
+	}
+	counts, err := e.p.Issues.MilestoneIssueCounts(ctx, orgID, projectID, milestoneNumber)
+	if err != nil {
+		return err
+	}
+	// The working set is the RUN's, and which population that is depends on the
+	// run's species — the same mapping delivery.InWorkingSet makes from labels,
+	// read here off the host's counts. A task run works the deployed version, so
+	// planned work for the version being built is not its business; counting it
+	// would have this run conclude its work remained when what remained was
+	// somebody else's.
+	work := counts.OpenDevWork()
+	if run.Kind == delivery.RunKindTask {
+		work = counts.OpenTaskWork()
+	}
+	if work > 0 {
+		return nil
+	}
+	slog.InfoContext(ctx, "eventcore: the cycle's working set emptied with no pull request",
+		"run", run.ID, "milestone", milestoneNumber, "cycle", cycle.ID)
+	e.signal(ctx, run, delivery.SigRunNoWork, delivery.RunSignal{})
+	return nil
 }
 
 // wakeIfWorkable signals the run parked on a milestone that its working set is

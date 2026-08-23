@@ -253,12 +253,14 @@ metadata — an incident-born Task needing a code fix is still `coding`. Distinc
 a skill's **Origin**, which describes where its tracked baseline came from.
 _Avoid_: source (collides with source spec/design version lineage).
 
-**Machine block**:
-The versioned, machine-readable document embedded invisibly in a Task's issue body
-— the authoritative encoding of its structured facts (component, dependsOn as
-component names, lineage, origin, idempotency key). Validated reactively, repaired
-when mangled, and re-verified against the design at the moment of use.
-_Avoid_: front-matter (a spec-file concept), metadata comment.
+**Machine block** — _retired_:
+Formerly a versioned, machine-readable document embedded invisibly in a Task's
+issue body, encoding its structured facts. Nothing parses an issue body for
+structure any more: **a Task body is prose**, and the platform's whole structure
+is labels plus milestone membership. The one deliberate exception is the
+**Recurrence section**, which the platform both writes and counts — see below,
+and see the caveat recorded in ADR-0018.
+_Avoid_: reviving a body block as platform-readable structure.
 
 **Lineage**:
 The spec and design versions a Task was planned from. The idempotency baseline for
@@ -295,6 +297,99 @@ A short-lived MCP token minted for a human driving the playground locally,
 via an endpoint that exists only when explicitly enabled in a local deployment.
 Scoped to one org; minted fresh per turn. Never part of the production
 authentication story (which remains an open decision).
+
+## Incident recurrence (`services/aep-api`, SRE handoff)
+
+**Recurrence**:
+The same incident happening again after the platform believed it had fixed it —
+recognised deterministically, by an alert whose dedupe fingerprint matches an
+issue that is *closed as completed* and carries the `sre-agent` label. A
+recurrence is the platform learning that a fix it merged did not work, so it
+**reopens that issue** rather than filing a new one: one incident, one thread,
+however many attempts it takes. Not bounded by time — an incident that resurfaces
+a year later is still that incident. A human's `not_planned` close is never a
+recurrence candidate; the platform does not overrule a human who said no.
+_Avoid_: duplicate, regression (a regression is new behaviour; a recurrence is
+the old behaviour never actually having gone away), retry (nothing is retried —
+the work is redone from new evidence).
+
+**Recurrence section**:
+The `## Recurrence <n>` block the platform appends to a reopened issue's body,
+carrying the new evidence and the plain statement that a merged fix for this
+issue already failed. Written by the platform, never by an agent, which is why
+the "your last fix did not work" instruction cannot be lost to skill drift. Its
+count is also *n* — the attempt number.
+_Avoid_: comment (the findings deliberately live in the body, which the coding
+agent is guaranteed to read in full), machine block (this is prose for an agent,
+not an encoding).
+
+**Re-home**:
+Moving a reopened issue out of the settled milestone it was fixed in and into the
+currently adoptable one, before it is adopted again. A fix has to land in the
+version that is actually deployed; the milestone the issue was first worked in is
+history by the time it recurs. Re-home is what distinguishes reopening from
+ordinary **Adoption**, whose rule is that an issue with a milestone keeps it —
+true of a milestone a human chose, false of one adoption itself assigned.
+_Avoid_: re-adopt (adoption is what *follows* the re-home), move (says nothing
+about why).
+
+**Escalation**:
+What the platform does once an incident has recurred past its threshold: it says
+so, loudly and visibly, and keeps working. Never a brake — no attempt is ever
+refused, no issue is ever abandoned. Escalation is a claim about **attention**,
+not about permission.
+_Avoid_: ceiling, budget (both name a limit the platform enforces; this one it
+only reports), giving up.
+
+**Confidence declaration**:
+The coding agent's own statement, in its pull request body, of whether it
+believes its incident fix is right. It does not decide whether the fix merges —
+everything merges — only whether the issue behind it CLOSES. High is earned
+against a stated evidence bar and requires all of it; anything short is low, and
+unsure is low, and a missing line reads as low because an agent that said nothing
+has told us nothing. It is a *declaration*, not a score or a measurement.
+_Avoid_: confidence score, certainty (nothing is quantified), review verdict (no
+second party judges), gate (it stopped being one — see **Merge hold**).
+
+**No-change verdict**:
+A coding agent's conclusion that no code change can resolve an incident —
+recorded by closing its issue as `not_planned`, with the reasoning as a comment.
+Usually reached because the behaviour being reported is what the acceptance
+criteria REQUIRE, so changing it would break the version's own validation. It is
+a finding, not a failure and not a refusal: the work was examined, and the answer
+is that the code is not where the problem lives. It ends the cycle and it stands
+until a human reopens the issue.
+_Avoid_: wontfix (says nothing about who decided or on what evidence), skipped,
+gave up, declined (that is the handoff's word for not filing at all).
+
+**Suppression**:
+The handoff filing nothing because a **No-change verdict** already answers this
+incident's signature. The alert is still fully recorded in the RCA report; what
+stops is the issue and the coding cycle behind it. Reopening the issue ends the
+suppression — there is no separate switch.
+_Avoid_: muting, ignoring, dedupe (dedupe folds onto work that is LIVE; this
+points at a question already answered).
+
+**Unverified fix**:
+A merged incident fix whose author did not vouch for it. It ships like any other
+fix, and its issue is left **open** behind it — reopened by the platform and
+stripped of its agent-work label, so it sits on the version's record, visible to
+a human, worked by nobody. It is the answer to "the fix is in, but is the
+incident over?", which nothing at merge time can know. A human closes it when
+satisfied; a recurrence continues that same thread; supersede closes it if the
+version moves on first.
+_Avoid_: unmerged, blocked, pending (nothing is waiting — the code shipped),
+failed fix (nobody knows that yet, and usually it worked).
+
+**Merge hold** — _retired_:
+Formerly the merge policy refusing to merge an incident fix until a human acted.
+It could not survive a real repository: the confidence bar it read requires a
+regression test, and a project with no test harness cannot ever satisfy that — so
+it held every fix, discriminated between none of them, and parked the run each
+time. Replaced by the **Unverified fix**, which moves the safety from a human in
+front of the merge to an open issue behind it (ADR-0019).
+_Avoid_: reviving a gate whose criteria a project can be structurally unable to
+meet.
 
 ## Project overview
 

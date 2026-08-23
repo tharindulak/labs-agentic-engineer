@@ -228,21 +228,47 @@ func clampWork(n int) int {
 // that no issue was created because an open issue with the same DedupeKey
 // already existed — Number/URL then refer to that existing issue (NodeID may
 // be empty in that case; the list API doesn't return it).
+//
+// Deduped and Reopened are the two ways creation lands on an issue that already
+// exists, and they mean OPPOSITE things to a caller. Deduped: an open issue was
+// already being worked, and nothing was written. Reopened: a CLOSED issue was
+// the same incident recurring, so it was appended to, reopened and handed back
+// to the coding agent — the most this call ever does. Collapsing them would
+// show a human "nothing to do here" at the moment most was done (ADR-0018).
 type IssueResult struct {
 	Number  int    `json:"number"`
 	URL     string `json:"url"`
 	NodeID  string `json:"nodeId"`
 	Deduped bool   `json:"deduped,omitempty"`
+	// Reopened reports that this create was a RECURRENCE: the dedupe key matched
+	// an issue closed as completed, so the platform's earlier fix did not work.
+	Reopened bool `json:"reopened,omitempty"`
+	// Suppressed reports that nothing was filed because a coding agent already
+	// examined this exact signature and closed it as needing no code change.
+	// Number/URL point at that decided issue. Distinct from Deduped, which means
+	// the work is live and owned by a run: this means the question has an answer.
+	Suppressed bool `json:"suppressed,omitempty"`
+	// Recurrence is which attempt this is — 1 on a first filing, 2 on the first
+	// recurrence, and so on. Escalation is decided from it and the console
+	// renders it, so it is a number the platform stamps rather than one a reader
+	// infers.
+	Recurrence int `json:"recurrence,omitempty"`
 }
 
 // IssueInfo represents an issue returned when listing.
+//
+// StateReason is GitHub's own `state_reason` on a closed issue: "completed"
+// (it was done) or "not_planned" (somebody decided against it). The recurrence
+// predicate reads it to keep one promise — the platform never overrules a human
+// who closed an issue as not planned.
 type IssueInfo struct {
-	Number int
-	Title  string
-	Body   string
-	URL    string
-	State  string
-	Labels []string
+	Number      int
+	Title       string
+	Body        string
+	URL         string
+	State       string
+	StateReason string
+	Labels      []string
 }
 
 // CompareResult is the per-file change summary between two refs the lineage

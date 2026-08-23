@@ -17,6 +17,7 @@
 package eventcore
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -45,6 +46,11 @@ type mergeDecision struct {
 	// deliberately NON-closing reference. Kept apart from Matched for the reason
 	// above; it admits the merge without claiming the issue was finished by it.
 	Validated []int
+	// Unverified: this is an incident fix whose author did not vouch for it, so
+	// it merges like any other pull request but its issues must NOT be left
+	// closed behind it. Nothing is held on it — the safety is the issue staying
+	// open afterwards, not a human standing in front of the merge (ADR-0019).
+	Unverified bool
 }
 
 // decideAutoMerge IS the merge policy: a pull request that REFERENCES at least
@@ -94,7 +100,13 @@ type mergeDecision struct {
 // logic (approvals, checks, a human gate) arrives later BEHIND this function —
 // it is one named decision over facts precisely so that swapping it is a local
 // change with a local test, not a rewrite of the handler.
-func decideAutoMerge(resolves, validates []int, milestoneIssues []sourcecontrol.IssueInfo) mergeDecision {
+//
+// One such rule now reads INCIDENT work, and it changes what a merge MEANS
+// rather than whether it happens: a fix the coding agent did not declare
+// high-confidence still merges, but its issues are left open behind it as
+// unverified. Holding the merge instead was tried and withdrawn — see the
+// confidence rule below and ADR-0019.
+func decideAutoMerge(resolves, validates []int, milestoneIssues []sourcecontrol.IssueInfo, body string) mergeDecision {
 	if len(resolves) == 0 && len(validates) == 0 {
 		return mergeDecision{Reason: "pull request references no issue"}
 	}
@@ -130,12 +142,70 @@ func decideAutoMerge(resolves, validates []int, milestoneIssues []sourcecontrol.
 			Validated: validated,
 		}
 	}
+	// The confidence rule sits AFTER the validation-only return above on purpose:
+	// a validation cycle judges the version, it never fixes an incident, so there
+	// is nothing for it to be unverified about.
+	if incident(matched, milestoneIssues) && !declaresHighConfidence(body) {
+		return mergeDecision{
+			Merge:      true,
+			Unverified: true,
+			Matched:    matched,
+			Validated:  validated,
+			Reason: "merged, but the fix is not declared high-confidence — its issues stay " +
+				"open as unverified (add `" + confidenceLine + " high` to close them on merge)",
+		}
+	}
 	return mergeDecision{
 		Merge:     true,
 		Reason:    "resolves this run's work in its milestone",
 		Matched:   matched,
 		Validated: validated,
 	}
+}
+
+// The confidence rule. It decides whether a merged incident fix CLOSES the issue
+// behind it, and nothing else — see ADR-0019 for why the human gate this
+// replaces could not survive a real repository.
+//
+// Two properties matter more than the parsing:
+//
+//   - It is scoped to incident work. A pull request that resolves no
+//     `sre-agent` issue is decided exactly as before, so nothing about the
+//     spec-build loop changes.
+//   - Within that scope, only an explicit `high` closes. Missing, misspelled and
+//     unparseable all leave the issue open, which is the safe direction: an
+//     agent that forgot the line its skill mandates has told us nothing about
+//     its fix, and an open issue costs a human a glance where a wrongly closed
+//     one costs them the incident.
+const confidenceLine = "Confidence:"
+
+// confidenceRE matches the declaration anywhere in the pull request body, on a
+// line of its own, in the same spirit as the resolves parser: what the agent
+// writes is prose with one machine-read line in it, not a form.
+var confidenceRE = regexp.MustCompile(`(?im)^[ 	>*_-]*confidence[ 	]*:[ 	]*\*{0,2}(high|low)\*{0,2}[ 	.]*$`)
+
+// declaresHighConfidence reports whether the pull request body claims the fix is
+// right. Anything that is not an explicit, parseable "high" is not.
+func declaresHighConfidence(body string) bool {
+	m := confidenceRE.FindStringSubmatch(body)
+	return m != nil && strings.EqualFold(m[1], "high")
+}
+
+// incident reports whether any issue this pull request resolves is incident
+// work — an issue the SRE/RCA handoff filed. That label is stamped by the
+// handoff in code rather than chosen by a model, which is what makes it safe to
+// route a merge decision on.
+func incident(matched []int, milestoneIssues []sourcecontrol.IssueInfo) bool {
+	want := make(map[int]bool, len(matched))
+	for _, n := range matched {
+		want[n] = true
+	}
+	for _, iss := range milestoneIssues {
+		if want[iss.Number] && delivery.HasLabel(iss.Labels, sourcecontrol.LabelSREAgent) {
+			return true
+		}
+	}
+	return false
 }
 
 // The path diff itself is delivery.DiffComponents in the domain root: the run

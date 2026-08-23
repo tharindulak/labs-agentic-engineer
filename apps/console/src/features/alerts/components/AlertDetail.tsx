@@ -88,6 +88,30 @@ function AlertReceivedContent({ report }: { report: RcaAgentReport }) {
   );
 }
 
+// The escalation threshold: from this attempt on, the platform has failed to
+// resolve the incident three times and is still working it. It never stops
+// trying (ADR-0018) — this is the visibility half of that decision, and the only
+// place a human sees it without opening GitHub.
+const ESCALATION_ATTEMPT = 4;
+
+// A recurrence means a fix the platform already merged did not work, and the
+// issue was reopened rather than re-filed. That reads very differently from a
+// new bug, so it is called out rather than left to be inferred from an issue
+// number a reader would have to open GitHub to interpret.
+function RecurrenceNotice({ recurrence }: { recurrence: number }) {
+  if (recurrence < 2) return null;
+  const escalated = recurrence >= ESCALATION_ATTEMPT;
+  return (
+    <Alert severity={escalated ? "warning" : "info"}>
+      {escalated
+        ? `Attempt ${recurrence}. This incident has come back after ${recurrence - 1} merged fixes;
+           the platform is still working it, but it is worth deciding whether this is a code fault at all.`
+        : `Attempt ${recurrence}. This incident recurred after a fix was merged, so its
+           original issue was reopened with the new evidence rather than filed again.`}
+    </Alert>
+  );
+}
+
 function IssueCreatedContent({ report }: { report: RcaAgentReport }) {
   if (!report.issueNumber) {
     return (
@@ -101,6 +125,7 @@ function IssueCreatedContent({ report }: { report: RcaAgentReport }) {
   }
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <RecurrenceNotice recurrence={report.recurrence ?? 0} />
       <Typography variant="subtitle2">{report.issueTitle}</Typography>
       <Typography variant="body2" color="text.secondary">
         {report.issueExcerpt}

@@ -4,9 +4,13 @@ Wire an OpenChoreo alert → AI RCA → GitHub issue → coding-agent PR, end to
 
 ```
 ERROR log → alert rule → observer → ai-rca-agent (RCA → remediation → handoff)
-  → aep-mcp-server → aep-api → GitHub issue → coding-agent Job → PR (human merges)
-  → webhook → build → deploy
+  → aep-mcp-server → aep-api → GitHub issue (filed already adopted)
+  → coding-agent Job → PR → platform merges → build → deploy
 ```
+
+**What to run it against**: [`sre-demo-scenarios.md`](./sre-demo-scenarios.md) —
+six requirement sets that produce a real defect for the loop to find, and the one
+rule that decides whether the handoff will act on it at all.
 
 > Moved here from the root `README.md`, which linked to this path but never carried
 > the file. The image tags below are pinned to a personal registry and are the values
@@ -38,13 +42,15 @@ docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
 ```bash
 # Deploy an RCA-agent image that includes the handoff stage.
 # Use the same repo:tag as RCA_IMAGE_REPO:RCA_IMAGE_TAG in
-# scripts/setup-observability.sh — tharindulak/sre-agent:hand0ff-new — so a later
+# scripts/setup-observability.sh — tharindulak/sre-agent:recurrence — so a later
 # setup-observability.sh re-run picks up this local build instead of pulling.
+# (That script falls back to :hand0ff-new and then :anthropic-patched when the
+# preferred tag is neither built nor pullable, and says so loudly.)
 cd <openchoreo-repo>/agents/sre-agent
-docker build -t tharindulak/sre-agent:hand0ff-new .
-k3d image import tharindulak/sre-agent:hand0ff-new -c <cluster>
+docker build -t tharindulak/sre-agent:recurrence .
+k3d image import tharindulak/sre-agent:recurrence -c <cluster>
 kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
-  "*=tharindulak/sre-agent:hand0ff-new"
+  "*=tharindulak/sre-agent:recurrence"
 
 # Enable the handoff (AE_AUTO_DISPATCH=false → issue-only; a human adopts it later)
 kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \
@@ -80,4 +86,68 @@ Then confirm the artifacts: the GitHub issue (carrying the arming label `aep`
 and joined to the deployed version's milestone), the `milestone_runs` row for the
 incident run adoption started, and the coding-agent PR ("Closes #N"). The platform
 merges that PR itself once it resolves the run's milestone work, then builds and
-deploys the fix.
+deploys the fix — **unless the fix was not declared high-confidence**, in which
+case it waits for a human (below).
+
+## When the same incident comes back
+
+A merged fix closes the issue, which is the platform ASSERTING the incident is
+over. When the same error signature recurs, that assertion was wrong, and the
+platform retracts it rather than starting a fresh thread (ADR-0018).
+
+What you will see instead of a new issue:
+
+- The original issue **reopened**, with a `## Recurrence <n>` section appended
+  carrying the new evidence — so one incident keeps one thread however many
+  attempts it takes.
+- It **re-homed**: moved out of the settled milestone it was fixed in and into
+  the version deployed now, then made agent work again and given a run.
+- `reopened: true` and `recurrence: <n>` on the RCA report, which the console's
+  alert detail renders as "Attempt n". From attempt 4 it is **escalated** — said
+  loudly, on the issue and in the console. Escalation never stops the platform
+  working the incident; it asks for a human's attention, not their permission.
+
+Two things never recur: an issue a human closed as **not planned** (the platform
+does not overrule that — a fresh issue is filed instead), and one that is not
+SRE-filed work. There is no time limit; a signature that resurfaces months later
+still reopens its own thread.
+
+## When a fix is not vouched for
+
+A pull request resolving an `sre-agent` issue always merges. What its
+`Confidence:` line decides is whether the ISSUE closes behind it:
+
+- `Confidence: high` → the issue closes on merge, as normal.
+- `low`, missing or unparseable → the platform reopens the issue, removes `aep`,
+  and comments why. That is an **unverified fix**: shipped and recorded, open for
+  a human to see, in no run's working set. The run settles and the build proceeds
+  — nothing is waiting on you.
+
+What to do with one: if the fix looks right, close the issue. If the incident
+recurs, the platform continues that same thread — new evidence appended, the
+coding agent put back on it — without you doing anything. If the version moves on
+first, supersede closes it.
+
+Spec-build pull requests are outside this entirely.
+
+## When the incident cannot be fixed in code
+
+Sometimes the reported behaviour is what `specs/` REQUIRES — a demo specified to
+time out keeps timing out. The coding agent reads the acceptance criteria, and
+when no change can help it closes the issue as **not planned** with its
+reasoning.
+
+- The **cycle ends** there. No pull request, no two-hour wait, and the run
+  settles normally rather than failing with `redispatch-budget`.
+- The next alert with the same signature is **suppressed**: nothing filed,
+  nothing dispatched, and the RCA report says which issue holds the decision.
+- **Disagree?** Reopen the issue. It becomes agent work again and the next alert
+  behaves exactly as normal.
+
+If you see an incident recur with no issue filed, look for a closed `not_planned`
+issue carrying the same `dedupe:` label — that is the platform pointing at an
+answer somebody already gave. See ADR-0020.
+
+Holding the merge for a human was the earlier design and is **retired**: in a
+project with no test harness the confidence bar can never be met, so it held
+every fix and parked every build. See ADR-0019.

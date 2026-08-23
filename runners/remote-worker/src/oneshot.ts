@@ -44,6 +44,7 @@ import { listMirroredSkills, readSkillBodies, resolvePinnedSkills } from "./lib/
 import { ClientCredentialsTokenProvider } from "./lib/oauth.js";
 import {
   fetchValidationContext,
+  rewriteEndpointUrls,
   VALIDATION_CONTEXT_FILE,
 } from "./lib/validation_context.js";
 import type { ComponentEndpoint } from "./lib/validation_context.js";
@@ -286,7 +287,22 @@ async function main(): Promise<number> {
       console.error(`[oneshot] deployed endpoint(s) did not answer — not starting the agent: ${detail}`);
       return 2;
     }
-    console.log(`[oneshot] ${endpoints.length} deployed endpoint(s) answered`);
+    // The preflight adopted whichever advertised URL answered, so the context
+    // file — written before the probe, from the platform's payload — must be
+    // brought in line. Best-effort: the agent also receives the endpoints
+    // in-process, and failing the run over a cosmetic rewrite would trade a
+    // working validation for none.
+    try {
+      await rewriteEndpointUrls(endpoints);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[oneshot] could not update the validation context with the answering URLs: ${msg}`);
+    }
+    console.log(
+      `[oneshot] ${endpoints.length} deployed endpoint(s) answered: ${endpoints
+        .map((e) => `${e.component} → ${e.url}`)
+        .join(", ")}`,
+    );
   } else {
     const pinned = await resolveTaskSkills({
       workspace: layout.workspace,

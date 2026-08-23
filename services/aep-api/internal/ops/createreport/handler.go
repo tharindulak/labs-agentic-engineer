@@ -103,6 +103,7 @@ func toDomain(org string, in *gen.CreateRcaAgentReportRequest) (*ops.RcaAgentRep
 		IssueTitle:     in.IssueTitle,
 		IssueExcerpt:   in.IssueExcerpt,
 		Dispatched:     in.Dispatched,
+		Recurrence:     int(in.Recurrence),
 		Deployed:       in.Deployed,
 		DeployedAt:     in.DeployedAt,
 	}, nil

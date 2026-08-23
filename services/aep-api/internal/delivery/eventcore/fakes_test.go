@@ -207,7 +207,13 @@ func (f *fakeCycles) FinishCycle(_ context.Context, id, mergeSHA string) error {
 // ---- issues ---------------------------------------------------------------
 
 type fakeIssues struct {
-	mu sync.Mutex
+	byNumber map[int]sourcecontrol.IssueInfo
+	comments map[int][]string
+	// writes records issue mutations IN ORDER — the order is the contract.
+	writes []string
+	// reopenAs, when set, makes CreateIssue answer as the recurrence path does.
+	reopenAs *sourcecontrol.IssueResult
+	mu       sync.Mutex
 	// byMilestone is the milestone's open issues, keyed by milestone number.
 	byMilestone map[int][]sourcecontrol.IssueInfo
 	counts      map[int]*sourcecontrol.MilestoneIssueCounts
@@ -246,17 +252,31 @@ func (f *fakeIssues) CloseIssue(_ context.Context, _, _ string, number int, comm
 	return nil
 }
 
+// The unverified-merge surface starts here: read one issue, take a label off it,
+// reopen it, and say why. These writes carry real state on top of the call
+// recording, because their ORDER is a correctness property — the label must come
+// off BEFORE the reopen, or a run at a cycle boundary sees open agent work that
+// is already merged. `writes` is that ordered record; the per-write slices stay
+// exactly as they were, so tests that only ask "did anything write?" are
+// unaffected.
 func (f *fakeIssues) ReopenIssue(_ context.Context, _, _ string, number int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reopened = append(f.reopened, number)
+	f.writes = append(f.writes, fmt.Sprintf("reopen:%d", number))
+	if iss, ok := f.byNumber[number]; ok {
+		iss.State = "open"
+		f.byNumber[number] = iss
+	}
 	return nil
 }
 
-func (f *fakeIssues) CommentIssue(_ context.Context, _, _ string, number int, _ string) error {
+func (f *fakeIssues) CommentIssue(_ context.Context, _, _ string, number int, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.commented = append(f.commented, number)
+	f.writes = append(f.writes, fmt.Sprintf("comment:%d", number))
+	f.comments[number] = append(f.comments[number], body)
 	return nil
 }
 
@@ -269,6 +289,10 @@ func (f *fakeIssues) AddLabels(_ context.Context, _, _ string, number int, label
 	for _, l := range labels {
 		f.labelled = append(f.labelled, fmt.Sprintf("%d+%s", number, l))
 	}
+	if iss, ok := f.byNumber[number]; ok {
+		iss.Labels = append(iss.Labels, labels...)
+		f.byNumber[number] = iss
+	}
 	return nil
 }
 
@@ -276,7 +300,55 @@ func (f *fakeIssues) RemoveLabel(_ context.Context, _, _ string, number int, lab
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.labelled = append(f.labelled, fmt.Sprintf("%d-%s", number, label))
+	f.writes = append(f.writes, fmt.Sprintf("unlabel:%d:%s", number, label))
+	iss, ok := f.byNumber[number]
+	if !ok {
+		return nil
+	}
+	kept := make([]string, 0, len(iss.Labels))
+	for _, l := range iss.Labels {
+		if !strings.EqualFold(l, label) {
+			kept = append(kept, l)
+		}
+	}
+	iss.Labels = kept
+	f.byNumber[number] = iss
 	return nil
+}
+
+func (f *fakeIssues) GetIssue(_ context.Context, _, _ string, number int) (*sourcecontrol.IssueInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	iss, ok := f.byNumber[number]
+	if !ok {
+		return nil, sourcecontrol.ErrIssueNotFound
+	}
+	out := iss
+	return &out, nil
+}
+
+// withIssueState seeds one issue the unverified path reads back by NUMBER, with
+// an explicit state. Distinct from withIssue above, which populates a
+// MILESTONE and re-derives its counts: this path never lists a milestone, it
+// fetches the one issue a merged pull request named.
+func (f *fakeIssues) withIssueState(number int, state string, labels ...string) *fakeIssues {
+	f.byNumber[number] = sourcecontrol.IssueInfo{Number: number, State: state, Labels: labels}
+	return f
+}
+
+// labelsOn reports the labels STAMPED on one issue after the fact, read out of
+// the same "%d+%s" record every other label assertion in this file uses.
+func (f *fakeIssues) labelsOn(number int) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	prefix := fmt.Sprintf("%d+", number)
+	var out []string
+	for _, l := range f.labelled {
+		if strings.HasPrefix(l, prefix) {
+			out = append(out, strings.TrimPrefix(l, prefix))
+		}
+	}
+	return out
 }
 
 func newFakeIssues() *fakeIssues {
@@ -284,6 +356,8 @@ func newFakeIssues() *fakeIssues {
 		byMilestone:   map[int][]sourcecontrol.IssueInfo{},
 		counts:        map[int]*sourcecontrol.MilestoneIssueCounts{},
 		closeComments: map[int]string{},
+		byNumber:      map[int]sourcecontrol.IssueInfo{},
+		comments:      map[int][]string{},
 		next:          100,
 	}
 }
@@ -425,6 +499,13 @@ func hostCounts(issues ...[]string) *sourcecontrol.MilestoneIssueCounts {
 func (f *fakeIssues) CreateIssue(_ context.Context, _, _ string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Scripted recurrence: the real create path answers a recurrence by
+	// reopening a CLOSED issue and writing nothing else, so a fake that only
+	// ever creates could not exercise the adoption side of it.
+	if f.reopenAs != nil {
+		out := *f.reopenAs
+		return &out, nil
+	}
 	if req.DedupeKey != "" {
 		for i, prior := range f.created {
 			if prior.DedupeKey == req.DedupeKey {

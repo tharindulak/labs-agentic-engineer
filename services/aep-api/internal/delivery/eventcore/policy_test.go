@@ -125,7 +125,10 @@ func TestDecideAutoMerge(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := decideAutoMerge(c.resolves, c.validates, work)
+			// No incident issue among the work, so the confidence gate is not
+			// engaged and the body is irrelevant — which is itself the property
+			// TestDecideAutoMerge_ConfidenceGate pins from the other side.
+			got := decideAutoMerge(c.resolves, c.validates, work, "")
 			if got.Merge != c.want {
 				t.Fatalf("Merge = %v (%s), want %v", got.Merge, got.Reason, c.want)
 			}
@@ -336,5 +339,76 @@ func TestBudgetIsOnePerComponentPerSHA(t *testing.T) {
 	attempt, err = h.events.ensureBuildRun(ctx, testOrg, testProject, "order-service", "feedfacefeed0", staged("org-git-secret"), mergeBuildLimit)
 	if err != nil || attempt != 1 {
 		t.Fatalf("a new merge SHA gets its own attempt 1, got (%d, %v)", attempt, err)
+	}
+}
+
+// The confidence RULE. It no longer decides whether an incident fix merges —
+// everything merges — only whether the issue behind it closes (ADR-0019).
+func TestDecideAutoMerge_ConfidenceRule(t *testing.T) {
+	incidentWork := []sourcecontrol.IssueInfo{
+		{Number: 40, State: "open", Labels: []string{delivery.LabelAgentWork, sourcecontrol.LabelSREAgent}},
+	}
+	ordinaryWork := []sourcecontrol.IssueInfo{
+		{Number: 12, State: "open", Labels: []string{delivery.LabelAgentWork}},
+	}
+	cases := []struct {
+		name       string
+		work       []sourcecontrol.IssueInfo
+		resolves   []int
+		body       string
+		merge      bool
+		unverified bool
+	}{
+		{"a high-confidence incident fix merges and closes", incidentWork, []int{40},
+			"Resolves #40\n\nConfidence: high\n", true, false},
+		// The change from the withdrawn gate: this used to hold.
+		{"a low-confidence incident fix merges, unverified", incidentWork, []int{40},
+			"Resolves #40\n\nConfidence: low\n", true, true},
+		{"a missing declaration merges, unverified", incidentWork, []int{40}, "Resolves #40\n", true, true},
+		{"an unparseable declaration merges, unverified", incidentWork, []int{40},
+			"Resolves #40\n\nConfidence: fairly sure\n", true, true},
+		// Ordinary work never carries the concept at all.
+		{"ordinary work merges and is never unverified", ordinaryWork, []int{12}, "Resolves #12\n", true, false},
+		{"ordinary work ignores a low declaration", ordinaryWork, []int{12},
+			"Resolves #12\n\nConfidence: low\n", true, false},
+		// Still not this run's work: no merge, and nothing to keep open.
+		{"a claim outside the milestone still decides nothing", incidentWork, []int{99},
+			"Resolves #99\n\nConfidence: low\n", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// No `Validates #N` anywhere in this table: the confidence rule is
+			// about a CODING cycle's fix, and a validation cycle never has one.
+			got := decideAutoMerge(c.resolves, nil, c.work, c.body)
+			if got.Merge != c.merge || got.Unverified != c.unverified {
+				t.Fatalf("Merge=%v Unverified=%v (%s), want Merge=%v Unverified=%v",
+					got.Merge, got.Unverified, got.Reason, c.merge, c.unverified)
+			}
+		})
+	}
+}
+
+func TestDeclaresHighConfidence(t *testing.T) {
+	cases := []struct {
+		body string
+		want bool
+	}{
+		{"Confidence: high", true},
+		{"blah\n\nconfidence:high\n\nmore", true},
+		{"Confidence:  **high**", true},
+		{"- Confidence: high", true},
+		{"> Confidence: high", true},
+		{"Confidence: low", false},
+		{"", false},
+		{"I am highly confident about this fix", false},
+		// Not a declaration: the word appearing inside a sentence must not be
+		// read as one, or prose could merge a fix nobody vouched for.
+		{"My confidence: high, because the tests pass", false},
+		{"Confidence: high-ish", false},
+	}
+	for _, c := range cases {
+		if got := declaresHighConfidence(c.body); got != c.want {
+			t.Errorf("declaresHighConfidence(%q) = %v, want %v", c.body, got, c.want)
+		}
 	}
 }

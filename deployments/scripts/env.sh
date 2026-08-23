@@ -24,3 +24,12 @@ THUNDER_VERSION="0.34.0"
 CNPG_VERSION="0.29.0"
 CLUSTER_NAME="openchoreo"
 CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"
+
+# Where the data-plane gateway's CA certificate is exported for clients on the
+# host. Deployed endpoints are advertised over https (`register_data_plane`), and
+# the serving cert is issued by an in-cluster CA that nothing on the host has any
+# reason to trust — so `curl --cacert "$GATEWAY_CA_FILE" <endpoint>` is the
+# verifying call, and this path is what the developer guide points at. Gitignored
+# and rewritten on every setup run: a cluster rebuild mints a new CA, and a stale
+# file fails verification indistinguishably from an untrusted one.
+GATEWAY_CA_FILE="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../.local/openchoreoapis-ca.crt"

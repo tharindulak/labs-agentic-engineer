@@ -35,10 +35,66 @@ import { fetchWith401Retry, staticTokenSource, type AccessTokenSource } from "./
 // Outside the work tree either way, so it can never be committed.
 export const VALIDATION_CONTEXT_FILE = "/tmp/validation-context.json";
 
+/**
+ * Rewrite the context file's endpoint URLs to the ones that actually answered.
+ *
+ * The file is written verbatim from the platform's payload, because the skill's
+ * contract is that payload and a field this runner does not model must still
+ * reach it. So this PATCHES the parsed object in place — one string per endpoint
+ * — rather than re-serialising from ComponentEndpoint, which would silently drop
+ * anything the runner has no field for.
+ *
+ * It exists because the preflight is the only step that knows which advertised
+ * URL responds, and it runs AFTER the file is written. Leaving the file alone
+ * would hand the agent a URL the platform preferred and the runner had already
+ * proved dead — the exact "handed a URL it cannot dial" state the preflight was
+ * added to prevent.
+ */
+export async function rewriteEndpointUrls(
+  endpoints: readonly ComponentEndpoint[],
+  opts: { file?: string } = {},
+): Promise<void> {
+  const file = opts.file ?? VALIDATION_CONTEXT_FILE;
+  const resolved = new Map(endpoints.map((e) => [e.component, e.url]));
+  const raw = await fs.promises.readFile(file, "utf8");
+  const parsed = JSON.parse(raw) as { endpoints?: { component?: string; url?: string }[] };
+  if (!Array.isArray(parsed.endpoints)) return;
+  let changed = false;
+  for (const ep of parsed.endpoints) {
+    const url = ep.component === undefined ? undefined : resolved.get(ep.component);
+    if (url !== undefined && ep.url !== url) {
+      ep.url = url;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  const dir = path.dirname(file);
+  const staging = await fs.promises.mkdtemp(path.join(dir, ".aep-valctx-"));
+  try {
+    const staged = path.join(staging, "context.json");
+    await fs.promises.writeFile(staged, JSON.stringify(parsed), { mode: 0o600 });
+    await fs.promises.rename(staged, file);
+  } finally {
+    await fs.promises.rm(staging, { recursive: true, force: true });
+  }
+}
+
 /** One deployed component's reachable URL — the runner's e2e target. */
 export interface ComponentEndpoint {
   component: string;
+  /** The platform's preferred URL. Rewritten in place to whichever URL answers. */
   url: string;
+  /**
+   * Every URL the deployment advertises, preferred first. Absent from an older
+   * platform, in which case `url` is the only candidate.
+   *
+   * It is a LIST because "advertised" and "reachable" are different facts: a
+   * gateway can publish both an http and an https external URL while serving
+   * only one, and which one differs between a local plane and a cloud one. The
+   * preflight below is the only place that can tell them apart, because it is
+   * the only one that dials.
+   */
+  urls?: string[];
 }
 
 export interface ValidationContext {

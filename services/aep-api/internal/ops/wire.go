@@ -47,6 +47,7 @@ func ToWire(r RcaAgentReport) gen.RcaAgentReport {
 		IssueTitle:     r.IssueTitle,
 		IssueExcerpt:   r.IssueExcerpt,
 		Dispatched:     r.Dispatched,
+		Recurrence:     int64(r.Recurrence),
 		Deployed:       r.Deployed,
 		DeployedAt:     r.DeployedAt,
 		CreatedAt:      r.CreatedAt,

@@ -102,6 +102,20 @@ helm_release_deployed() {
     [ "$rel_status" = '"status":"deployed"' ]
 }
 
+# True only when the data-plane Gateway actually declares the `https` listener.
+# Complements helm_release_deployed: that catches a broken INSTALL, this catches
+# a stale VALUES file. A cluster created while `gateway.tls.enabled` was false
+# holds a perfectly `deployed` release serving only HTTP, while the platform goes
+# on advertising https URLs for every deployed component — so the release status
+# alone is not enough to decide the chart can be skipped.
+gateway_https_listener_present() {
+    local port
+    port=$(kubectl get gateway gateway-default -n openchoreo-data-plane \
+        --context "${CLUSTER_CONTEXT}" \
+        -o jsonpath='{.spec.listeners[?(@.name=="https")].port}' 2>/dev/null) || true
+    [ -n "$port" ]
+}
+
 helm_install_if_not_exists() {
     local release="$1" ns="$2" chart="$3"; shift 3
     if helm status "$release" -n "$ns" --kube-context "${CLUSTER_CONTEXT}" &>/dev/null; then
@@ -151,6 +165,99 @@ create_plane_cert_resources() {
     local ca
     ca=$(kubectl get secret cluster-gateway-ca -n openchoreo-control-plane -o jsonpath='{.data.ca\.crt}' | base64 -d)
     kubectl create configmap cluster-gateway-ca --from-literal=ca.crt="$ca" -n "$ns" --dry-run=client -o yaml | kubectl apply -f -
+}
+
+# Issue the serving certificate for the data-plane gateway's HTTPS listener, and
+# export its CA so clients on the host can verify it.
+#
+# The certificate is ours to create: the openchoreo-data-plane chart exposes
+# `gateway.tls.certificateRefs` but ships no Certificate template, so a listener
+# configured with a ref to a Secret nobody created sits at `Programmed=False`
+# and never binds the port. It must therefore exist BEFORE the chart applies the
+# Gateway.
+#
+# Why the listener is not optional: `register_data_plane` below advertises an
+# `https` external ingress, OpenChoreo copies it into every ReleaseBinding's
+# `externalURLs.https`, and aep-api's `publicEndpointURL` PREFERS https when
+# handing a URL to a human. Serving only HTTP while advertising both meant every
+# console link failed as `curl (35) SSL_ERROR_SYSCALL` — the k3d host mapping
+# accepts the TCP connection and the serverlb then closes it for want of an
+# upstream, which reads like a TLS fault rather than the absent listener it is.
+#
+# A local CA rather than a bare self-signed leaf, because trust is a one-time
+# act: the CA is valid for ten years and survives leaf rotation, so a developer
+# (or an OS trust store) trusts one file once instead of re-trusting a new leaf
+# on every renewal.
+create_gateway_tls_cert() {
+    local ns="$1" ca_out="$2"
+    kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+    cat <<EOF | kubectl apply -f -
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: gateway-default-selfsigned-issuer
+  namespace: $ns
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gateway-default-ca
+  namespace: $ns
+spec:
+  isCA: true
+  commonName: AEP Local Data Plane CA
+  secretName: gateway-default-ca
+  duration: 87600h
+  renewBefore: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: gateway-default-selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: gateway-default-ca-issuer
+  namespace: $ns
+spec:
+  ca:
+    secretName: gateway-default-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gateway-default-tls
+  namespace: $ns
+spec:
+  secretName: gateway-default-tls
+  duration: 8760h
+  renewBefore: 720h
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  # Both forms: a deployed endpoint is <env>-<dp>.openchoreoapis.localhost, and
+  # a wildcard covers exactly one label, so the apex needs naming separately.
+  dnsNames:
+    - openchoreoapis.localhost
+    - "*.openchoreoapis.localhost"
+  issuerRef:
+    name: gateway-default-ca-issuer
+    kind: Issuer
+    group: cert-manager.io
+EOF
+    kubectl wait -n "$ns" --for=condition=Ready certificate/gateway-default-tls --timeout=180s
+    # Export the CA for host clients. Written every run rather than only when
+    # missing: the CA is recreated by a cluster rebuild, and a stale file on disk
+    # would fail verification with the same opaque error this whole function
+    # exists to remove.
+    mkdir -p "$(dirname "$ca_out")"
+    kubectl get secret gateway-default-ca -n "$ns" -o jsonpath='{.data.ca\.crt}' | base64 -d > "$ca_out"
+    echo "✅ Gateway TLS certificate issued (CA exported to $ca_out)"
 }
 
 register_data_plane() {

@@ -130,6 +130,12 @@ type ComponentClient interface {
 	// deploy order depends on.
 	ListDeployments(ctx context.Context, orgName, projectName, componentName string) (*gen.DeploymentList, error)
 
+	// ListDeploymentEndpointCandidates returns EVERY external URL the
+	// component's bindings advertise, https first. ListDeployments answers
+	// "what should the console show"; this answers "what could a preflight
+	// dial" — see PublicEndpointURLs for why those must stay separate.
+	ListDeploymentEndpointCandidates(ctx context.Context, orgName, projectName, componentName string) ([]string, error)
+
 	// ListProjectReleaseBindings returns the org's ReleaseBindings owned by
 	// projectName — all environments, all components, in ONE org-scoped list
 	// (the API has no project filter; ownership is matched client-side on
@@ -281,6 +287,48 @@ func workflowRunToModel(run ocgen.WorkflowRun) gen.WorkflowRun {
 	}
 }
 
+// ListDeploymentEndpointCandidates returns every external URL the component's
+// bindings advertise, across all of them, https first and de-duplicated.
+//
+// Separate from ListDeployments because the two answer different questions:
+// that one answers "what should the console show", this one answers "what could
+// a preflight dial". Collapsing them would force one caller to accept the
+// other's guess, which is the bug this exists to end.
+func (c *componentClient) ListDeploymentEndpointCandidates(ctx context.Context, orgName, projectName, componentName string) ([]string, error) {
+	scopedComp := ScopedComponentName(projectName, componentName)
+	componentQ := ocgen.ComponentQueryParam(scopedComp)
+	resp, err := c.oc.ListReleaseBindingsWithResponse(ctx, orgName, &ocgen.ListReleaseBindingsParams{
+		Component: &componentQ,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list release bindings: %w", err)
+	}
+	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
+		return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
+			JSON401: resp.JSON401,
+			JSON403: resp.JSON403,
+			JSON500: resp.JSON500,
+		})
+	}
+	seen := map[string]bool{}
+	var out []string
+	for i := range resp.JSON200.Items {
+		rb := resp.JSON200.Items[i]
+		if rb.Status == nil || rb.Status.Endpoints == nil {
+			continue
+		}
+		for _, ep := range *rb.Status.Endpoints {
+			for _, u := range PublicEndpointURLs(ep.ExternalURLs) {
+				if !seen[u] {
+					seen[u] = true
+					out = append(out, u)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
 // deploymentFromReleaseBinding pulls the first public URL from the binding's
 // resolved endpoints. Cloud gateways populate `externalURLs.https` only;
 // local/HTTP listeners populate `http`. Prefer https when both exist.
@@ -317,6 +365,29 @@ func deploymentFromReleaseBinding(rb ocgen.ReleaseBinding, preferPlainHTTP bool)
 		CreatedAt:     derefTimeRFC3339(rb.Metadata.CreationTimestamp),
 		Status:        status,
 	}
+}
+
+// PublicEndpointURLs returns EVERY external URL the binding advertises, https
+// first. It exists because "advertised" and "reachable" are different facts and
+// only the caller can tell them apart.
+//
+// publicEndpointURL below picks one for a HUMAN to click, where preferring https
+// is right and a dud link costs nothing. A PREFLIGHT needs the opposite: a URL
+// that answers. Both local and cloud planes can advertise both schemes while
+// serving only one — which is why a static preference cannot be correct for both
+// — so validation takes the candidates and probes them (ADR-0021).
+func PublicEndpointURLs(urls *ocgen.EndpointGatewayURLs) []string {
+	if urls == nil {
+		return nil
+	}
+	var out []string
+	if u := formatEndpointURL(urls.Https); u != "" {
+		out = append(out, u)
+	}
+	if u := formatEndpointURL(urls.Http); u != "" {
+		out = append(out, u)
+	}
+	return out
 }
 
 // publicEndpointURL prefers the HTTPS gateway URL when OpenChoreo resolved

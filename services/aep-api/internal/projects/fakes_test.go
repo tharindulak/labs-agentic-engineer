@@ -125,6 +125,9 @@ func (s *stubComponentSvc) CreateComponent(context.Context, string, string, *ope
 func (s *stubComponentSvc) ListDeployments(context.Context, string, string, string) (*gen.DeploymentList, error) {
 	panic("stubComponentSvc: ListDeployments not expected")
 }
+func (s *stubComponentSvc) ListDeploymentEndpointCandidates(context.Context, string, string, string) ([]string, error) {
+	panic("stubComponentSvc: ListDeploymentEndpointCandidates not expected")
+}
 func (s *stubComponentSvc) GetComponentOpenAPI(context.Context, string, string, string) (*gen.ComponentOpenAPI, error) {
 	panic("stubComponentSvc: GetComponentOpenAPI not expected")
 }

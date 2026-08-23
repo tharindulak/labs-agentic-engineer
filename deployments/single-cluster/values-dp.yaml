@@ -2,5 +2,25 @@
 gateway:
   httpPort: 19080
   httpsPort: 19443
+
+  # HTTPS is not optional here, because the platform ADVERTISES it. The
+  # ClusterDataPlane registration (`register_data_plane` in scripts/utils.sh)
+  # names this listener, OpenChoreo copies it into every ReleaseBinding's
+  # `externalURLs.https`, and aep-api's `publicEndpointURL` prefers https when
+  # offering a URL to a human — so the console link for every deployed
+  # component is `https://<env>-<dp>.openchoreoapis.localhost:19443/...`.
+  #
+  # With `enabled: false` the chart omits the listener block entirely: the
+  # gateway Service never publishes 19443, nothing binds it on the node, and yet
+  # k3d still maps the host port (k3d-local-config.yaml) — so the serverlb
+  # accepts the TCP connection and then closes it upstream-less, mid-handshake.
+  # Every advertised URL failed with `curl (35) SSL_ERROR_SYSCALL`, which reads
+  # like a TLS fault rather than the missing listener it actually was.
+  #
+  # The certificate is issued by cert-manager, not the chart (which ships no
+  # Certificate template) — see `create_gateway_tls_cert` in scripts/utils.sh.
   tls:
-    enabled: false
+    enabled: true
+    hostname: "*.openchoreoapis.localhost"
+    certificateRefs:
+      - name: gateway-default-tls

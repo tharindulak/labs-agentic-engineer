@@ -203,10 +203,44 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 				"project", projectID, "label", label, "error", listErr)
 		} else {
 			for _, iss := range existing {
-				if strings.EqualFold(iss.State, "open") {
+				// Every open issue dedupes, with ONE carve-out: an unverified
+				// fix is open but worked by nobody, so folding a fresh incident
+				// onto it would record the recurrence nowhere. Everything else
+				// keeps today's behaviour, which is what stops concurrent alert
+				// handlers filing duplicates.
+				if strings.EqualFold(iss.State, "open") && !IsUnverifiedFix(iss) {
 					slog.InfoContext(ctx, "issue create deduped to existing open issue",
 						"project", projectID, "label", label, "issue", iss.Number)
-					return &IssueResult{Number: iss.Number, URL: iss.URL, Deduped: true}, nil
+					return &IssueResult{
+						Number:     iss.Number,
+						URL:        iss.URL,
+						Deduped:    true,
+						Recurrence: attemptNumber(iss.Body),
+					}, nil
+				}
+			}
+			// A verdict beats a recurrence. If somebody with the repo in front
+			// of them already decided this signature needs no code change, the
+			// answer is on file — filing again asks the same question and pays
+			// another coding cycle for the same reply.
+			for _, iss := range existing {
+				if IsNoChangeVerdict(iss) {
+					slog.InfoContext(ctx, "issue create suppressed — already decided as needing no code change",
+						"project", projectID, "label", label, "issue", iss.Number)
+					return &IssueResult{Number: iss.Number, URL: iss.URL, Suppressed: true}, nil
+				}
+			}
+			// Nothing open under this key. If anything CLOSED carries it, the
+			// same incident may be recurring — see recur.
+			if len(existing) > 0 {
+				if res, rerr := s.recur(ctx, orgID, projectID, owner, repoName, cred, label, req.Body); rerr != nil {
+					// The issue must still be filed: an unrecorded incident is
+					// the one outcome nothing recovers from. Falling through
+					// files a fresh issue, which is the old behaviour.
+					slog.WarnContext(ctx, "recurrence reopen failed, filing a new issue instead",
+						"project", projectID, "label", label, "error", rerr)
+				} else if res != nil {
+					return res, nil
 				}
 			}
 		}
@@ -220,6 +254,83 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 	// GitHub Projects v2 is dropped (tasks-github-native §4): no lazy board
 	// create/link/add on issue creation. Tasks are plain GitHub issues.
 	return s.github.CreateIssue(ctx, owner, repoName, cred, req)
+}
+
+// recur reopens the issue an incident is recurring on, or reports that this is
+// not a recurrence by returning (nil, nil).
+//
+// The lookup is deliberately a SECOND, narrower read rather than a filter over
+// the list the caller already has. `?labels=a,b` is AND on GitHub's REST API, so
+// asking for the dedupe label AND the SRE-agent label makes the host return only
+// incident issues under this key — which matters because ListIssues fetches a
+// single page: on a repo where one fingerprint has accumulated many issues, the
+// issue worth reopening can be off the end of the wider read. It costs one extra
+// request, and only on the path that already found closed issues under the key,
+// because a key with no issues at all cannot be recurring.
+//
+// The body is then read again with GetIssue rather than taken from the list.
+// This is not caution about staleness — it is that the next step REPLACES the
+// whole body, so appending to anything less than the authoritative current text
+// would delete the difference.
+//
+// Order is load-bearing: append, then reopen. Every step here runs while the
+// issue is still CLOSED and therefore outside every run's working set, so a
+// whole-body PATCH cannot race an agent that is reading it. Reopening first
+// would open that window for no gain.
+//
+// Adoption is not this function's job. It re-homes and dispatches on the other
+// side of the port, where the milestone rules live (eventcore.AdoptOnCreate).
+func (s *issueService) recur(
+	ctx context.Context,
+	orgID, projectID, owner, repoName string,
+	cred secrets.Credential,
+	dedupeLabel, findings string,
+) (*IssueResult, error) {
+	candidates, err := s.github.ListIssues(ctx, owner, repoName, cred, []string{dedupeLabel, LabelSREAgent})
+	if err != nil {
+		return nil, fmt.Errorf("recurrence lookup: %w", err)
+	}
+	var target *IssueInfo
+	for i := range candidates {
+		if isRecurrenceOf(candidates[i]) {
+			target = &candidates[i]
+			break
+		}
+	}
+	if target == nil {
+		return nil, nil // closed, but not as completed incident work — file fresh
+	}
+
+	live, err := s.github.GetIssue(ctx, owner, repoName, cred, target.Number)
+	if err != nil {
+		return nil, fmt.Errorf("recurrence read issue %d: %w", target.Number, err)
+	}
+	// attemptNumber reports the attempt the issue is ALREADY on; this recurrence
+	// is the next one. A first recurrence is therefore attempt 2, which is what
+	// makes "attempt 1" mean the original filing rather than the first failure.
+	attempt := attemptNumber(live.Body) + 1
+	body := appendRecurrenceSection(live.Body, attempt, findings)
+	if err := s.github.EditIssueBody(ctx, owner, repoName, cred, live.Number, body); err != nil {
+		return nil, fmt.Errorf("recurrence append to issue %d: %w", live.Number, err)
+	}
+	// An unverified fix is already open — the platform left it that way on
+	// purpose after merging it. Only a CLOSED thread needs reopening, and
+	// skipping the call keeps a pointless "reopened" event off the timeline of
+	// an issue that never closed.
+	if strings.EqualFold(live.State, "closed") {
+		if err := s.github.ReopenIssue(ctx, owner, repoName, cred, live.Number); err != nil {
+			return nil, fmt.Errorf("recurrence reopen issue %d: %w", live.Number, err)
+		}
+	}
+	slog.InfoContext(ctx, "incident recurred — reopened its issue instead of filing a new one",
+		"project", projectID, "issue", live.Number, "attempt", attempt,
+		"escalated", attempt >= recurrenceEscalation)
+	return &IssueResult{
+		Number:     live.Number,
+		URL:        live.URL,
+		Reopened:   true,
+		Recurrence: attempt,
+	}, nil
 }
 
 // ensureLabels pre-creates every label that this process has not already

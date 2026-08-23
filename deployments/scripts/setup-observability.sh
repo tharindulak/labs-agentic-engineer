@@ -72,8 +72,47 @@
 #       patterns then match analysed lowercase tokens — "ERROR" never matches).
 #
 # Knobs (env):
-#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: hand0ff-new).
-#                   hand0ff-new is the image for the current handoff contract, in
+#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: recurrence).
+#                   `recurrence` is the image for the CURRENT handoff contract.
+#                   It is `hand0ff-new` plus the recurrence half of AEP ADR-0018
+#                   ("a merged fix is not a resolved incident"):
+#                     * the handoff still makes ONE ae_create_issue call with the
+#                       same forced dedupeKey — nothing in this repo decides a
+#                       recurrence. AE does, deterministically, by matching that
+#                       key against an issue it had already CLOSED as completed;
+#                     * the answer now carries `reopened` and `recurrence` (which
+#                       attempt this is). Both are stamped onto HandoffResult from
+#                       the wire by apply_handoff_facts, never restated by the
+#                       model — the same rule `adopted` follows;
+#                     * `recurrence` is forwarded on the RCA report
+#                       (src/clients/aep_reports.py) so the console's alert detail
+#                       can say "Attempt 3" instead of showing a reopened incident
+#                       as though it were new.
+#                   It also carries the DECLINE GUARD. Declining to file is the
+#                   one outcome nothing recovers from, and it was being reached
+#                   too easily: an RCA asking to "remove the artificial delay in
+#                   service2" was declined wholesale because the delay was
+#                   deliberate and AE's own "Implement service2 slow backend"
+#                   issue said so. So a decline must now account for EVERY
+#                   remaining action (config_handled — checked against the action
+#                   really being `revised` — or pure_advice), and one that does
+#                   not comes back to the model once with the gaps named. AE's
+#                   own planned-work issues also arrive in the search result
+#                   flagged `PlatformRecord`, saying they describe behaviour to
+#                   PRESERVE and never rule a change out.
+#                   An OLDER image still works against a newer AE — it simply
+#                   ignores the two new fields, so a recurrence is reopened and
+#                   re-dispatched correctly but the REPORT says nothing about it,
+#                   and the console shows attempt 3 as if it were attempt 1.
+#                   That is the silent failure this tag exists to prevent.
+#
+#                   NOT PUBLISHED to Docker Hub yet — build it locally:
+#                     docker build -t tharindulak/sre-agent:recurrence \
+#                       <openchoreo-repo>/agents/sre-agent
+#                   Until it is pushed, the registry fallback below cannot find
+#                   it and will degrade (loudly) to hand0ff-new.
+#
+#                   hand0ff-new is the PREVIOUS contract, in
 #                   which FILING the issue IS the handoff:
 #                     * one AE call — ae_create_issue adopts what it files, so
 #                       there is no ae_dispatch_coding_agent and no second leg
@@ -97,9 +136,11 @@
 #                   looping against a hardcoded /sre-mcp.
 #                   Requires the rca-agent component:create grant in setup-aep.sh
 #                   — the synchronous EnsureComponent pre-check that runs before
-#                   the issue is filed 403s without it. Falls back to
-#                   anthropic-patched if not built or pullable (RCA works,
-#                   handoff stage ABSENT).
+#                   the issue is filed 403s without it.
+#                   Degradation chain, each step louder than the last:
+#                     recurrence → hand0ff-new (handoff works, recurrence
+#                     reporting ABSENT) → anthropic-patched (RCA works, handoff
+#                     stage ABSENT entirely).
 #   AE_MCP_PATH     path of the handoff MCP endpoint under AE_API_URL
 #                   (default: /mcp = standalone aep-mcp-server; set /sre-mcp for
 #                   the in-process aep-api surface). Older images than
@@ -207,8 +248,14 @@ echo "✅ ExternalSecrets applied"
 # loses imported images — this makes the import part of setup). Build once with
 # (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
 # picked up instead of a registry pull):
-#   docker build -t tharindulak/sre-agent:hand0ff-new <openchoreo-repo>/agents/sre-agent
-# hand0ff-new must be built from the SRE branch that (a) adds the
+#   docker build -t tharindulak/sre-agent:recurrence <openchoreo-repo>/agents/sre-agent
+# `recurrence` additionally reports which attempt an incident is on (ADR-0018):
+# it stamps `reopened` + `recurrence` from ae_create_issue's answer onto the
+# HandoffResult and forwards the count on the RCA report. An older image is
+# still FUNCTIONAL against a newer AE — recurrences are reopened and worked
+# correctly either way, because AE decides that — but the report and console
+# then show a third attempt as though it were the first.
+# The image must be built from the SRE branch that (a) adds the
 # EXTERNAL_SKILLS_DIR loader (src/agent/skills.py + src/config.py), (b) removes
 # the baked-in src/skills/issue-fix — without both, step 3d's mount is inert —
 # (c) makes the handoff MCP path configurable (AE_MCP_PATH, default /mcp) so the
@@ -227,12 +274,14 @@ echo "1️⃣b RCA agent image + secret"
 # the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted issue-fix skill from
 # step 3d, AND the configurable AE_MCP_PATH (default /mcp).
 # Resolution order:
-#   1. local build            docker build -t tharindulak/sre-agent:hand0ff-new \
+#   1. local build            docker build -t tharindulak/sre-agent:recurrence \
 #                               <openchoreo-repo>/agents/sre-agent
 #      (preferred — developers iterating on the agent aren't surprised by a
-#       stale registry copy)
+#       stale registry copy, and `recurrence` is local-only today)
 #   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
-#   3. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
+#   3. local hand0ff-new      (previous contract: handoff works, but the report
+#                              cannot say WHICH ATTEMPT an incident is on)
+#   4. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
 #
 # RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/sre-agent),
 # not a short local alias — deliberately. An earlier version used a short repo
@@ -246,13 +295,29 @@ echo "1️⃣b RCA agent image + secret"
 # the fully-qualified name everywhere means a cache-evicted image can always
 # be re-pulled from the real registry — no more silent long-term fragility.
 RCA_IMAGE_REPO="tharindulak/sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-hand0ff-new}"
-RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:hand0ff-new}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-recurrence}"
+RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:${RCA_IMAGE_TAG}}"
+# Degradation is EXPLICIT and ordered, because each step down loses something
+# different and a silent step-down is what makes a stale agent hard to spot:
+#   recurrence     — current contract.
+#   hand0ff-new    — handoff works; the report/console cannot say which ATTEMPT
+#                    an incident is on. Recurrences are still reopened and worked
+#                    correctly, because AE decides that, not the agent.
+#   anthropic-patched — no handoff stage at all.
 if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; then
     echo "   ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} not built locally — trying registry ${RCA_IMAGE_PULL}..."
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
         docker tag "$RCA_IMAGE_PULL" "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
         echo "✅ pulled ${RCA_IMAGE_PULL} → retagged as ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
+    elif docker image inspect "${RCA_IMAGE_REPO}:hand0ff-new" >/dev/null 2>&1; then
+        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
+        echo "    falling back to ${RCA_IMAGE_REPO}:hand0ff-new."
+        echo "    The handoff WORKS and recurrences are still reopened and worked (AE"
+        echo "    decides that). What you lose is the report saying WHICH ATTEMPT an"
+        echo "    incident is on, so the console shows a third attempt as if it were"
+        echo "    the first. Build the current image to fix:"
+        echo "      docker build -t ${RCA_IMAGE_REPO}:recurrence <openchoreo>/agents/sre-agent"
+        RCA_IMAGE_TAG="hand0ff-new"
     elif docker image inspect "${RCA_IMAGE_REPO}:anthropic-patched" >/dev/null 2>&1; then
         echo "⚠️  registry pull failed — falling back to ${RCA_IMAGE_REPO}:anthropic-patched"
         echo "    (RCA works, AEP handoff stage ABSENT)."
@@ -295,10 +360,23 @@ if docker image inspect "$RCA_IMAGE" >/dev/null 2>&1; then
         fi
     fi
     if [ -z "$IMPORTED" ]; then
-        echo "⚠️  k3d import did not land on every node — switching to registry-direct:"
-        echo "    the cluster will pull ${RCA_IMAGE_PULL} from Docker Hub instead."
-        RCA_IMAGE_REPO="${RCA_IMAGE_PULL%%:*}"
-        RCA_IMAGE_TAG="${RCA_IMAGE_PULL##*:}"
+        # Registry-direct only works for a PUBLISHED tag. Pointing the cluster at
+        # an unpublished one trades a failed import for an ImagePullBackOff that
+        # reads like a cluster fault instead of a missing push — so check the
+        # registry first, and when the tag is not there say what is actually
+        # wrong and leave the pin alone.
+        if docker manifest inspect "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
+            echo "⚠️  k3d import did not land on every node — switching to registry-direct:"
+            echo "    the cluster will pull ${RCA_IMAGE_PULL} from Docker Hub instead."
+            RCA_IMAGE_REPO="${RCA_IMAGE_PULL%%:*}"
+            RCA_IMAGE_TAG="${RCA_IMAGE_PULL##*:}"
+        else
+            echo "⚠️  k3d import did not land on every node AND ${RCA_IMAGE_PULL} is not in"
+            echo "    the registry, so there is nothing for the cluster to pull. The RCA pod"
+            echo "    will not start. Either retry setup (the import flake is transient), or"
+            echo "    push the image:"
+            echo "      docker push ${RCA_IMAGE_PULL}"
+        fi
     fi
 else
     echo "⚠️  $RCA_IMAGE not found locally and registry pull failed — build it"
@@ -520,16 +598,63 @@ echo "✅ auto-trigger + handoff wiring applied"
 # against the org's Anthropic KV path with a refreshInterval that re-syncs it
 # after a connect or a rotation.
 #
-# So THIS script neither creates nor discovers that ExternalSecret — it only
-# ensures the one-time STRUCTURAL piece exists: the volume + mount + env var
-# wiring below, which the ExternalSecret (whenever the RCA agent's own manifest
-# declares one) feeds into. If no key has been synced, `optional: true` on the
-# volume's secret source means the mount is just an empty dir rather than
-# blocking the pod in ContainerCreating — resolve_api_key() falls back to the
-# static RCA_LLM_API_KEY exactly as before, and main.py's boot-time LLM test
-# skips (warns, doesn't crash) when neither source has a key.
+# This script owns BOTH halves: the ExternalSecret that pulls the key, and the
+# volume + mount + env var wiring it feeds. Leaving the ExternalSecret to "the
+# RCA agent's own manifest" left nothing creating it on either install path, so
+# a fresh plane came up with the mount permanently empty; the only remedy was a
+# hand-created Secret, which every reinstall then deleted. If no key has been
+# connected yet, `optional: true` on the volume's secret source means the mount
+# is just an empty dir rather than blocking the pod in ContainerCreating —
+# resolve_api_key() falls back to the static RCA_LLM_API_KEY, and main.py's
+# boot-time LLM test skips (warns, doesn't crash) when neither source has a key.
+#
+# The ExternalSecret matches on a PATH PATTERN rather than a fixed remoteRef.key.
+# The per-org vault path is
+#   user-app-secrets/wc-<8 of org uuid>-<8 of sha256(org uuid)>/anthropic-secrets
+# and that org UUID does not exist at install time — organizations.thunder_org_uuid
+# is populated from the JWT's ouId claim, i.e. only once a user has authenticated
+# (see services/aep-api/internal/migrate/phase3_thunder_org_uuid.go). A fixed key
+# could therefore never be written by this script; `find` sidesteps the org UUID
+# entirely and starts resolving the moment a key is connected.
+#
+# SINGLE-ORG by construction: two connected orgs would both match, and the range
+# in the template would concatenate their keys into one invalid value. Revisit if
+# the observability plane ever serves more than one org.
 echo ""
-echo "3️⃣c Dynamic Anthropic key (volume wiring; the ExternalSecret is owned by the RCA agent's own manifest)"
+echo "3️⃣c Dynamic Anthropic key (ExternalSecret + volume wiring)"
+kubectl --context "$CLUSTER_CONTEXT" apply -f - <<EOF
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: rca-agent-anthropic-secret
+  namespace: $NS
+spec:
+  # 15s matches the per-org secrets ESO already syncs for the coding agent.
+  # observer-secret's 1h would leave RCA broken for up to an hour after a connect.
+  refreshInterval: 15s
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: default
+  target:
+    name: rca-agent-anthropic-secret
+    template:
+      engineVersion: v2
+      data:
+        # hasKey rather than a bare index: Go templates render a missing key as
+        # the literal string "<no value>", which would mount a syntactically
+        # valid but garbage API key that only fails at analysis time.
+        RCA_LLM_API_KEY: '{{ range \$k, \$v := . }}{{ \$d := \$v | fromJson }}{{ if hasKey \$d "api-key" }}{{ index \$d "api-key" }}{{ end }}{{ end }}'
+  dataFrom:
+    - find:
+        path: user-app-secrets/
+        name:
+          # Anchored: SecretRefName() also mints task-scoped names of the form
+          # <task>-<entity>-secrets, and an unanchored "anthropic-secrets" would
+          # match those too, concatenating a second key into the value. The
+          # coding role's "anthropic-coding-secrets" does not match either way.
+          regexp: "(^|/)anthropic-secrets\$"
+EOF
+echo "✅ rca-agent-anthropic-secret ExternalSecret applied"
 # Patched onto the Deployment (not chart values) for the same "survives a
 # helm re-run" reason as step 3b's ConfigMap patches. A podSpec change here
 # triggers K8s's normal rolling update on its own — no explicit restart needed.

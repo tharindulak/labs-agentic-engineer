@@ -115,6 +115,17 @@ function defaultPort(protocol: string): number {
  * data-plane gateway's address, so the answer is resolved per run rather than
  * configured — a baked-in IP passes once and then silently points at nothing.
  *
+ * EVERY advertised candidate is pinned, not just the preferred one, because
+ * `resolve` entries are scoped per `host:port` and the two schemes sit on
+ * different ports (19080 and 19443 on a local plane). This runs BEFORE
+ * `probeEndpoints`, which is what picks the scheme — by measurement, and only
+ * after this file is already written. Pinning `ep.url` alone therefore pinned a
+ * guess: when the probe adopted the other candidate, the agent was left curling
+ * a host:port with no override, straight back into the RFC 6761 loopback this
+ * exists to prevent. Pinning all of them makes the two steps order-independent,
+ * which is cheaper than making the write wait for the probe and correct for
+ * whichever scheme the gateway turns out to serve.
+ *
  * Forgiving by design. An unparseable URL or a name that will not resolve is
  * warned about and skipped, never thrown: `probeEndpoints` is what decides
  * whether the run may proceed, and it reports the endpoint that actually failed
@@ -131,28 +142,35 @@ export async function curlResolveEntries(
   const seen = new Set<string>();
 
   for (const ep of endpoints) {
-    let parsed: URL;
-    try {
-      parsed = new URL(ep.url);
-    } catch {
-      log(`[endpoints] ⚠️  ${ep.component}: not a URL, no curl override written: ${ep.url}`);
-      continue;
-    }
-    if (!parsed.hostname.endsWith(".localhost")) {
-      continue;
-    }
-    const port = parsed.port === "" ? defaultPort(parsed.protocol) : Number(parsed.port);
-    const key = `${parsed.hostname}:${port}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    try {
-      const { address } = await lookup(parsed.hostname, { family: 4 });
-      seen.add(key);
-      entries.push({ host: parsed.hostname, port, address });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`[endpoints] ⚠️  ${ep.component}: cannot resolve ${parsed.hostname}: ${msg}`);
+    // Same candidate set, in the same order, as probeEndpoints below: an
+    // endpoint from an older platform carries only `url`.
+    const candidates = [ep.url, ...(ep.urls ?? [])].filter(
+      (u, i, all) => Boolean(u) && all.indexOf(u) === i,
+    );
+    for (const candidate of candidates) {
+      let parsed: URL;
+      try {
+        parsed = new URL(candidate);
+      } catch {
+        log(`[endpoints] ⚠️  ${ep.component}: not a URL, no curl override written: ${candidate}`);
+        continue;
+      }
+      if (!parsed.hostname.endsWith(".localhost")) {
+        continue;
+      }
+      const port = parsed.port === "" ? defaultPort(parsed.protocol) : Number(parsed.port);
+      const key = `${parsed.hostname}:${port}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      try {
+        const { address } = await lookup(parsed.hostname, { family: 4 });
+        seen.add(key);
+        entries.push({ host: parsed.hostname, port, address });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`[endpoints] ⚠️  ${ep.component}: cannot resolve ${parsed.hostname}: ${msg}`);
+      }
     }
   }
   return entries;
@@ -214,7 +232,7 @@ export async function writeCurlResolveConfig(
  * would turn an answered endpoint into a false negative. A 302 is an answer.
  */
 export async function probeEndpoints(
-  endpoints: readonly ComponentEndpoint[],
+  endpoints: ComponentEndpoint[],
   opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
 ): Promise<UnreachableEndpoint[]> {
   const doFetch = opts.fetchImpl ?? fetch;
@@ -222,18 +240,38 @@ export async function probeEndpoints(
   const unreachable: UnreachableEndpoint[] = [];
 
   for (const ep of endpoints) {
-    try {
-      const res = await doFetch(ep.url, {
-        redirect: "manual",
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      // Nothing here reads the body; leaving it unconsumed holds the socket.
-      await res.body?.cancel().catch(() => {});
-    } catch (err) {
-      const cause = (err as { cause?: { code?: string } }).cause;
-      const reason = cause?.code ?? (err instanceof Error ? err.message : String(err));
-      unreachable.push({ component: ep.component, url: ep.url, reason });
+    // Every advertised candidate, preferred first, de-duplicated. An endpoint
+    // from an older platform carries only `url`, which keeps this a single probe.
+    const candidates = [ep.url, ...(ep.urls ?? [])].filter(
+      (u, i, all) => Boolean(u) && all.indexOf(u) === i,
+    );
+    let answered: string | undefined;
+    let firstReason = "";
+    for (const candidate of candidates) {
+      try {
+        const res = await doFetch(candidate, {
+          redirect: "manual",
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        // Nothing here reads the body; leaving it unconsumed holds the socket.
+        await res.body?.cancel().catch(() => {});
+        answered = candidate;
+        break;
+      } catch (err) {
+        const cause = (err as { cause?: { code?: string } }).cause;
+        const reason = cause?.code ?? (err instanceof Error ? err.message : String(err));
+        if (!firstReason) firstReason = reason;
+      }
     }
+    if (answered === undefined) {
+      unreachable.push({ component: ep.component, url: ep.url, reason: firstReason });
+      continue;
+    }
+    // Adopt the URL that ANSWERED as this endpoint's URL, so everything
+    // downstream — the context file the skill reads, the criteria the agent
+    // curls — targets a URL proven to respond rather than the one that merely
+    // sorted first.
+    ep.url = answered;
   }
   return unreachable;
 }

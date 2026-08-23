@@ -354,7 +354,7 @@ func TestAnthropicConnect_FailedMirrorIsRecordedOnTheRow_DB(t *testing.T) {
 	// cluster whose org namespace does not exist.
 	sm := &fakeSMClient{createErr: errors.New("namespaces \"wc-abc\" not found")}
 	writer := organization.NewSecretRefWriter(sm, nil, repo, nil)
-	svc := organization.NewAnthropicCredentialService(repo, store, nil).
+	svc := organization.NewAnthropicCredentialService(repo, store).
 		WithAnthropicAPIBase(base).
 		WithSecretRefWriter(writer)
 

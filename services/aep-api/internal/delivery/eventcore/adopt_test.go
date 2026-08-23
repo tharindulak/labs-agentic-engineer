@@ -238,3 +238,71 @@ func TestAdoptOnCreate_DoesNotWakeARunMidCycle(t *testing.T) {
 		t.Fatalf("a running run needs no signal, got %v", got)
 	}
 }
+// ---- recurrence ------------------------------------------------------------
+//
+// A recurrence reopens the issue that was already fixed once, and that issue
+// still carries the milestone adoption gave it MONTHS AGO — a version that is
+// no longer deployed, whose milestone is settled. Re-homing is what puts the
+// fix into the increment that is actually live (ADR-0018).
+
+// The headline: a reopened issue is moved into the currently adoptable
+// milestone, made agent work again, and a run is put on it.
+func TestRecurrence_ReopenedIssueIsReHomedAndReAdopted(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 9))
+	h.issues.reopenAs = &sourcecontrol.IssueResult{Number: 40, Reopened: true, Recurrence: 2}
+
+	out, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "",
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s again", Body: "same trace"})
+	if err != nil {
+		t.Fatalf("AdoptOnCreate: %v", err)
+	}
+	if !out.Adopted {
+		t.Fatalf("a recurrence must be adopted, got %+v (%s)", out, out.Reason)
+	}
+	// Re-homed: the issue is assigned the CURRENT adoptable milestone, not left
+	// in the settled one it was fixed in.
+	if want := "40->9"; !contains(h.issues.assigned, want) {
+		t.Errorf("assigned %v, want the reopened issue re-homed as %q", h.issues.assigned, want)
+	}
+	// And made visible to the dispatch predicate again — a milestone member
+	// without this label is a ledger entry no run will ever work.
+	if !delivery.HasLabel(h.issues.labelsOn(40), delivery.LabelAgentWork) {
+		t.Errorf("a re-adopted issue must be agent work, got %v", h.issues.labelsOn(40))
+	}
+	// Nothing was filed: the whole point is that the history stays in one place.
+	if len(h.issues.created) != 0 {
+		t.Errorf("a recurrence must not file a new issue, filed %v", h.issues.titles())
+	}
+}
+
+// A recurrence in a project with nothing to adopt into is still recorded. The
+// issue is reopened and appended to; it simply waits for a human, which is the
+// same refusal shape create-issue has always had.
+func TestRecurrence_WithNoAdoptableMilestoneIsStillAnswered(t *testing.T) {
+	h := newHarness(t) // no runs at all → nothing to adopt into
+	h.issues.reopenAs = &sourcecontrol.IssueResult{Number: 40, Reopened: true, Recurrence: 2}
+
+	out, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, "",
+		sourcecontrol.CreateIssueRequest{Title: "t", Body: "b"})
+	if err != nil {
+		t.Fatalf("a refusal is answered, not raised: %v", err)
+	}
+	if out.Adopted {
+		t.Error("nothing can work this issue, so it must not claim adoption")
+	}
+	if out.Reason == "" {
+		t.Error("nothing retries an adoption — a caller that cannot see why cannot act")
+	}
+	if !out.Issue.Reopened {
+		t.Error("the reopen still happened and the caller must be told")
+	}
+}
+
+func contains(haystack []string, want string) bool {
+	for _, s := range haystack {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
