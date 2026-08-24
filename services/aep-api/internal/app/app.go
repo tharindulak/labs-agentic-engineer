@@ -920,6 +920,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	opsHandlers, err := opshttpapi.New(ops.Deps{
 		Reports: ops.NewRepository(db),
 		Execs:   execution.NewOpsExecutionReader(executionRepo),
+		// Escalation reuses the SAME adopter create-issue uses, so an issue the
+		// platform files for a declined report is worked exactly like one the
+		// handoff filed itself.
+		Escalator: opsIssueEscalator{adopter: issueAdopter},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble ops domain: %w", err)

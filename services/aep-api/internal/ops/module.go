@@ -16,7 +16,10 @@
 
 package ops
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // Deps is what this domain must be handed to exist: typed ports, never concrete
 // collaborators (§8). Constructor injection only — no setters, no framework.
@@ -30,6 +33,35 @@ type Deps struct {
 	// Execs correlates a report against live Task executions. Optional: nil
 	// disables correlation and the stored snapshot is served as-is.
 	Execs ExecutionReader
+	// Escalator files the issue a handoff declined to file. Optional: nil
+	// stores a declined report exactly as the handoff sent it, which is the
+	// pre-escalation behaviour.
+	Escalator IssueEscalator
+}
+
+// FiledIssue is what an escalation produced. Adopted false means the issue
+// exists but nothing is working it — a project with no built version yet, say —
+// which is why it is reported separately from the number.
+type FiledIssue struct {
+	Number        int64
+	URL           string
+	Adopted       bool
+	AdoptionError string
+}
+
+// IssueEscalator files an issue and hands it to the coding agent. Satisfied by
+// an app-root adapter over the sourcecontrol Adopter — the same one
+// `ae_create_issue` reaches — so an escalated issue is indistinguishable from
+// one the handoff filed itself.
+//
+// Declared here rather than in the slice that uses it because Deps carries it,
+// and a narrow local port rather than the sourcecontrol type because ops serves
+// the console's ops surface and has no business importing the issue stack.
+type IssueEscalator interface {
+	FileAndDispatch(
+		ctx context.Context,
+		orgID, projectID, componentName, title, body, dedupeKey string,
+	) (FiledIssue, error)
 }
 
 // Validate reports a Deps that cannot produce a working domain. It exists

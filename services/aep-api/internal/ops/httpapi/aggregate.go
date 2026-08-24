@@ -52,7 +52,7 @@ func New(d ops.Deps) (*Handlers, error) {
 		return nil, fmt.Errorf("ops httpapi: %w", err)
 	}
 	return &Handlers{
-		createReportHandler: createreport.New(d.Reports),
+		createReportHandler: createreport.New(d.Reports).WithEscalator(d.Escalator),
 		getReportHandler:    getreport.New(d.Reports, d.Execs),
 		listReportsHandler:  listreports.New(d.Reports),
 	}, nil

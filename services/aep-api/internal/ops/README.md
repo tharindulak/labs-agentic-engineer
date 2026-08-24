@@ -3,7 +3,9 @@
 > **L2 · a domain.** Part of the [aep-api architecture](../../README.md).
 
 Capture RCA-agent incident reports and correlate them with live Task executions, so the console's
-Alerts bell and stepper show the *current* state rather than the write-time snapshot.
+Alerts bell and stepper show the *current* state rather than the write-time snapshot. Also the last
+gate on a handoff's decision: a high-confidence root cause the SRE agent declined is filed and
+dispatched here rather than dropped.
 
 ```mermaid
 flowchart LR
@@ -15,6 +17,7 @@ flowchart LR
     CORE --> DB[("rca_agent_reports")]
   end
   SL -->|ExecutionReader| DEL[[delivery]]
+  SL -->|IssueEscalator| SC[[sourcecontrol adopter]]
 ```
 
 ## Slices
@@ -29,12 +32,35 @@ flowchart LR
 |---|---|---|
 | `Repository` | needs | own store — `repository.go` (the only gorm file) |
 | `ExecutionReader` | needs | `delivery` — latest execution per kind for a Task. **Optional**: nil disables correlation (satisfied by delivery's `execution.OpsExecutionReader`) |
+| `IssueEscalator` | needs | the same `sourcecontrol.Adopter` create-issue uses, so an escalated issue is indistinguishable from one the handoff filed. **Optional**: nil stores a declined report unchanged (satisfied by app's `opsIssueEscalator`) |
 
 ## Owns
 - `rca_agent_reports` — gorm in this domain (`repository.go` over `model.go`), single write-authority.
   Created by `internal/migrate`'s `phase10_rca_agent_reports` step, not AutoMigrate.
 
+## Escalation — filing what the handoff declined
+`createreport` files the issue itself when a report arrives **without** one, classified `none` or
+`config-level`, carrying a root cause annotated `confidence: high` **and** at least one recommended
+action the remediation agent could not express as configuration (`_(suggested)_`). Anything else is
+left alone, and the reason is logged.
+
+The rule lives here because this is the only path AEP sees every report on and the handoff cannot
+skip it. Guidance was tried first and did not hold: the `issue-fix` skill already names this exact
+scenario as the likeliest way to get the decision wrong, and a report was still declined by an agent
+running the updated skill.
+
+Two properties the escalated issue must keep:
+- **A `## What must not change` section.** An earlier escalated fix made a timeout configurable *and*
+  moved its default, breaking four passing acceptance criteria. Configurability is the ask; changed
+  behaviour is not.
+- **The handoff's decline, quoted.** A wrong escalation should be closable in seconds.
+
 ## Invariants — don't break
+- **Escalation never fails the write.** A report that cannot be stored is an incident nothing
+  recovers, so a filing failure is logged and the report is persisted without an issue.
+- **Escalation reads the decision out of markdown** — `diagnosis` is one free-text blob, so
+  confidence and action status are recovered by anchored pattern, never semantic parsing. The durable
+  fix is for the SRE agent to send both as structured fields.
 - **Correlation only promotes false→true**, and is best-effort: a lookup failure serves the stored
   snapshot rather than failing the read. `Deployed` requires a *succeeded* build (the "Verify Fix"
   threshold), not merely a build.
