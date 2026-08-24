@@ -5,15 +5,18 @@ description: Decide whether an RCA root cause needs a code change, and if so fil
 
 # Issue-fix
 
-Your output is one judgment — `needs_code_change` — and, when it is true, one
-GitHub issue. Filing that issue IS the handoff: AE puts it into the deployed
-version's milestone and starts a coding run over it in the same call.
+Your output is one judgment — `needs_code_change` — and one call that records it:
+`ae_create_issue` when it is true, `ae_decline_issue` when it is false. Filing an
+issue IS the handoff: AE puts it into the deployed version's milestone and starts
+a coding run over it in the same call. Declining is not free — it must justify
+itself, and the call refuses one that does not.
 
 ## OBJECTIVES
 
 1. Decide `needs_code_change` (see DECIDING).
    *Done when* you can name the specific change to the codebase that would help,
-   or name which of the two ruled-out cases this is.
+   or name which of the two ruled-out cases this is — and, for every remaining
+   action, the hardening change you considered and why it contradicts the spec.
 2. When it is true, look for related issues (see RELATED-ISSUE DISCOVERY).
    *Done when* 1-2 keyword queries have run and you have judged each candidate
    related or not. A discovery pass, not the main task.
@@ -47,11 +50,19 @@ change, which usually means it is not a config problem.
 `status` may be absent entirely — the remediation agent did not run, nothing was
 triaged for you, and you are deciding from the root cause alone.
 
-**Ruled out** in exactly two cases. When you rule out, you must fill
-`ruled_out` with ONE ENTRY PER remaining action, each naming which of the two
-applies and why it applies to that action. An action you cannot map to one of
-them is an action that needs a code change — the mapping is checked, and a
-decline that does not account for every action comes straight back to you:
+**Ruled out** in exactly two cases, and ruling out is a CALL, not a silent
+ending: `ae_decline_issue` carries one `ruledOut` entry PER remaining action,
+each naming which of the two cases applies, why it applies to that action, and —
+in `hardeningRuledOut` — the hardening change you considered and why applying it
+would contradict the spec. An action you cannot map to one of the two cases is an
+action that needs a code change. The mapping is checked by that call: a decline
+that does not account for every action, or whose justification only asserts the
+behaviour was deliberate, is REFUSED with its reasons and comes straight back to
+you. Fix it or file the issue.
+
+If your turn ends with neither an `ae_create_issue` nor an `ae_decline_issue`
+call, nothing was handed over and nothing was ruled out — the incident is simply
+dropped, and nothing retries a handoff. The two cases:
 
 - Every remaining action is already actionable as configuration: `status:
   "revised"` with a `change` object, which belongs to the remediation agent. When
@@ -76,6 +87,12 @@ that leave the intent completely intact. The test is not *"was this behaviour
 deliberate?"* but *"is there a change to the code that would help and that does
 not contradict the spec?"* If yes, file it, and say which behaviour must be
 preserved.
+
+This is why `hardeningRuledOut` is required on every decline entry: naming the
+hardening change you considered forces the real test to be answered instead of
+substituted. "It is intended behaviour" fills the field with the wrong answer and
+`ae_decline_issue` refuses it. If the hardening change you name would NOT
+contradict the spec, you have just found the issue to file.
 
 ## RELATED-ISSUE DISCOVERY
 
@@ -139,6 +156,11 @@ file nothing.
 ## TOOL GUIDELINES
 
 - `ae_search_related_issues`: call before filing, scoped to your project.
+- `ae_decline_issue`: the terminal call when `needs_code_change` is false. One
+  `ruledOut` entry per remaining action; a decline that skips an action, stubs a
+  field, or rests on "it is intended" is refused with its reasons. Carry the same
+  `ruledOut` into the report's `## Ruled out` section so the judgment is
+  persisted with the diagnosis, not just checked in passing.
 - `ae_create_issue`: scoped to your project, covering all code-level actions
   together. `dedupeKey`, `componentName`, `adopt` and the `sre-agent` label are
   attached for you — that label is what lets a human filter `label:sre-agent`
