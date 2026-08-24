@@ -269,10 +269,13 @@ echo "✅ ExternalSecrets applied"
 # by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `hand0ff-new` (= RCA_IMAGE_TAG default below) carries the
-# Anthropic structured-output fix, the one-call AEP handoff stage (AE_HANDOFF),
-# the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted issue-fix skill from
-# step 3d, AND the configurable AE_MCP_PATH (default /mcp).
+# Preferred tag `recurrence` (= RCA_IMAGE_TAG default below) carries everything
+# `hand0ff-new` did — the Anthropic structured-output fix, the one-call AEP
+# handoff stage (AE_HANDOFF), the EXTERNAL_SKILLS_DIR loader that reads the
+# AEP-mounted issue-fix skill from step 3d, and the configurable AE_MCP_PATH
+# (default /mcp) — plus the recurrence contract: the report can say WHICH
+# ATTEMPT an incident is on, which is what ADR-0021 needs to reopen an issue
+# rather than re-file it.
 # Resolution order:
 #   1. local build            docker build -t tharindulak/sre-agent:recurrence \
 #                               <openchoreo-repo>/agents/sre-agent
