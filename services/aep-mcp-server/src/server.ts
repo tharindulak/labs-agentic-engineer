@@ -20,7 +20,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { AepApiError, type AepClientOptions, createIssue, listIssues } from "./aepClient.js";
-import { validateDecline } from "./decline.js";
 
 function textResult(payload: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
@@ -38,16 +37,11 @@ function errorResult(err: unknown) {
  * state of its own; every tool call forwards `client.bearer` straight
  * through to aep-api, which performs the actual org-scoped auth check.
  *
- * There is no dispatch tool: adoption moved into create-issue, so filing an
- * issue and handing it to the coding agent are one call and cannot come apart.
- * The other way to adopt an issue that already exists is the `aep` arming
- * GitHub label, which AE's event plane watches — a human's route, not this
- * server's.
- *
- * The handoff has exactly two terminal moves, and both are calls here:
- * `ae_create_issue` to file, `ae_decline_issue` to rule a code change out. That
- * symmetry is the point — a turn that ends with neither is a protocol
- * violation rather than a silent decision nobody can see.
+ * Two tools, not three. There is no dispatch tool: adoption moved into
+ * create-issue, so filing an issue and handing it to the coding agent are one
+ * call and cannot come apart. The other way to adopt an issue that already
+ * exists is the `aep` arming GitHub label, which AE's event plane watches —
+ * a human's route, not this server's.
  */
 export function createAepMcpServer(client: AepClientOptions): McpServer {
   const server = new McpServer({ name: "aep-mcp-server", version: "0.0.0" });
@@ -137,73 +131,6 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
       } catch (err) {
         return errorResult(err);
       }
-    },
-  );
-
-  server.registerTool(
-    "ae_decline_issue",
-    {
-      title: "Rule out a code change for an RCA root cause",
-      description:
-        "Record that an RCA root cause needs NO code change. This is the other way a handoff may end: file with ae_create_issue, or rule out with this call — ending a turn with neither hands nothing over and drops the incident. " +
-        "A decline must justify itself. Pass one ruledOut entry PER remaining recommended action; an action you cannot account for is an action that needs a code change, so file instead. " +
-        "Each entry names the hardening change you considered and why applying it would contradict the spec. 'It is intended behaviour' is not a justification — as-designed behaviour can still be hardened, and the test is whether a code change would help WITHOUT contradicting the spec. " +
-        "An inadequate decline is refused with the reasons, and you should either fix it or file the issue. " +
-        "This call records the judgment for review; carry the same ruledOut into the report's `## Ruled out` section so it is persisted with the diagnosis.",
-      inputSchema: {
-        project: z.string().describe("OpenChoreo/AE project name"),
-        component: z
-          .string()
-          .optional()
-          .describe("The component the root cause is about, UNPREFIXED (e.g. 'service1')"),
-        rootCause: z
-          .string()
-          .describe("The root cause being declined, quoted from the report, so the record stands alone"),
-        ruledOut: z
-          .array(
-            z.object({
-              action: z
-                .string()
-                .describe("The recommended action this entry rules out, quoted from the report"),
-              case: z
-                .enum(["config-actionable", "names-nothing-to-change"])
-                .describe(
-                  "config-actionable: already actionable as configuration (status 'revised' with a change object). names-nothing-to-change: pure advice with no fault behind it",
-                ),
-              why: z.string().describe("Why that case applies to THIS action"),
-              hardeningRuledOut: z
-                .string()
-                .describe(
-                  "The hardening change you considered for this action (e.g. 'make the delay configurable') and why applying it would contradict the spec",
-                ),
-            }),
-          )
-          .describe("One entry per remaining recommended action"),
-      },
-    },
-    async ({ project, component, rootCause, ruledOut }) => {
-      const verdict = validateDecline({
-        project,
-        rootCause,
-        ruledOut,
-        ...(component !== undefined ? { component } : {}),
-      });
-      if (!verdict.ok) {
-        // isError so the agent sees this as a refusal it must answer, the same
-        // way a failed ae_create_issue comes back to it.
-        return {
-          content: [{ type: "text" as const, text: `decline refused: ${verdict.error}` }],
-          isError: true,
-        };
-      }
-      return textResult({
-        declined: true,
-        project,
-        ...(component !== undefined ? { component } : {}),
-        rootCause,
-        ruledOut,
-        next: "Include this ruledOut as a `## Ruled out` section in the report diagnosis.",
-      });
     },
   );
 
