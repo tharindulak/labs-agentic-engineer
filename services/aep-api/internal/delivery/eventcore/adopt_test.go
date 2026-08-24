@@ -243,7 +243,7 @@ func TestAdoptOnCreate_DoesNotWakeARunMidCycle(t *testing.T) {
 // A recurrence reopens the issue that was already fixed once, and that issue
 // still carries the milestone adoption gave it MONTHS AGO — a version that is
 // no longer deployed, whose milestone is settled. Re-homing is what puts the
-// fix into the increment that is actually live (ADR-0018).
+// fix into the increment that is actually live (ADR-0021).
 
 // The headline: a reopened issue is moved into the currently adoptable
 // milestone, made agent work again, and a run is put on it.

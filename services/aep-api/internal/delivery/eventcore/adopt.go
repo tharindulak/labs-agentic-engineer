@@ -67,7 +67,7 @@ type AdoptTarget struct {
 //     the recurrence path calls this with a bare target on purpose, and the
 //     issue is resolved into the current adoptable milestone rather than left
 //     in history. "The human put it there" is true of a milestone a human
-//     chose; it was never true of one adoption itself assigned (ADR-0018).
+//     chose; it was never true of one adoption itself assigned (ADR-0021).
 //
 //   - If a run is already live on that milestone, no second run starts —
 //     that would put two agents on one branch. A run parked on that milestone is

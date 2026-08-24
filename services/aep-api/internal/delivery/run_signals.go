@@ -42,7 +42,7 @@ const (
 	SigRunConflict = "run-conflict"
 	// SigRunNoWork — the milestone's working set emptied while a cycle was in
 	// flight that had opened no pull request. The agent examined the work and
-	// closed it out rather than changing code (ADR-0020).
+	// closed it out rather than changing code (ADR-0023).
 	//
 	// A fact, like the rest, and the one the landing deadline cannot infer: an
 	// agent that finishes having decided nothing needs changing looks exactly

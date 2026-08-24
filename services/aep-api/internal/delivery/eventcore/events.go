@@ -445,7 +445,7 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 // waiting for a merge, and a merge empties the working set too — signalling
 // there would race the landing it is about to get. So only a cycle holding NO
 // pull request can end this way, which is exactly the shape an agent leaves
-// behind when it closes the work out instead of changing code (ADR-0020).
+// behind when it closes the work out instead of changing code (ADR-0023).
 func (e *Events) noteWorkExhausted(ctx context.Context, orgID, projectID string, milestoneNumber int) error {
 	run, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestoneNumber)
 	if err != nil || run == nil || run.State != delivery.RunStateRunning {

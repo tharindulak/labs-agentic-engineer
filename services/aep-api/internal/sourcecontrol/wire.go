@@ -234,7 +234,7 @@ func clampWork(n int) int {
 // already being worked, and nothing was written. Reopened: a CLOSED issue was
 // the same incident recurring, so it was appended to, reopened and handed back
 // to the coding agent — the most this call ever does. Collapsing them would
-// show a human "nothing to do here" at the moment most was done (ADR-0018).
+// show a human "nothing to do here" at the moment most was done (ADR-0021).
 type IssueResult struct {
 	Number  int    `json:"number"`
 	URL     string `json:"url"`

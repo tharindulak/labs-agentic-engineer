@@ -71,6 +71,11 @@ const (
 	// never launched. Not a failure and not a spent budget: the run settles
 	// blocked with an actionable message.
 	cycleQuotaBlocked
+	// cycleNoWork — the cycle's work disappeared without a merge: the agent
+	// examined the issues and closed them out as needing no code change. NOT a
+	// failure and NOT agent death, so the boundary simply re-polls, finds an
+	// empty working set and settles the run the ordinary way (ADR-0023).
+	cycleNoWork
 )
 
 // landing is how one dispatch attempt ended.
@@ -81,6 +86,11 @@ const (
 	landingConflict
 	landingCancelled
 	landingTimeout
+	// landingNoWork — the milestone's working set emptied while this attempt
+	// held no pull request. Whether that really ends the attempt is decided
+	// against the cycle record, not this signal: a merge empties the working set
+	// too, and the merge must win.
+	landingNoWork
 )
 
 // noAnchorIssue is the anchor a cycle over a whole WORKING SET passes: none. A
@@ -220,6 +230,7 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 		attemptCtx, stopDeadline := workflow.WithCancel(ctx)
 		deadline := workflow.NewTimer(attemptCtx, cycleLandingTimeout)
 		expired := false
+		noWork := false
 		for !expired {
 			switch l.awaitLanding(ctx, deadline) {
 			case landingCancelled:
@@ -228,6 +239,14 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 			case landingConflict:
 				stopDeadline()
 				return false, cycleConflict, nil
+			case landingNoWork:
+				// Deliberately does not return here. A merge empties the working
+				// set as well, and the cycle record below is the only thing that
+				// says whether one happened — so the merge check runs first and
+				// wins. Only if nothing landed is the emptied working set the
+				// real ending.
+				stopDeadline()
+				noWork = true
 			case landingTimeout:
 				expired = true
 			case landingMergeSignalled:
@@ -253,6 +272,9 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 				stopDeadline()
 				// Landed: the verdict is the next stage's, not this loop's.
 				return true, cycleNone, nil
+			}
+			if noWork {
+				return false, cycleNoWork, nil
 			}
 		}
 		stopDeadline()
@@ -283,6 +305,10 @@ func (l *loop) awaitLanding(ctx workflow.Context, deadline workflow.Future) land
 	sel.AddReceive(l.conflict, func(c workflow.ReceiveChannel, _ bool) {
 		c.Receive(ctx, nil)
 		out = landingConflict
+	})
+	sel.AddReceive(l.noWork, func(c workflow.ReceiveChannel, _ bool) {
+		c.Receive(ctx, nil)
+		out = landingNoWork
 	})
 	sel.AddReceive(l.merged, func(c workflow.ReceiveChannel, _ bool) {
 		c.Receive(ctx, nil)

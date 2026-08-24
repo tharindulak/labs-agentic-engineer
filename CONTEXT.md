@@ -259,7 +259,7 @@ issue body, encoding its structured facts. Nothing parses an issue body for
 structure any more: **a Task body is prose**, and the platform's whole structure
 is labels plus milestone membership. The one deliberate exception is the
 **Recurrence section**, which the platform both writes and counts — see below,
-and see the caveat recorded in ADR-0018.
+and see the caveat recorded in ADR-0021.
 _Avoid_: reviving a body block as platform-readable structure.
 
 **Lineage**:
@@ -351,6 +351,22 @@ has told us nothing. It is a *declaration*, not a score or a measurement.
 _Avoid_: confidence score, certainty (nothing is quantified), review verdict (no
 second party judges), gate (it stopped being one — see **Merge hold**).
 
+**Advertised URL**:
+A URL a deployment publishes for a component. OpenChoreo derives them from the
+endpoint's *shape*, not from what the gateway serves, so a plane whose gateway
+terminates no TLS still advertises an https URL beside its http one. An
+advertised URL is therefore a claim, never evidence — the distinction that
+decides whether a link merely looks wrong or a validation cannot start at all.
+_Avoid_: public URL, endpoint (both read as "the address that works").
+
+**Reachable URL**:
+An advertised URL that answered when something dialled it. Only the runner's
+preflight can establish this, because it is the only step that dials, and from
+the network position that matters — inside the pod. The platform *states* which
+scheme a plane serves (from the gateway's declared TLS); the preflight *proves*
+it (ADR-0024).
+_Avoid_: valid, live (neither says who checked, or from where).
+
 **No-change verdict**:
 A coding agent's conclusion that no code change can resolve an incident —
 recorded by closing its issue as `not_planned`, with the reasoning as a comment.
@@ -387,7 +403,7 @@ It could not survive a real repository: the confidence bar it read requires a
 regression test, and a project with no test harness cannot ever satisfy that — so
 it held every fix, discriminated between none of them, and parked the run each
 time. Replaced by the **Unverified fix**, which moves the safety from a human in
-front of the merge to an open issue behind it (ADR-0019).
+front of the merge to an open issue behind it (ADR-0022).
 _Avoid_: reviving a gate whose criteria a project can be structurally unable to
 meet.
 

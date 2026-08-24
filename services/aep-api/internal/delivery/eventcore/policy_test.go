@@ -343,7 +343,7 @@ func TestBudgetIsOnePerComponentPerSHA(t *testing.T) {
 }
 
 // The confidence RULE. It no longer decides whether an incident fix merges —
-// everything merges — only whether the issue behind it closes (ADR-0019).
+// everything merges — only whether the issue behind it closes (ADR-0022).
 func TestDecideAutoMerge_ConfidenceRule(t *testing.T) {
 	incidentWork := []sourcecontrol.IssueInfo{
 		{Number: 40, State: "open", Labels: []string{delivery.LabelAgentWork, sourcecontrol.LabelSREAgent}},

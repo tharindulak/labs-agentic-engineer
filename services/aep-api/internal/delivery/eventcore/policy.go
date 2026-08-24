@@ -49,7 +49,7 @@ type mergeDecision struct {
 	// Unverified: this is an incident fix whose author did not vouch for it, so
 	// it merges like any other pull request but its issues must NOT be left
 	// closed behind it. Nothing is held on it — the safety is the issue staying
-	// open afterwards, not a human standing in front of the merge (ADR-0019).
+	// open afterwards, not a human standing in front of the merge (ADR-0022).
 	Unverified bool
 }
 
@@ -105,7 +105,7 @@ type mergeDecision struct {
 // rather than whether it happens: a fix the coding agent did not declare
 // high-confidence still merges, but its issues are left open behind it as
 // unverified. Holding the merge instead was tried and withdrawn — see the
-// confidence rule below and ADR-0019.
+// confidence rule below and ADR-0022.
 func decideAutoMerge(resolves, validates []int, milestoneIssues []sourcecontrol.IssueInfo, body string) mergeDecision {
 	if len(resolves) == 0 && len(validates) == 0 {
 		return mergeDecision{Reason: "pull request references no issue"}
@@ -164,7 +164,7 @@ func decideAutoMerge(resolves, validates []int, milestoneIssues []sourcecontrol.
 }
 
 // The confidence rule. It decides whether a merged incident fix CLOSES the issue
-// behind it, and nothing else — see ADR-0019 for why the human gate this
+// behind it, and nothing else — see ADR-0022 for why the human gate this
 // replaces could not survive a real repository.
 //
 // Two properties matter more than the parsing:

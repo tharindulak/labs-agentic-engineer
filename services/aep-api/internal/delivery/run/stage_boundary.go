@@ -177,6 +177,7 @@ type loop struct {
 	merged   workflow.ReceiveChannel
 	builds   workflow.ReceiveChannel
 	conflict workflow.ReceiveChannel
+	noWork   workflow.ReceiveChannel
 
 	// lastResult is what the previous cycle produced — it selects the next
 	// cycle's kind and feeds the no-progress rule.
@@ -258,6 +259,7 @@ func newLoop(ctx workflow.Context, in RunInput) *loop {
 		merged:                workflow.GetSignalChannel(ctx, delivery.SigRunPRMerged),
 		builds:                workflow.GetSignalChannel(ctx, delivery.SigRunBuildTerminal),
 		conflict:              workflow.GetSignalChannel(ctx, delivery.SigRunConflict),
+		noWork:                workflow.GetSignalChannel(ctx, delivery.SigRunNoWork),
 		st: delivery.RunStatus{
 			RunID:           in.RunID,
 			MilestoneNumber: in.MilestoneNumber,

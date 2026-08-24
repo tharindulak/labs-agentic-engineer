@@ -479,7 +479,7 @@ settled by now) and adopted again. One incident, one thread, however many
 attempts. Not bounded by time. A human's `not_planned` close never recurs.
 
 **Escalation** past attempt 3 is loud and nothing more: the recurrence is
-reported on the issue and the console, and worked anyway. See ADR-0018.
+reported on the issue and the console, and worked anyway. See ADR-0021.
 
 ### Confidence declaration
 The `Confidence: high|low` line a coding agent puts in its pull request body,
@@ -493,7 +493,7 @@ A coding agent's conclusion that no code change can resolve an incident, recorde
 by closing the issue as `not_planned` with its reasoning. Ends the cycle (the
 working set empties under a pull-request-less cycle → `SigRunNoWork` →
 `cycleNoWork`, which is not a failure), and **suppresses** the next alert with the
-same dedupe key. Reopening the issue reverses both. See ADR-0020.
+same dedupe key. Reopening the issue reverses both. See ADR-0023.
 
 ### Suppression
 The handoff filing nothing because a no-change verdict already answers this
@@ -509,7 +509,7 @@ closes it if the version moves on first.
 
 **Merge hold** is retired. Holding the merge could not survive a project with no
 test harness, where the confidence bar can never be met and every fix was held.
-See ADR-0019.
+See ADR-0022.
 
 ### Terminal reason
 Why a non-succeeded run stopped. Each value names exactly ONE failure class —

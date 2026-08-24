@@ -189,7 +189,7 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// milestone_run_kind.go.
 		ctxStep("milestone_run_kind", RunMilestoneRunKind),
 		// rca_agent_reports gains `recurrence` — which attempt an incident is on
-		// (ADR-0018). Additive and separate from phase10 because that step is
+		// (ADR-0021). Additive and separate from phase10 because that step is
 		// hasTable-guarded, so it cannot carry a new column to a database that
 		// already has the table.
 		ctxStep("phase14_rca_report_recurrence", RunPhase14RcaReportRecurrence),

@@ -69,7 +69,7 @@ type RcaAgentReport struct {
 	// Recurrence: which attempt this incident is on — 1 for a first filing, 2 for
 	// the first recurrence, and so on. Above 1 it means a fix the platform
 	// already merged did not resolve this incident, so its issue was reopened
-	// rather than re-filed (ADR-0018). It is the report's whole record of the
+	// rather than re-filed (ADR-0021). It is the report's whole record of the
 	// loop's own track record, and the only place a human triaging sees "this is
 	// the third try" without opening GitHub.
 	//
