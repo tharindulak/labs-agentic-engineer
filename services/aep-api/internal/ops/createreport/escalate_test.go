@@ -90,12 +90,28 @@ func TestShouldEscalate_SkipsCodeLevelAndMixed(t *testing.T) {
 	}
 }
 
-func TestShouldEscalate_SkipsWhenConfidenceIsNotHigh(t *testing.T) {
+// Confidence is no longer a gate: any code the report suspects is handed over.
+// A low-confidence root cause with a code-level action is still a code-level
+// action nobody addressed, and an unfiled defect is dropped for good.
+func TestShouldEscalate_EscalatesOnAnyCodeSuspicionRegardlessOfConfidence(t *testing.T) {
+	t.Parallel()
+	for _, confidence := range []string{"high", "medium", "low"} {
+		r := declinedReport()
+		r.Diagnosis = strings.ReplaceAll(r.Diagnosis, "confidence: high", "confidence: "+confidence)
+		got := shouldEscalate(r)
+		if !got.escalate {
+			t.Fatalf("confidence %q: must still escalate; reason=%q", confidence, got.reason)
+		}
+	}
+}
+
+// No confidence annotation at all is the same case: the actions are what matter.
+func TestShouldEscalate_EscalatesWithNoConfidenceAnnotation(t *testing.T) {
 	t.Parallel()
 	r := declinedReport()
-	r.Diagnosis = strings.ReplaceAll(r.Diagnosis, "confidence: high", "confidence: low")
-	if shouldEscalate(r).escalate {
-		t.Fatal("only a high-confidence root cause escalates")
+	r.Diagnosis = strings.ReplaceAll(r.Diagnosis, " _(confidence: high)_", "")
+	if got := shouldEscalate(r); !got.escalate {
+		t.Fatalf("a missing confidence annotation must not block a code-level action; reason=%q", got.reason)
 	}
 }
 
@@ -138,10 +154,10 @@ func TestEscalationIssue_CarriesActionsAndPreserveGuard(t *testing.T) {
 			t.Fatalf("body must carry the code-level action %q:\n%s", want, body)
 		}
 	}
-	// Test-11's fix regressed four acceptance criteria by quietly changing a
-	// default, so every escalated issue has to say not to.
-	if !strings.Contains(body, "must not change") {
-		t.Fatalf("body must carry a what-must-not-change guard:\n%s", body)
+	// An earlier escalated fix regressed four acceptance criteria by quietly
+	// changing a default, so every escalated issue has to say not to.
+	if !strings.Contains(body, "preserve every current default") {
+		t.Fatalf("body must carry a preserve-the-defaults guard:\n%s", body)
 	}
 	if !strings.Contains(body, "IDLE_TIMEOUT") {
 		t.Fatalf("body should note the config action as context:\n%s", body)
@@ -150,6 +166,43 @@ func TestEscalationIssue_CarriesActionsAndPreserveGuard(t *testing.T) {
 	// to know the agent argued against this.
 	if !strings.Contains(body, "ruled this out") {
 		t.Fatalf("body must record that the handoff declined:\n%s", body)
+	}
+}
+
+// A spec conflict is no longer grounds to withhold the issue — it is stated in
+// the issue and the coding agent decides. The handoff's own reasoning is quoted
+// so whoever reads it knows an agent argued against this.
+func TestEscalationIssue_StatesTheSpecConflictAndTheCriteriaCheck(t *testing.T) {
+	t.Parallel()
+	r := declinedReport()
+	r.Diagnosis += "\n## Handoff decision\n\n**Classification:** none\n\n" +
+		"Action 2 conflicts with AC-003-a, which fixes service2's delay at ~8s.\n"
+	dec := shouldEscalate(r)
+	_, body := escalationIssue(r, dec.actions)
+
+	// The conflict is carried, not used to drop the issue.
+	if !strings.Contains(body, "AC-003-a") {
+		t.Fatalf("body must quote the handoff's spec reasoning:\n%s", body)
+	}
+	// Prose alone did not hold — an earlier fix moved a default anyway — so the
+	// instruction has to name the file and demand a list.
+	if !strings.Contains(body, "specs/validation/validation-criteria.json") {
+		t.Fatalf("body must tell the agent which file to check:\n%s", body)
+	}
+	if !strings.Contains(body, "not planned") {
+		t.Fatalf("body must say what to do when a criterion blocks the change:\n%s", body)
+	}
+}
+
+// No handoff-decision section in the report: the issue still carries the check,
+// just nothing to quote.
+func TestEscalationIssue_CriteriaCheckSurvivesAMissingHandoffSection(t *testing.T) {
+	t.Parallel()
+	r := declinedReport()
+	dec := shouldEscalate(r)
+	_, body := escalationIssue(r, dec.actions)
+	if !strings.Contains(body, "specs/validation/validation-criteria.json") {
+		t.Fatalf("the criteria check is unconditional:\n%s", body)
 	}
 }
 

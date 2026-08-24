@@ -5,18 +5,18 @@ description: Decide whether an RCA root cause needs a code change, and if so fil
 
 # Issue-fix
 
-Your output is one judgment — `needs_code_change` — and one call that records it:
-`ae_create_issue` when it is true, `ae_decline_issue` when it is false. Filing an
-issue IS the handoff: AE puts it into the deployed version's milestone and starts
-a coding run over it in the same call. Declining is not free — it must justify
-itself, and the call refuses one that does not.
+Your output is one judgment — `needs_code_change` — and, when it is true, one
+GitHub issue. Filing that issue IS the handoff: AE puts it into the deployed
+version's milestone and starts a coding run over it in the same call. Declining
+is not free: it is checked per action against the data you were given, and a
+decline that does not hold up comes back to you for a second look.
 
 ## OBJECTIVES
 
 1. Decide `needs_code_change` (see DECIDING).
    *Done when* you can name the specific change to the codebase that would help,
    or name which of the two ruled-out cases this is — and, for every remaining
-   action, the hardening change you considered and why it contradicts the spec.
+   action, why there is no work there for a coding agent.
 2. When it is true, look for related issues (see RELATED-ISSUE DISCOVERY).
    *Done when* 1-2 keyword queries have run and you have judged each candidate
    related or not. A discovery pass, not the main task.
@@ -50,31 +50,31 @@ change, which usually means it is not a config problem.
 `status` may be absent entirely — the remediation agent did not run, nothing was
 triaged for you, and you are deciding from the root cause alone.
 
-**Ruled out** in exactly two cases, and ruling out is a CALL, not a silent
-ending: `ae_decline_issue` carries one `ruledOut` entry PER remaining action,
-each naming which of the two cases applies, why it applies to that action, and —
-in `hardeningRuledOut` — the hardening change you considered and why applying it
-would contradict the spec. An action you cannot map to one of the two cases is an
-action that needs a code change. The mapping is checked by that call: a decline
-that does not account for every action, or whose justification only asserts the
-behaviour was deliberate, is REFUSED with its reasons and comes straight back to
-you. Fix it or file the issue.
+**Ruled out** in exactly two cases, and a decline is made PER ACTION: one
+`ruled_out` entry for every remaining recommended action, each carrying its
+`index`, the `reason` that applies, and a `justification` naming what in THAT
+action makes the reason apply. An action you cannot map to one of the two
+reasons is an action that needs a code change.
 
-If your turn ends with neither an `ae_create_issue` nor an `ae_decline_issue`
-call, nothing was handed over and nothing was ruled out — the incident is simply
-dropped, and nothing retries a handoff. The two cases:
+Two of those claims are checkable without a model, and are checked: every
+remaining action must be accounted for, and `config_handled` is only true of a
+`revised` action. A decline that fails either comes back to you naming the gap.
+"The system works as designed" is not a justification. The two reasons:
 
-- Every remaining action is already actionable as configuration: `status:
-  "revised"` with a `change` object, which belongs to the remediation agent. When
+- `config_handled` — every remaining action is already actionable as
+  configuration: `status: "revised"` with a `change` object, which belongs to the
+  remediation agent. Only ever true of a `revised` action; claiming it for a
+  `suggested` one asserts a ReleaseBinding change that does not exist. When
   such an action sits alongside code-level ones, decide on the code-level ones
   and mention the config one in the body only as context ("the timeout was
   already raised in configuration; the retry loop still needs a fix"). The report
   deliberately shows you THAT it was handled, never the ReleaseBinding change
   itself, because the coding agent can only edit the repository — so ask for
   code, never for a configuration edit.
-- No remaining action names anything to change. Pure advice with no fault behind
-  it — "consider monitoring this", "review capacity" — leaves a coding agent
-  nothing to edit.
+- `pure_advice` — no remaining action names anything to change. No fault behind
+  it: "consider monitoring this", "review capacity" leaves a coding agent nothing
+  to edit. This is the subjective half and the reason you own the decision at
+  all, so it is the one claim nothing can check for you.
 
 ### As-designed behaviour can still be hardened
 
@@ -84,15 +84,27 @@ designed" as "there is nothing to fix". Those are different claims.
 A deliberate 8-second delay that trips a 5-second timeout IS intended — and
 "make the delay configurable" and "add retry with backoff" are hardening changes
 that leave the intent completely intact. The test is not *"was this behaviour
-deliberate?"* but *"is there a change to the code that would help and that does
-not contradict the spec?"* If yes, file it, and say which behaviour must be
-preserved.
+deliberate?"* but *"is there a change to the code that would help?"* If yes, file
+it.
 
-This is why `hardeningRuledOut` is required on every decline entry: naming the
-hardening change you considered forces the real test to be answered instead of
-substituted. "It is intended behaviour" fills the field with the wrong answer and
-`ae_decline_issue` refuses it. If the hardening change you name would NOT
-contradict the spec, you have just found the issue to file.
+### A spec conflict is not a decline either
+
+**"This change would break an acceptance criterion" is a line in the issue, not
+grounds to withhold it.** The criterion may be the thing that is wrong: a
+requirement someone got wrong is only ever discovered through the incident it
+causes, and an incident nobody is shown is a requirement nobody can correct.
+
+So when the code correctly implements a specified behaviour and the fix would
+contradict that specification, you still FILE — and you say so plainly in the
+body, naming the requirement or criterion involved. The coding agent has the
+repository and the spec in front of it; it decides, and closing the issue as
+`not_planned` with its reasoning is a first-class outcome (ADR-0023). Your job is
+to hand over the evidence, not to pre-empt that judgment.
+
+This is what a `justification` has to establish: that there is NO WORK, not that
+the work is unwelcome. "It is intended behaviour" and "it contradicts the spec"
+are both answers to a different question, and neither is one of the two
+permitted reasons.
 
 ## RELATED-ISSUE DISCOVERY
 
@@ -144,23 +156,30 @@ file nothing.
   each into a clickable reference and adds a "mentioned" event on the other
   issue's timeline, which is why you never comment on other issues yourself. Get
   the numbers right.
+- **Before you change a default**: tell the agent to read
+  `specs/validation/validation-criteria.json` and list the criteria its change
+  could affect, and to close the issue as not planned naming the criterion if any
+  would fail. A step with an output; prose alone has already failed — an issue
+  carrying "preserve every current default" still got a fix that moved a default
+  anyway and failed criteria that had been passing. Say which values matter only
+  by pointing at the criteria file, never by listing kinds of value: the kinds
+  that mattered in the last incident are the wrong ones for the next.
 - **What must not change**, whenever the root cause involves deliberate
   behaviour: one line, e.g. "the ~8s delay in `service2` is intended and must
-  remain the default; make it configurable rather than shorter". The coding agent
-  works from this issue alone and will otherwise "fix" exactly what the version's
-  acceptance criteria require — and the platform's own validation then fails the
-  version.
+  remain the default; make it configurable rather than shorter".
+- **Spec conflict**, whenever the fix would contradict the specification: name
+  the requirement or criterion, say the platform filed it anyway because the
+  requirement may be wrong, and leave the judgment to the coding agent.
 - Describe the problem and the desired outcome rather than a code diff; the
   coding agent designs the implementation.
 
 ## TOOL GUIDELINES
 
 - `ae_search_related_issues`: call before filing, scoped to your project.
-- `ae_decline_issue`: the terminal call when `needs_code_change` is false. One
-  `ruledOut` entry per remaining action; a decline that skips an action, stubs a
-  field, or rests on "it is intended" is refused with its reasons. Carry the same
-  `ruledOut` into the report's `## Ruled out` section so the judgment is
-  persisted with the diagnosis, not just checked in passing.
+- Declining needs no tool: it is `needs_code_change = false` plus one
+  `ruled_out` entry per remaining action. Carry that same mapping into the
+  report's `## Ruled out` section so the judgment is persisted with the
+  diagnosis, not just checked in passing.
 - `ae_create_issue`: scoped to your project, covering all code-level actions
   together. `dedupeKey`, `componentName`, `adopt` and the `sre-agent` label are
   attached for you — that label is what lets a human filter `label:sre-agent`

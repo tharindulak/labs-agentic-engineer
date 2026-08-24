@@ -38,8 +38,20 @@ import (
 // the one place AEP sees every report, on a path the handoff cannot skip, which
 // makes it the only place the outcome can be guaranteed rather than requested.
 //
-// The rule: a high-confidence root cause that names at least one code-level
-// action, declined without an issue, is filed and dispatched anyway.
+// The rule: ANY code the report suspects is handed over. A declined report that
+// names at least one code-level action is filed and dispatched anyway.
+//
+// Confidence is deliberately NOT a gate. A low-confidence root cause with an
+// unaddressed code-level action is still an unaddressed code-level action, and
+// the costs are not symmetric: an unfiled defect is dropped for good, while an
+// unnecessary issue is one the coding agent closes in minutes.
+//
+// Neither is a spec conflict a reason to withhold. "This change would break an
+// acceptance criterion" is stated IN the issue rather than used to drop it,
+// because the criterion may be the thing that is wrong — and a requirement
+// nobody is shown is a requirement nobody can correct. The coding agent has the
+// repository and the spec; it decides, and closing as not planned is a first
+// class answer (ADR-0023).
 //
 // Reading the decision out of markdown is a known compromise. `diagnosis` is one
 // free-text blob, so confidence and action status are recovered by pattern rather
@@ -57,10 +69,6 @@ const suggestedStatus = "_(suggested)_"
 const revisedStatus = "_(revised)_"
 
 var (
-	// highConfidence matches the root-cause confidence annotation, e.g.
-	// "_(confidence: high)_". Anchored on the label so a stray "high" in prose
-	// cannot trip it.
-	highConfidence = regexp.MustCompile(`(?i)confidence:\s*high`)
 	// actionBullet captures one recommended-action bullet and its status
 	// annotation. Rationale lines are indented and so never match.
 	actionBullet = regexp.MustCompile(`(?m)^-\s+(.*?)\s*(_\((?:suggested|revised)\)_)\s*$`)
@@ -99,9 +107,6 @@ func shouldEscalate(r *ops.RcaAgentReport) escalationDecision {
 	}
 	if !declinedClassifications[r.Classification] {
 		return escalationDecision{reason: fmt.Sprintf("classification %q means the handoff filed its own issue", r.Classification)}
-	}
-	if !highConfidence.MatchString(r.Diagnosis) {
-		return escalationDecision{reason: "no root cause is annotated confidence: high"}
 	}
 	code, config := splitActions(r.Diagnosis)
 	if len(code) == 0 {
@@ -162,12 +167,28 @@ func escalationIssue(r *ops.RcaAgentReport, actions []string) (title, body strin
 		fmt.Fprintf(&b, "\n## Root cause\n\n%s\n", strings.TrimSpace(r.Title))
 	}
 
-	b.WriteString("\n## What must not change\n\n")
-	b.WriteString("This issue asks for the actions above and nothing else. The version's " +
-		"acceptance criteria are passing — preserve every current default, status code, " +
-		"timing threshold and log line exactly as they are. If an action needs a value to " +
-		"become configurable, keep the value it has today as the default. A change that " +
-		"makes a passing criterion fail is a worse outcome than not fixing this at all.\n")
+	// Prose did not hold. An earlier escalated fix carried a "preserve every
+	// default" paragraph and moved a timeout default from 5s to 10s regardless,
+	// breaking four passing criteria. So this names the file and demands a list:
+	// a step with an output is harder to skim past than an exhortation.
+	b.WriteString("\n## Before you change a default\n\n")
+	b.WriteString("Read `specs/validation/validation-criteria.json` and list the criteria your " +
+		"change could affect. If any of them would fail, do NOT make the change — close this " +
+		"issue as not planned, naming the criterion that blocks it.\n\n")
+	// Deliberately generic: naming the KINDS of value to preserve would describe
+	// whichever incident happened to motivate this section and mislead every
+	// other one. The criteria file above supplies the specifics.
+	b.WriteString("Otherwise this issue asks for the actions above and nothing else: preserve " +
+		"every current default and every observable behaviour. If an action needs a value to " +
+		"become configurable, keep the value it has today as the default.\n")
+
+	if reasoning := handoffReasoning(r.Diagnosis); reasoning != "" {
+		b.WriteString("\n## The handoff argued against this\n\n")
+		b.WriteString(reasoning)
+		b.WriteString("\n\nThat reasoning may be right — but a spec conflict is not grounds to " +
+			"drop an incident, because the spec itself may be what is wrong. Judge it with the " +
+			"repository in front of you and say which it is.\n")
+	}
 
 	if len(r.Diagnosis) > 0 {
 		if _, config := splitActions(r.Diagnosis); len(config) > 0 {
@@ -179,13 +200,37 @@ func escalationIssue(r *ops.RcaAgentReport, actions []string) (title, body strin
 		}
 	}
 
-	fmt.Fprintf(&b, "\n---\n\nThe SRE handoff ruled this out (classification `%s`) while the root cause "+
-		"was annotated confidence: high and the actions above were left unaddressed, so the "+
-		"platform filed it. Its reasoning is in the RCA report's `## Handoff decision` "+
-		"section — read it before starting, and close this issue if the decline was right.\n",
-		r.Classification)
+	fmt.Fprintf(&b, "\n---\n\nThe SRE handoff ruled this out (classification `%s`) while the actions "+
+		"above were left unaddressed, so the platform filed it: any code an RCA suspects is "+
+		"handed over, because an unfiled defect is dropped for good. Closing this as not "+
+		"planned with your reasoning is a valid outcome.\n", r.Classification)
 
 	return title, b.String()
+}
+
+// handoffReasoning returns the report's `## Handoff decision` prose, which is
+// where the handoff explains a decline. Quoted into the issue so the coding
+// agent inherits the argument against the work rather than rediscovering it.
+//
+// Capped because the section can run to several hundred words and the issue body
+// has to stay readable; the full text is on the report either way.
+func handoffReasoning(diagnosis string) string {
+	const heading = "## Handoff decision"
+	i := strings.Index(diagnosis, heading)
+	if i < 0 {
+		return ""
+	}
+	body := diagnosis[i+len(heading):]
+	// Stop at the next same-level heading so a later section is not swallowed.
+	if j := strings.Index(body, "\n## "); j >= 0 {
+		body = body[:j]
+	}
+	body = strings.TrimSpace(body)
+	const cap = 1500
+	if len(body) > cap {
+		body = strings.TrimSpace(body[:cap]) + "\n\n_(truncated — full reasoning is on the RCA report)_"
+	}
+	return body
 }
 
 // escalationDedupeKey scopes escalations to one per component, so a recurring

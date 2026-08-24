@@ -40,20 +40,31 @@ flowchart LR
 
 ## Escalation — filing what the handoff declined
 `createreport` files the issue itself when a report arrives **without** one, classified `none` or
-`config-level`, carrying a root cause annotated `confidence: high` **and** at least one recommended
-action the remediation agent could not express as configuration (`_(suggested)_`). Anything else is
-left alone, and the reason is logged.
+`config-level`, carrying at least one recommended action the remediation agent could not express as
+configuration (`_(suggested)_`). Anything else is left alone, and the reason is logged.
+
+**Any code the RCA suspects is handed over.** Confidence is deliberately not a gate — a
+low-confidence root cause with an unaddressed code-level action is still an unaddressed code-level
+action, and the costs are asymmetric: an unfiled defect is dropped for good, an unnecessary issue is
+closed in minutes. Nor is a spec conflict grounds to withhold: "this would break an acceptance
+criterion" is stated IN the issue, because the criterion may be what is wrong and a requirement
+nobody is shown is a requirement nobody can correct. The coding agent has the repository and
+decides; `not_planned` is a first-class answer (ADR-0023).
 
 The rule lives here because this is the only path AEP sees every report on and the handoff cannot
 skip it. Guidance was tried first and did not hold: the `issue-fix` skill already names this exact
 scenario as the likeliest way to get the decision wrong, and a report was still declined by an agent
 running the updated skill.
 
-Two properties the escalated issue must keep:
-- **A `## What must not change` section.** An earlier escalated fix made a timeout configurable *and*
-  moved its default, breaking four passing acceptance criteria. Configurability is the ask; changed
-  behaviour is not.
-- **The handoff's decline, quoted.** A wrong escalation should be closable in seconds.
+Three properties the escalated issue must keep:
+- **A `## Before you change a default` section** naming `specs/validation/validation-criteria.json`
+  and demanding a list of affected criteria. An earlier escalated fix carried a prose "preserve every
+  default" paragraph and moved a default anyway, failing criteria that had been passing — a step with
+  an output is harder to skim past than an exhortation. The wording stays generic about WHICH values
+  matter; the criteria file is what supplies the specifics for a given project.
+- **The handoff's reasoning, quoted** from the report's `## Handoff decision` section, so the coding
+  agent inherits the argument against the work instead of rediscovering it.
+- **The spec conflict stated, never used to withhold.** See above.
 
 ## Invariants — don't break
 - **Escalation never fails the write.** A report that cannot be stored is an incident nothing
