@@ -41,3 +41,28 @@ re-apply the ConfigMap) and restart the agent — no SRE image rebuild.
 
 > Edit this file, not any copy on the agent side. There is no committed copy in
 > the SRE repo; the only other instance is the transient ConfigMap.
+
+### No citations into this repo
+
+`SKILL.md` reaches the pod alone (below), so a reference to anything in AEP's
+tree — an ADR number, a doc path, a package README — is a pointer the agent
+cannot resolve and pays tokens to carry. Provenance for the skill's rules
+belongs here instead:
+
+- **`not_planned` is a first-class outcome** — [ADR-0023](../../../docs/decisions/ADR-0023-a-cycle-can-end-because-no-code-change-is-possible.md).
+  A cycle may end because no code change is possible; the skill states the rule
+  without citing it.
+
+`specs/validation/validation-criteria.json` is the exception that is not one: the
+skill has the sub-agent write that path INTO the issue body, and the coding agent
+reading it does have the repository.
+
+### One file reaches the pod
+
+The ConfigMap is rendered `--from-file=SKILL.md` and mounted with a single
+`items[].path`, so **`SKILL.md` is the only file the agent ever sees**. A skill
+split into sibling files — the usual cure for a long skill, pushing reference
+behind a pointer — would leave the agent reading a pointer to a path that does
+not exist in the pod, and the failure is silent: the skill still loads, minus
+whatever moved. Keep each skill's content in its own `SKILL.md`, or extend step
+3d to render every file as a ConfigMap key with a matching `items[]` entry first.
