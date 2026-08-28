@@ -87,26 +87,20 @@ type escalationDecision struct {
 	configActions []string
 }
 
-// declinedClassifications are the two classifications that mean "no issue was
-// filed". code-level and mixed both mean the handoff filed one itself.
-var declinedClassifications = map[string]bool{
-	"none":         true,
-	"config-level": true,
-}
-
 // shouldEscalate applies the rule. Every gate is a reason a coding agent would
 // have nothing to do, or would duplicate work already done.
 func shouldEscalate(r *ops.RcaAgentReport) escalationDecision {
 	if r == nil {
 		return escalationDecision{reason: "no report"}
 	}
-	// An issue already exists: the handoff filed, or a previous escalation did.
-	// Re-filing pays for a second coding cycle on one incident.
+	// The issue number is the ONLY evidence that an issue exists, and it is the
+	// only thing checked. Classification is not evidence: a handoff can answer
+	// needs_code_change=true and still end its turn without calling
+	// ae_create_issue, leaving a `code-level` or `mixed` report with nothing
+	// filed. That drop is the deceptive one — it looks like the system working —
+	// and it has been observed on two projects.
 	if r.IssueNumber != nil {
 		return escalationDecision{reason: "an issue is already recorded on this report"}
-	}
-	if !declinedClassifications[r.Classification] {
-		return escalationDecision{reason: fmt.Sprintf("classification %q means the handoff filed its own issue", r.Classification)}
 	}
 	code, config := splitActions(r.Diagnosis)
 	if len(code) == 0 {

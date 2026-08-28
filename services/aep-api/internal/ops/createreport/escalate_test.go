@@ -79,13 +79,35 @@ func TestShouldEscalate_SkipsWhenAnIssueWasAlreadyFiled(t *testing.T) {
 	}
 }
 
-func TestShouldEscalate_SkipsCodeLevelAndMixed(t *testing.T) {
+// Classification is not evidence that an issue exists. A handoff can judge that
+// code work IS needed and still end its turn without calling ae_create_issue —
+// observed twice, on two projects: report 28ecfe42 (`mixed`) and the slow-backend
+// incident the SRE agent's own test suite records (`code_level`). That drop is
+// the deceptive one, because a code-level report with no issue looks like the
+// system working.
+func TestShouldEscalate_EscalatesWhenNoIssueWasFiledWhateverTheClassification(t *testing.T) {
 	t.Parallel()
-	for _, c := range []string{"code-level", "mixed"} {
+	for _, c := range []string{"none", "config-level", "code-level", "mixed"} {
 		r := declinedReport()
 		r.Classification = c
+		got := shouldEscalate(r)
+		if !got.escalate {
+			t.Fatalf("classification %q with no issue recorded must escalate; reason=%q", c, got.reason)
+		}
+	}
+}
+
+// The one thing that does prove an issue exists is the issue number, and it is
+// checked first — so a filed report is never re-filed, whatever it is classified.
+func TestShouldEscalate_SkipsAnyClassificationOnceAnIssueIsRecorded(t *testing.T) {
+	t.Parallel()
+	for _, c := range []string{"none", "config-level", "code-level", "mixed"} {
+		r := declinedReport()
+		r.Classification = c
+		n := int64(5)
+		r.IssueNumber = &n
 		if shouldEscalate(r).escalate {
-			t.Fatalf("classification %q already means the handoff filed; must not escalate", c)
+			t.Fatalf("classification %q with an issue recorded must not escalate", c)
 		}
 	}
 }

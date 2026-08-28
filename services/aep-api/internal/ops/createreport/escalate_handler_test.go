@@ -100,11 +100,16 @@ func TestCreateReport_EscalatesHighConfidenceDecline(t *testing.T) {
 	}
 }
 
+// What proves the handoff filed is the issue NUMBER on the report, not its
+// classification — a `code-level` report with no number means it judged code
+// work was needed and then filed nothing, which is the case that must escalate.
 func TestCreateReport_DoesNotEscalateWhenTheHandoffFiled(t *testing.T) {
 	repo := &fakeRepo{}
 	filer := &fakeFiler{res: ops.FiledIssue{Number: 99}}
 	body := declinedBody()
 	body.Classification = "code-level"
+	filed := int64(12)
+	body.IssueNumber = &filed
 
 	if _, err := New(repo).WithEscalator(filer).CreateRcaAgentReport(ctxWithOrg("acme"),
 		gen.CreateRcaAgentReportRequestObject{Body: body}); err != nil {
