@@ -80,7 +80,7 @@ func (l *loop) awaitWake(ctx workflow.Context, poll time.Duration, deadline work
 		c.Receive(ctx, nil)
 		cancelled = true
 	})
-	for _, ch := range []workflow.ReceiveChannel{l.builds, l.workable, l.merged, l.conflict} {
+	for _, ch := range []workflow.ReceiveChannel{l.builds, l.workable, l.merged, l.conflict, l.valuesSaved} {
 		sel.AddReceive(ch, func(c workflow.ReceiveChannel, _ bool) { c.Receive(ctx, nil) })
 	}
 	sel.AddFuture(workflow.NewTimer(timerCtx, poll), func(workflow.Future) {})

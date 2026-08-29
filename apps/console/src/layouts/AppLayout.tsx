@@ -32,6 +32,7 @@ import {
   useAppShell,
 } from "@wso2/oxygen-ui";
 import {
+  Boxes,
   CircleAlert,
   CircleCheck,
   FileText,
@@ -39,6 +40,7 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  Radio,
   Rocket,
   Settings,
   Siren,
@@ -68,6 +70,8 @@ const REPO_URL = "https://github.com/wso2/labs-agentic-engineer";
 // (global nav) or per project section (project nav, ADR-0010).
 function activeItemFor(pathname: string, inProject: boolean): string {
   if (pathname.startsWith("/settings")) return "settings";
+  if (pathname.startsWith("/resources")) return "resources";
+  if (pathname.startsWith("/endpoints")) return "endpoints";
   if (pathname.startsWith("/alerts")) return "alerts";
   if (!inProject) return "projects";
   const section = pathname.split("/")[3];
@@ -112,13 +116,14 @@ export function AppLayout() {
   // The spec workspace is the console's full-screen surface (#80).
   const isSpecRoute = Boolean(projectName) && activeItem === "spec";
 
-  // "Generate spec" CTA (#150): the Spec card navigates here with ?generate=1.
-  // Open the panel and hand the one-shot signal to AgentChatPanel, which sends
-  // the first requirements turn; then strip the param so a refresh/back doesn't
-  // re-fire it.
+  // "Generate design" CTA (#159): the spec view navigates to itself with
+  // ?generate=design. Open the panel and hand the one-shot signal to
+  // AgentChatPanel, which sends the design turn; then strip the param so a
+  // refresh/back doesn't re-fire it.
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as {
-    generate?: "requirements" | "design";
+    generate?: "design";
+    chat?: "open";
   };
   const generate = search.generate;
   useEffect(() => {
@@ -133,6 +138,30 @@ export function AppLayout() {
       replace: true,
     });
   }, [navigate, projectName]);
+
+  // Landing from project creation (#562): the platform already fired `/start`,
+  // so the panel opens on arrival and the user's first sight of the project is
+  // the agent working from their own words. Stripped immediately, and with
+  // `replace`, so this is the ARRIVAL's behaviour and not the URL's — a
+  // refresh, a Back, or a shared link must not reopen a panel the user closed.
+  //
+  // Sits beside `generate` rather than folding into it because they are not the
+  // same act: that one hands a command across a navigation, this one only
+  // raises a surface.
+  const chatParam = search.chat;
+  useEffect(() => {
+    // Overview only — the strip below navigates there, so honouring the param
+    // on a sibling project route would MOVE the user, which this journey never
+    // does. Only the create flow sends it, and only to the overview.
+    if (chatParam !== "open" || !projectName || activeItem !== "overview") return;
+    setChatOpen(true);
+    void navigate({
+      to: "/projects/$projectName",
+      params: { projectName },
+      search: {},
+      replace: true,
+    });
+  }, [chatParam, projectName, activeItem, navigate]);
 
   // "Resolve via chat" (#252 Task 5): the dep card / drawer / build drawer
   // (Task 9) seeds a message into chatStore's pendingSeed slot from a
@@ -303,6 +332,18 @@ export function AppLayout() {
                     <FolderOpen />
                   </Sidebar.ItemIcon>
                   <Sidebar.ItemLabel>Projects</Sidebar.ItemLabel>
+                </Sidebar.Item>
+                <Sidebar.Item id="resources" link={<Link to="/resources" />}>
+                  <Sidebar.ItemIcon>
+                    <Boxes />
+                  </Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Resources</Sidebar.ItemLabel>
+                </Sidebar.Item>
+                <Sidebar.Item id="endpoints" link={<Link to="/endpoints" />}>
+                  <Sidebar.ItemIcon>
+                    <Radio />
+                  </Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>Endpoints</Sidebar.ItemLabel>
                 </Sidebar.Item>
                 {/* Global Alerts section (#155) — RCA-agent reports across every project. */}
                 <Sidebar.Item id="alerts" link={<Link to="/alerts" />}>

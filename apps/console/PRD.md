@@ -63,14 +63,20 @@ moved on GitHub after that tag.
 Approved at section level; per-section detail is defined feature-by-feature.
 
 - **Home — projects list.** Empty state prompts the user to start an app
-  development (give a requirement → project is born).
+  development (give a requirement → project is born). Org-level sidebar (no
+  project in the route): **Projects · Resources · Endpoints · Alerts**;
+  Settings stays in the footer.
+- **Resources** — org catalog of External resources (`/resources`). Register
+  via chat + form; environment values stay on the form. A later project that
+  needs a registered name reuses it — Build does not re-collect those secrets.
 - **Project view** — inside a project the sidebar nav swaps to its sections
   (ADR-0010; no back-item, home is the header brand / project switcher):
   - **Overview** — component map + status, deployment state, recent activity.
   - **Spec** — the requirement, derived design + acceptance criteria.
-  - **Builds** — per-version build history: the selected build's summary +
-    its tag-scoped coding-agent task list (Version autocomplete for older
-    tags), per-task console log; PRs and issues link out to GitHub.
+  - **Builds** — the version ledger: one row per version, with its milestone,
+    status, duration and start. A row opens that version's
+    build — summary card, task list, External resources, coding-agent log,
+    build logs (ADR-0021, ADR-0023).
   - **Deployments** — dev environment state and URLs.
   - **Validations** — the runs checking a build against the spec's acceptance
     criteria.
@@ -85,6 +91,101 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- External dependency values are collected on a version's build page, not in
+  front of the Build button — provisioning authors every declared key EMPTY at
+  build time, so the coding agent gets its env vars defined and Build never
+  blocks on a credential nobody reads for another twenty minutes. The values are
+  supplied in an **External resources** section on `/builds/$tag`, a peer of the
+  Tasks list because outstanding values are work a person must do. The milestone
+  run's deploy stage then parks in `waiting` (`external-values`) until every key
+  holds a value; the build page's summary card names the blocking dependencies
+  and points at the section below it, and the run resumes and deploys on its own
+  once the last value is saved. A Registered External is outside the gate — its
+  values live on the org record, which no project surface can clear —
+  [ADR-0023](../../docs/decisions/ADR-0023-external-dependency-values-are-a-deploy-gate.md)
+- Empty states teach *what*, never narrate the *how* — the five flow-narrating
+  empty states (Builds, Deployments, Validations, Components, Recent activity)
+  now say what lives on the page and why it is empty, retiring *published* /
+  *plan* from all of them; Builds, the one surface a user can act on, gains a
+  **Go to the spec** CTA. Wordings live in the lexicon's **Empty states**
+  section — [#577](https://github.com/wso2/labs-agentic-engineer/issues/577)
+- Builds, rebuilt as a version ledger — **one row per version** (milestone,
+  status, duration, start), and the now-first run story it
+  replaced moves to its own page at `/builds/$tag`: a summary card, then Tasks,
+  External resources, the coding-agent log and the build logs as collapsible
+  sections. Provisioning
+  gates render as **task rows** rather than a separate stage, each with its own
+  way out, which is what retires the stage rail. A task row's five states are
+  DERIVED — `derivedStatus` is two-valued, so blocked / in-progress / in-review
+  come from `hold`, `blockedBy` and the newest execution — and its second line is
+  the issue's newest comment. `/builds/:issueNumber` and `/tasks/:issueNumber`
+  swap roles so the version can own the `/builds` segment; old links still
+  resolve. **No contract change**: the ledger's remaining cells come from the
+  deploy aggregate the layout already polls. It carries no task counts, because
+  an untagged list-tasks response cannot be attributed to versions and a
+  tag-scoped one would be a GitHub-backed request per row —
+  [#609](https://github.com/wso2/labs-agentic-engineer/issues/609) (ADR-0021,
+  superseding ADR-0015)
+- Resources catalog lives at `/resources` (not Settings). Register an External
+  resource through chat that can question then draft the form (secrets stay on
+  the form). A new project that needs an already-registered API reuses that
+  name; after aep-api restart the catalog still treats it as configured, so
+  Build does not ask for the token again —
+  [#636](https://github.com/wso2/labs-agentic-engineer/pull/636)
+  (ADR-0021; catalog move on
+  [#626](https://github.com/wso2/labs-agentic-engineer/pull/626))
+- The journey starts itself — creating a project **fires `/start` server-side**,
+  so the user lands on the overview with the agent chat already open, the
+  transcript showing `/start` beside their own idea (cropped), and the Spec card
+  reading **Writing requirements** with **Open spec** as its CTA: generation is
+  already underway, so there is nothing left to ask for. A project created WITH
+  reference documents declares `referencesPending`, and the platform holds the
+  kickoff until the upload lands — they are the primary brief, and an interview
+  started before they arrive is conducted blind. The spec view,
+  opened before the interview has asked anything, says *"Agent is working on the
+  requirements document"*. **Nothing auto-navigates**, and the `?generate=`
+  handshake between the overview CTA and the spec view is retired: the CTA that
+  still starts an interview seeds the chat from wherever the user is. Its
+  remaining forms are resumption affordances — **Try again** over a kickoff that
+  died, **Generate spec** on a project nothing ever started —
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)
+  (contract: `SpecStage.agent`, `CreateProjectRequest.referencesPending`)
+- Spec view — the rail is the flow: **Requirements · Design · Validation**
+  each carrying state (ready · being worked on · needs attention · not begun),
+  documents named as documents rather than files (*Product requirements*,
+  *Design overview*, *Acceptance criteria*), and the app's existing pulse on a
+  section an agent is writing. An amber section explains itself in **rows** —
+  *N assumptions to challenge*, *N open questions*, *The requirements have
+  changed since* — each going where the work already happens. Staleness is
+  derived by comparing the requirements against the snapshot the last design run
+  read, so nothing is stored and nothing can fall out of sync; **an outdated
+  design is refused by the build gate**, joining the refusal Build already shows
+  on click. Retires *"Being derived…"*, which claimed work over sections nobody
+  had asked for —
+  [#575](https://github.com/wso2/labs-agentic-engineer/issues/575)
+  (contract: `SpecStage.designOutdated`)
+- Overview — the spec card stops rewriting itself: **one button** (*Open spec*)
+  in every state instead of three captions walked during a single kickoff with
+  no user input, and **one line that always says something** instead of blanking
+  the moment the agent asked a question. The card is a destination and never a
+  send — every way of STARTING work moved to the spec view, which offers
+  **Retry** in exactly two states: under the failure alert when a kickoff died
+  (the only state that can be *known* rather than inferred, so the button can
+  never appear mid-kickoff), and on an empty workspace with nothing running. The kickoff now fires **inline** with `POST /projects`, so
+  the create answers only once the turn exists — which is what makes
+  `spec.agent == ""` mean *never started* rather than also *starting right now* —
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)
+  (no contract change)
+- Agent chat — the transcript keeps up with the work: your own message paints
+  the moment you send it rather than when the dispatch answers; a turn this
+  browser did not send (the creation-time kickoff, or a teammate's) shows who
+  started it and what they said, from a display record carried on the turn
+  itself — the conversation store only records a turn once it has finished; a
+  cold panel looks for a running turn every ~2s instead of every 12s; and a
+  question arriving **no longer moves the user** — the pill says the agent is
+  waiting and the click is what opens the form —
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562)
+  (contract: `TurnStatus.instruction` / `authorId` / `authorDisplayName`)
 - Spec view — the PRD is the interface: each PRD section carries a **code
   lens** firing the command that belongs there — `/actor` on Actors,
   `/feature` on the story list, `/expand` on each story, `/settle` over Open
@@ -137,8 +238,10 @@ here: they're the open `console` + `feature` issues.
   group per screen; no contract change —
   [#552](https://github.com/wso2/labs-agentic-engineer/issues/552)
 - Project create — reference document upload on the "What do you want to
-  build?" view: `.md`/`.txt`/`.pdf`/`.png`/`.jpg`/`.jpeg` (≤10 files, ≤5 MB
-  each) attached in a chat-style composer and uploaded post-create over
+  build?" view. Two groups, both readable by the models: `.pdf`/`.png`/`.jpg`/
+  `.jpeg`/`.gif`/`.webp` read natively as file parts, and `.md`/`.txt`/`.csv`/
+  `.tsv`/`.json`/`.yaml`/`.yml`/`.xml`/`.html`/`.rst` read as text (≤10 files,
+  ≤5 MB each) — attached in a chat-style composer and uploaded post-create over
   multipart to `POST /projects/{name}/references`. References are **transient
   turn inputs, never committed** (ADR-0017): bytes live on the shared
   `/workspaces` volume for the project's life and are overlaid into each turn's
@@ -146,6 +249,24 @@ here: they're the open `console` + `feature` issues.
   through the idea-steer channel. No console surface after create —
   [#383](https://github.com/wso2/labs-agentic-engineer/issues/383)
   (BE handshake: [#384](https://github.com/wso2/labs-agentic-engineer/issues/384))
+- Agent chat — attach files to a message: the composer takes a paperclip and a
+  drop target, the same cards and accepted set as the create view, and chips on
+  the sent message that survive a reload. Attachments are **conversation-scoped
+  model content** (ADR-0019): attachment BYTES are never written to disk and
+  never committed, and the file names are retained as message metadata so the
+  chips survive a reload — the bytes ride one multipart `POST
+  /projects/{p}/agents/{conversationId}/messages` into the turn and are durable
+  only as parts of the conversation's history, which is what makes re-sending
+  one free (the agents service dedupes by file name). The agent reads them
+  natively — a PDF as a document, an image as an image, every text format as
+  text — and the turn prompt NAMES them, so "add this as a separate form"
+  resolves to the file the user just attached rather than drawing a clarifying
+  question. Caps all restate the
+  model's own 20 MiB encoded per-turn budget: ≤10 files, ≤5 MB each, ≤15 MB raw
+  in total. Any turn started from the composer carries them — chat, flow and
+  `/start` alike — and the create view stays the only door to the project
+  reference store —
+  [#428](https://github.com/wso2/labs-agentic-engineer/issues/428)
 - Spec view — prototype user flows: `wireframes.dsl` declares named
   `flow "<name>"` blocks (optional `role`/`description` lines) listing each
   persona's screens in walkthrough order; the prototype toolbar leads with a
@@ -222,7 +343,11 @@ here: they're the open `console` + `feature` issues.
   to generate requirements (create does not auto-derive) —
   [#150](https://github.com/wso2/labs-agentic-engineer/issues/150)
   (no contract change; duplicate-generation guard deferred to
-  [#151](https://github.com/wso2/labs-agentic-engineer/issues/151))
+  [#151](https://github.com/wso2/labs-agentic-engineer/issues/151)).
+  *Superseded twice: the localStorage prompt copy by the project descriptor, and
+  the CTA-as-the-way-in by
+  [#562](https://github.com/wso2/labs-agentic-engineer/issues/562), which fires
+  the kickoff at creation and leaves the CTA as a resumption affordance.*
 - Onboarding — first-time credentials wizard for the default org (hard gate on
   incomplete `GET /config`): GitHub PAT + Anthropic key, then auto skills-repo
   bootstrap via extended `/skills/sync` —

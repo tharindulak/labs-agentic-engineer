@@ -441,6 +441,15 @@ func isInternalComponent(annotations, labels map[string]string) bool {
 	return labels[annotationInternal] == "true"
 }
 
+// internalMarkerLabels is the label set that marks an object as the platform's
+// own ephemeral scaffolding rather than one of the user's components. One
+// spelling for the pair, because the writer (EnsureReleaseBinding) and the
+// reader (ListProjectReleaseBindings) have to agree on it or a marked object is
+// counted as a deployment anyway.
+func internalMarkerLabels() map[string]string {
+	return map[string]string{string(LabelKeyAepInternal): LabelValueAepInternal}
+}
+
 func (c *componentClient) ListComponents(ctx context.Context, orgName, projectName string, limit int, cursor string) (*gen.ComponentList, error) {
 	params := &ocgen.ListComponentsParams{}
 	sel := ocgen.LabelSelectorParam(fmt.Sprintf("%s=%s", string(LabelKeyProject), projectName))
@@ -1053,7 +1062,23 @@ func (c *componentClient) ListDeployments(ctx context.Context, orgName, projectN
 }
 
 // ListProjectReleaseBindings lists the org's ReleaseBindings and keeps the
-// project's, following pagination — the status poll's single OC call.
+// project's USER-COMPONENT ones, following pagination — the status poll's single
+// OC call.
+//
+// Internally marked bindings are skipped, the same exclusion ListComponents
+// makes: every coding-agent cycle creates a real dev-environment binding owned
+// by the user's project, and because that binding wraps a batch/v1 Job (which
+// OpenChoreo registers no health check for) it reports Ready=True regardless of
+// the Job's state. Folded into the deploy stage those bindings reported a
+// project as "deployed" before anything had been deployed — and the project's
+// first run could never report "none" at all, since one finished cycle is
+// enough to leave a permanently-Ready binding behind.
+//
+// The predicate is client-side rather than a labelSelector on the request: this
+// loop already filters by project here, so one more test is free, and the 5s
+// status poll must not depend on openchoreo-api honouring a selector on
+// releasebindings. Bindings created before the marker existed carry no label and
+// are still returned; they age out with the retention pass.
 func (c *componentClient) ListProjectReleaseBindings(ctx context.Context, orgName, projectName string) ([]ReleaseBindingSummary, error) {
 	var out []ReleaseBindingSummary
 	params := &ocgen.ListReleaseBindingsParams{}
@@ -1071,6 +1096,16 @@ func (c *componentClient) ListProjectReleaseBindings(ctx context.Context, orgNam
 		}
 		for _, rb := range resp.JSON200.Items {
 			if rb.Spec == nil || rb.Spec.Owner.ProjectName != projectName {
+				continue
+			}
+			// The same predicate the Component read uses — it tests the marker,
+			// not a kind, and reusing it is what keeps the two exclusions from
+			// drifting onto different spellings of "internal".
+			var lbls map[string]string
+			if rb.Metadata.Labels != nil {
+				lbls = *rb.Metadata.Labels
+			}
+			if isInternalComponent(nil, lbls) {
 				continue
 			}
 			out = append(out, releaseBindingSummary(rb))

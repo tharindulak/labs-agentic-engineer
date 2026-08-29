@@ -52,6 +52,11 @@ type IssueClient interface {
 	// crash re-run dedupe against what is already there — the milestone, not a
 	// label query, is the version's membership.
 	ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
+	// ListMilestoneIssueComments reads the newest perIssue comments of every
+	// issue in one milestone, bucketed by issue number and oldest first, in ONE
+	// round trip. Milestone-scoped because that is the only bounded set of
+	// issues this surface can name — see ListByTag.
+	ListMilestoneIssueComments(ctx context.Context, orgID, projectID string, number, perIssue int) (map[int][]sourcecontrol.IssueComment, error)
 }
 
 // ComponentPathReader maps a design component to its source directory (appPath)
@@ -93,10 +98,9 @@ type GitReader interface {
 	Resolver() secrets.Resolver
 }
 
-// SkillsRepoResolver ensures the org's _skills repo is provisioned (the
-// task-planning flow skill is seeded there) and returns its row — the source
-// of the plan turn's SkillsRef snapshot. Wired at the composition root from
-// the skills feature so task holds no skills edge.
+// SkillsRepoResolver returns the org _skills git row used as the plan
+// turn's SkillsRef snapshot source. Production wires the same reconcile
+// resolver as genai turns so the library is not first-touch-only.
 type SkillsRepoResolver func(ctx context.Context, orgID string) (*sourcecontrol.GitRepository, error)
 
 // ExecutionReader is the read side of the executions rows (the platform-owned

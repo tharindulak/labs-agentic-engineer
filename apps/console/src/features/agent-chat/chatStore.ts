@@ -43,6 +43,17 @@ export type ChatMessage =
        * and logs from before this field simply render without a time.
        */
       createdAt?: number;
+      /**
+       * File NAMES attached to this message (#428) — never bytes. The bytes are
+       * conversation-scoped model content the platform never stores (ADR-0019),
+       * so there is nothing here to re-send or re-render from; these names exist
+       * only to say what went with the message.
+       *
+       * Optional and absent for every message without attachments, so logs
+       * persisted before this field still parse. On rehydrate they come from the
+       * turn journal, which is why chips survive a reload.
+       */
+      attachments?: string[];
     }
   | { id: string; role: "assistant"; turnId: string; content: string }
   | {
@@ -160,10 +171,49 @@ function nextId(): string {
 
 // Omit must distribute over the message union (a plain Omit collapses it to
 // the common fields).
-type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
+export type WithoutId<T> = T extends unknown ? Omit<T, "id"> : never;
 
-export function addMessage(key: string, msg: WithoutId<ChatMessage>): void {
-  persist(key, [...load(key), { ...msg, id: nextId() } as ChatMessage]);
+/** The shape `ensureUserMessage` takes: a user row that names its turn. */
+export type StartingUserMessage = WithoutId<Extract<ChatMessage, { role: "user" }>> & {
+  turnId: string;
+};
+
+/** Append a message; returns its generated id, for callers that must update
+ *  the row later (an optimistic send waiting on its turn id). */
+export function addMessage(key: string, msg: WithoutId<ChatMessage>): string {
+  const id = nextId();
+  persist(key, [...load(key), { ...msg, id } as ChatMessage]);
+  return id;
+}
+
+/**
+ * Settle an optimistic user row once the dispatch answers.
+ *
+ * A send paints its row BEFORE the POST — that request resolves the repo, the
+ * workspace ref, the Anthropic key, two git heads and two snapshot extracts
+ * before it returns a turn id, and the user watching their own message not
+ * appear for all of that has no way to tell a slow platform from a dropped
+ * one. So the row goes up first and is settled here: stamped with the turn it
+ * became, or marked failed if there wasn't one.
+ *
+ * Addressed by MESSAGE id rather than turn id, which is the whole point —
+ * until this runs the row has no turn id to be addressed by.
+ */
+export function settleUserMessage(
+  key: string,
+  messageId: string,
+  settled: { turnId: string } | { failed: true },
+): void {
+  persist(
+    key,
+    load(key).map((m) =>
+      m.role === "user" && m.id === messageId
+        ? "turnId" in settled
+          ? { ...m, turnId: settled.turnId }
+          : { ...m, status: "failed" as const }
+        : m,
+    ),
+  );
 }
 
 /**
@@ -258,6 +308,30 @@ export function setTurnStatus(
   );
 }
 
+/**
+ * Append the user row that STARTED a turn, unless the log already has one.
+ *
+ * For a turn this browser did not send — a teammate's, or the platform's own
+ * kickoff at project creation — there is no optimistic row and the server's
+ * transcript will not carry one until the turn ENDS, because the conversation
+ * store persists a turn's history only then. Without this the panel renders
+ * the agent narrating under a blank space for the whole turn, which on a fresh
+ * project is the user's entire first impression of the product.
+ *
+ * Idempotent on turnId, because every path that can call it runs more than
+ * once: mount, the foreign-turn poll, and a re-attach after a dropped stream.
+ * The sender's own row already carries the turnId, so their send no-ops here.
+ *
+ * The row is TRANSIENT. When the turn lands, the rehydrate replaces the log
+ * with the server's history — which by then does carry the real message — and
+ * this row goes with it. That is the intended handoff, not a leak.
+ */
+export function ensureUserMessage(key: string, msg: StartingUserMessage): void {
+  const messages = load(key);
+  if (messages.some((m) => m.role === "user" && m.turnId === msg.turnId)) return;
+  persist(key, [...messages, { ...msg, id: nextId() } as ChatMessage]);
+}
+
 /** Remove a turn's streamed output before a replay-from-0 re-attach. */
 export function dropTurnOutput(key: string, turnId: string): void {
   persist(
@@ -266,6 +340,36 @@ export function dropTurnOutput(key: string, turnId: string): void {
       (m) => m.role === "user" || !("turnId" in m) || m.turnId !== turnId,
     ),
   );
+}
+
+/**
+ * Drop the local-only rows a failed send left behind — the `failed` user row and
+ * any `error` rows.
+ *
+ * Those rows exist nowhere server-side, so the D6 rehydrate deliberately
+ * re-appends them after the server history on every mount, refocus and foreign
+ * turn (see useAgentChat). That preserved a message the user still needed, but
+ * it had no expiry: a failure stayed pinned to the BOTTOM of the thread
+ * forever, rendering after newer successful turns and reading as though
+ * something were retrying.
+ *
+ * A successful send is the signal that the failure is history — the user
+ * demonstrably got their message through — so the caller clears them there. It
+ * is also safe to lose them by then: a refused send keeps the typed text AND the
+ * attachment cards in the composer (ADR-0019), so the failed row stopped being
+ * the only copy.
+ *
+ * Only clears rows this client recorded; server history is untouched. A no-op
+ * when there is nothing to drop, so it never triggers a needless persist or a
+ * React remount of the whole log.
+ */
+export function clearFailedSends(key: string): void {
+  const current = load(key);
+  const kept = current.filter(
+    (m) => !(m.role === "error" || (m.role === "user" && m.status === "failed")),
+  );
+  if (kept.length === current.length) return;
+  persist(key, kept);
 }
 
 export function replaceMessages(key: string, messages: ChatMessage[]): void {
@@ -298,18 +402,44 @@ export function replaceMessages(key: string, messages: ChatMessage[]): void {
 // the message-log's own Map+listeners+subscribe shape above. The panel
 // consumes it exactly once (get-and-clear) so a re-render never re-sends it.
 
-const pendingSeeds = new Map<string, string>();
+/**
+ * A seed, plus whether the panel may refuse it.
+ *
+ * Most seeds are the user SPEAKING — submitted interview answers, a dependency
+ * they want discussed — and refusing one would destroy the only copy of what
+ * they said. `guarded` marks the exception: an INJECTED flow command, which
+ * nobody typed and which is destructive to send into an open exchange. Landing
+ * on an unanswered question form, a `/start` reads to the start skill as the
+ * user's skip valve, so the interview is silently replaced by the agent's own
+ * answers (see `agentEngaged`).
+ *
+ * The flag rather than a check on the text: "may this be refused" is a property
+ * of WHY the seed was written, and the caller is the only party that knows it.
+ */
+export interface PendingSeed {
+  message: string;
+  /** The panel may drop this rather than send it into an open exchange. */
+  guarded: boolean;
+}
+
+const pendingSeeds = new Map<string, PendingSeed>();
 const seedListeners = new Map<string, Set<() => void>>();
 
-/** Set the one-shot seed message the panel will auto-send next time it looks. */
-export function setPendingSeed(key: string, message: string): void {
-  pendingSeeds.set(key, message);
+/**
+ * Set the one-shot seed message the panel will auto-send next time it looks.
+ *
+ * `guarded` defaults to false — the safe default for a seed carrying the user's
+ * own words, which is every caller but the spec card's start CTA.
+ */
+export function setPendingSeed(key: string, message: string, guarded = false): void {
+  pendingSeeds.set(key, { message, guarded });
+  stampSeedForActivity(key);
   for (const fn of seedListeners.get(key) ?? []) fn();
 }
 
 /** Non-destructive read — for callers (e.g. "should the panel open?") that
  *  only need to know a seed is waiting, without consuming it. */
-export function peekPendingSeed(key: string): string | null {
+export function peekPendingSeed(key: string): PendingSeed | null {
   return pendingSeeds.get(key) ?? null;
 }
 
@@ -318,12 +448,13 @@ export function peekPendingSeed(key: string): string | null {
  *  `useSyncExternalStore` snapshot flips from true back to false only when
  *  a listener fires; without this, it would stay stuck `true` after the
  *  panel consumes the seed. */
-export function consumePendingSeed(key: string): string | null {
-  const msg = pendingSeeds.get(key);
-  if (msg === undefined) return null;
+export function consumePendingSeed(key: string): PendingSeed | null {
+  const seed = pendingSeeds.get(key);
+  if (seed === undefined) return null;
   pendingSeeds.delete(key);
+  clearSeedActivity(key);
   for (const fn of seedListeners.get(key) ?? []) fn();
-  return msg;
+  return seed;
 }
 
 export function subscribeSeed(key: string, fn: () => void): () => void {
@@ -395,4 +526,168 @@ export function registerDeterministicFlush(key: string): () => void {
 /** True while at least one deterministic flush listener is registered for `key`. */
 export function hasDeterministicFlush(key: string): boolean {
   return (deterministicFlushKeys.get(key) ?? 0) > 0;
+}
+
+// --- Log-write guards (#606) ---------------------------------------------
+//
+// Rehydrating the log from server truth used to belong to `useAgentChat`, so
+// the two conditions that must block a REPLACE lived there as component refs.
+// #606 gives the log THREE writers — the chat panel, the spec workspace and
+// the overview's spec card — because a member arriving without the panel
+// otherwise has no log at all, and every surface that reads one then reads an
+// empty conversation.
+//
+// The guards move here because they describe the LOG, not any one hook: any
+// writer must be able to ask "is it safe to replace this right now", and the
+// answer cannot live inside one of them.
+//
+// Both are per chatKey, and both are FAIL-CLOSED — an unknown key is safe to
+// replace, a marked key is not:
+//
+// - ATTACHED: a turn stream is being folded into this log. A replace would
+//   wash out the streamed partials the fold has appended so far, and (worse)
+//   the streaming question prefix `useRoomQuestion` is mirroring into the room.
+// - SENDING: a local send is mid-dispatch. Its optimistic user row has no turn
+//   id yet and the server has no record of it, so it survives neither the
+//   replace nor the `localOnly` filter that keeps error/failed rows — the
+//   user's own message would vanish between typing and dispatch.
+//
+// Ref-counted rather than boolean, for the same reason `registerDeterministicFlush`
+// is: a remount can overlap two registrations for one key, and the first
+// cleanup must not clear the second's claim.
+
+const attachedFolds = new Map<string, number>();
+const inFlightSends = new Map<string, number>();
+
+function claim(counts: Map<string, number>, key: string): () => void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+  notifyLocalTurnActivity(key);
+  let released = false;
+  return () => {
+    if (released) return; // idempotent: cleanup may run twice (StrictMode)
+    released = true;
+    const remaining = (counts.get(key) ?? 1) - 1;
+    if (remaining <= 0) counts.delete(key);
+    else counts.set(key, remaining);
+    notifyLocalTurnActivity(key);
+  };
+}
+
+/** Mark a turn stream as being folded into `key`'s log. Call the returned
+ *  function when the fold ends, however it ends. */
+export function claimStreamFold(key: string): () => void {
+  return claim(attachedFolds, key);
+}
+
+/** Mark a local send as mid-dispatch for `key`. Call the returned function
+ *  once the dispatch resolves, successfully or not. */
+export function claimSendInFlight(key: string): () => void {
+  return claim(inFlightSends, key);
+}
+
+/**
+ * May a caller REPLACE `key`'s log with server truth right now?
+ *
+ * False while a fold or a send owns it. A blocked rehydrate is DROPPED, never
+ * queued: the surfaces that rehydrate all re-ask on their own triggers (mount,
+ * refocus, the agent peer leaving the room), and the fold that blocked this one
+ * is itself appending fresher content than the replace would have written.
+ */
+export function canReplaceLog(key: string): boolean {
+  return !hasLiveClaims(key);
+}
+
+/** A dispatch or fold this browser currently owns for `key` — the shared base
+ *  of `canReplaceLog` and `hasLocalTurnActivity`, so a future claim map cannot
+ *  be added to one reading and silently missed by the other. */
+function hasLiveClaims(key: string): boolean {
+  return inFlightSends.has(key) || attachedFolds.has(key);
+}
+
+// --- Local turn activity (#635) -------------------------------------------
+//
+// `spec.agent` lags a send by the dispatch round-trip: interview answers leave
+// through the seed slot the instant the question form submits, but the turn
+// carrying them has no `agent_turns` row until StartTurn answers — seconds
+// later, longer under load. In that window the status endpoint reads idle, the
+// question form is gone, and an empty project has no files, so every signal
+// the spec workspace checks said "nothing running" and it offered Retry
+// against an interview mid-flight — #629's hazard surviving as a race.
+//
+// This browser knows better. The seed slot, the send claim and the fold claim
+// chain without a gap from form-submit to the turn's terminal frame (`send()`
+// releases the send claim and takes the fold claim in one synchronous
+// continuation), and every failure path releases its claim — a refused
+// dispatch, a severed stream, a chatKey rotation. So "any of the three is
+// live" is precisely "this browser holds evidence of a turn the status
+// endpoint may not report yet". The CLAIMS need no expiry timer — the signal
+// collapses the moment a send is refused or a turn dies, letting Retry
+// surface honestly. The SEED is the one stage with no failure path of its
+// own: its sole consumer sits behind gates (the conversation id resolving,
+// the history rehydrate landing) that an outage can hold shut indefinitely,
+// and a seed nobody consumes would otherwise pin a working state that HIDES
+// Retry — strictly worse than the gap being closed. So only the seed's
+// contribution expires, on a TTL generous against a slow panel mount; the
+// seed itself stays consumable, exactly as before.
+//
+// Browser-local by nature: a teammate's browser holds no claim for a send
+// made here. Their pane recovers through the status poll as it always did —
+// this only closes the gap for the member who just submitted.
+
+const localTurnActivityListeners = new Map<string, Set<() => void>>();
+
+function notifyLocalTurnActivity(key: string): void {
+  for (const fn of localTurnActivityListeners.get(key) ?? []) fn();
+}
+
+/** How long a WAITING seed counts as turn activity. Normal consumption is
+ *  near-immediate (the panel is mounted, or mounts on the seed's own signal),
+ *  so this bounds only the pathological stall where the consumer's gates
+ *  never open. */
+export const SEED_ACTIVITY_TTL_MS = 30_000;
+
+const seedActivitySetAt = new Map<string, number>();
+const seedActivityTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function stampSeedForActivity(key: string): void {
+  seedActivitySetAt.set(key, Date.now());
+  clearTimeout(seedActivityTimers.get(key));
+  // The expiry is an EDGE subscribers must hear about — without the wake-up
+  // call, a pane holding "working" on this seed would keep it until some
+  // unrelated re-render happened to re-read the snapshot.
+  seedActivityTimers.set(
+    key,
+    setTimeout(() => {
+      seedActivityTimers.delete(key);
+      notifyLocalTurnActivity(key);
+    }, SEED_ACTIVITY_TTL_MS),
+  );
+}
+
+function clearSeedActivity(key: string): void {
+  seedActivitySetAt.delete(key);
+  clearTimeout(seedActivityTimers.get(key));
+  seedActivityTimers.delete(key);
+}
+
+/** True while THIS browser holds live evidence of a turn for `key`: a seed
+ *  waiting to send (within its TTL), a dispatch awaiting its turn id, or a
+ *  stream being folded. */
+export function hasLocalTurnActivity(key: string): boolean {
+  const setAt = pendingSeeds.has(key) ? seedActivitySetAt.get(key) : undefined;
+  const seedLive = setAt !== undefined && Date.now() - setAt < SEED_ACTIVITY_TTL_MS;
+  return seedLive || hasLiveClaims(key);
+}
+
+/** Fires on every edge of `hasLocalTurnActivity`: seed set or consumed, claim
+ *  taken or released. */
+export function subscribeLocalTurnActivity(key: string, fn: () => void): () => void {
+  const unsubscribeSeed = subscribeSeed(key, fn);
+  const set = localTurnActivityListeners.get(key) ?? new Set();
+  set.add(fn);
+  localTurnActivityListeners.set(key, set);
+  return () => {
+    unsubscribeSeed();
+    set.delete(fn);
+  };
 }

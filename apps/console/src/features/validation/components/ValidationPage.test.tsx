@@ -336,7 +336,7 @@ describe("ValidationPage cancel", () => {
 
   // The regression: liveness alone gated this button, and every run is live through
   // its coding cycles. A first delivery still writing code therefore offered to cancel
-  // it from underneath "No validation has run yet" — on the one page that has nothing
+  // it from underneath "Nothing validated yet" — on the one page that has nothing
   // to say about the work being cancelled.
   it("hides cancel while the live run is still coding", () => {
     mockValidation = "none";
@@ -356,7 +356,7 @@ describe("ValidationPage cancel", () => {
 
     renderPage(undefined);
 
-    expect(screen.getByText(/No validation has run yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing validated yet/)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Cancel run/ }),
     ).not.toBeInTheDocument();
@@ -429,7 +429,7 @@ describe("ValidationPage across a milestone's runs", () => {
       screen.queryByText(/This version was not validated/),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/No validation has run yet/),
+      screen.queryByText(/Nothing validated yet/),
     ).not.toBeInTheDocument();
   });
 
@@ -586,13 +586,13 @@ describe("ValidationPage lifecycle", () => {
   it("shows an empty state when the version's run never reached validation", () => {
     mockRun = run({});
     renderPage(undefined);
-    expect(screen.getByText(/No validation has run yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing validated yet/)).toBeInTheDocument();
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
   });
 
   it("shows an empty state when the version has no run rows at all", () => {
     renderPage(undefined);
-    expect(screen.getByText(/No validation has run yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing validated yet/)).toBeInTheDocument();
   });
 
   it("shows the validation cycle's feed while the run is validating", () => {
@@ -618,7 +618,7 @@ describe("ValidationPage lifecycle", () => {
     renderPage(undefined);
 
     expect(
-      screen.queryByText(/No validation has run yet/),
+      screen.queryByText(/Nothing validated yet/),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
   });
@@ -637,7 +637,7 @@ describe("ValidationPage lifecycle", () => {
     // The run story is fetched for v2 — the version the chip is talking about.
     expect(screen.getByTestId("run-feed")).toHaveTextContent("validation");
     expect(
-      screen.queryByText(/No validation has run yet/),
+      screen.queryByText(/Nothing validated yet/),
     ).not.toBeInTheDocument();
   });
 

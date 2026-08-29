@@ -28,6 +28,7 @@ import {
   buildMcpOptions,
   contractReferencePath,
   debugQueryOptions,
+  onDemandSkills,
   promptWithProjectRoot,
 } from "./runner.js";
 import { MissingWorkflowSkillError, requireWorkflowBodies } from "./skills_presence.js";
@@ -134,6 +135,22 @@ test("alwaysOnSkills: an implementation run is steered by aep, a validation run 
 // every validation run is what NOT listing it here buys.
 test("alwaysOnSkills: playwright-cli is left to on-demand loading", () => {
   assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+});
+
+// The other half of that sentence. `skills:` is an allowlist, so a skill in
+// NEITHER list is not deferred — it is unreachable, and the Skill tool rejects
+// the load `aep-validation` instructs. Absent from always-on AND present here is
+// the pair that means "loadable, but not on every turn".
+test("onDemandSkills: a validation run may load playwright-cli", () => {
+  assert.deepEqual(onDemandSkills("validation"), ["playwright-cli"]);
+  assert.ok(!alwaysOnSkills("validation").includes("playwright-cli"));
+});
+
+// An implementation run gets the whole mirror instead (oneshot's else branch):
+// it may need any stack skill a design.json pinned, which is not a list this
+// module can know. Naming anything here would be a second, competing source.
+test("onDemandSkills: an implementation run names nothing", () => {
+  assert.deepEqual(onDemandSkills("implementation"), []);
 });
 
 // --- requireWorkflowBodies: a run with no procedure must not start -----------
@@ -279,7 +296,7 @@ test("debugQueryOptions: a normal run carries NONE of the developer options", ()
   assert.deepEqual(debugQueryOptions(undefined), {});
 });
 
-test("debugQueryOptions: a debug run wires all three at the sinks it was given", () => {
+test("debugQueryOptions: a debug run wires every developer option at the sinks it was given", () => {
   const written: string[] = [];
   const opts = debugQueryOptions({
     debugFilePath: "/run/.logs/claude-debug.log",
@@ -292,4 +309,22 @@ test("debugQueryOptions: a debug run wires all three at the sinks it was given",
   // gets it scrubbed on the way to disk.
   opts.stderr?.("boom");
   assert.deepEqual(written, ["boom"]);
+});
+
+test("debugQueryOptions: the reasoning pair is on together, or not at all", () => {
+  // They answer one question between them — what did this run think, including
+  // the subagents that did the work — and either alone leaves the transcript
+  // unable to answer it: no display gives signed-but-empty blocks, and no
+  // forwarding gives them for the lead session only. ADR-0002 decision 16.
+  const opts = debugQueryOptions({
+    debugFilePath: "/run/.logs/claude-debug.log",
+    onStderr: () => {},
+    close: () => {},
+  });
+  assert.deepEqual(opts.thinking, { type: "adaptive", display: "summarized" });
+  assert.equal(opts.forwardSubagentText, true);
+
+  const normal = debugQueryOptions(undefined);
+  assert.equal(normal.thinking, undefined);
+  assert.equal(normal.forwardSubagentText, undefined);
 });

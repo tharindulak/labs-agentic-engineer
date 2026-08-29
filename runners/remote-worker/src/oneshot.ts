@@ -33,14 +33,14 @@
 
 import { randomUUID } from "node:crypto";
 import { provisionWorkspace } from "./lib/workspace.js";
-import { runClaudeQuery, type McpAuthOpts } from "./lib/runner.js";
+import { onDemandSkills, runClaudeQuery, type McpAuthOpts } from "./lib/runner.js";
 import { openTaskLog } from "./lib/logger.js";
 import { isUUID, isSlug } from "./lib/uuid.js";
 import type { DispatchRequest } from "./lib/types.js";
 import { emit, primeScrubber } from "./lib/progress/emitter.js";
 import { installConsoleScrubber } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
-import { listMirroredSkills, readSkillBodies, resolvePinnedSkills } from "./lib/skills_presence.js";
+import { listMirroredSkills, readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { ClientCredentialsTokenProvider } from "./lib/oauth.js";
 import {
   fetchValidationContext,
@@ -51,8 +51,10 @@ import type { ComponentEndpoint } from "./lib/validation_context.js";
 import {
   curlConfigHome,
   curlResolveEntries,
+  playwrightCliConfigHome,
   probeEndpoints,
   writeCurlResolveConfig,
+  writePlaywrightCliConfig,
 } from "./lib/endpoint_access.js";
 
 function requireEnv(name: string): string {
@@ -215,12 +217,16 @@ async function main(): Promise<number> {
   // must not be used to pick a design file.
   //
   // A validation run (AEP_TASK_KIND) applies no DESIGN skills at all — it is
-  // black-box verification and builds nothing — so both values below stay empty
-  // for it: nothing is pinned, and the Skill allowlist is left empty on purpose.
-  // `aep-validation` reaches the run a different way: alwaysOnSkills() names it
-  // as this run's workflow and requireWorkflowBodies() injects its whole SKILL.md
-  // into the system prompt, so it is in context from the first token rather than
-  // invocable through the Skill tool.
+  // black-box verification and builds nothing — so `pinnedBodies` stays empty
+  // for it. Its workflow arrives another way: alwaysOnSkills() names
+  // `aep-validation` and requireWorkflowBodies() injects the whole SKILL.md into
+  // the system prompt, in context from the first token rather than invocable.
+  //
+  // The ALLOWLIST is not empty though, and that distinction cost a release.
+  // Pinning nothing is not the same as allowing nothing: `skills:` gates the
+  // Skill tool, so an empty array made the `playwright-cli` load that
+  // `aep-validation` instructs impossible, and the agent read the mirror's files
+  // by hand instead. onDemandSkills() names what the phase may load.
   let availableSkillNames: string[] = [];
   let pinnedBodies = "";
   if (req.taskKind === "validation") {
@@ -260,6 +266,11 @@ async function main(): Promise<number> {
     try {
       const entries = await curlResolveEntries(endpoints, undefined, (l) => console.log(l));
       const written = await writeCurlResolveConfig(curlConfigHome(), entries);
+      // The same override for the exploration browser. Separate file because
+      // `.curlrc` is a curl mechanism and reaches no browser, and separate from
+      // the project's playwright.config.ts because playwright-cli does not read
+      // that either — it was the one client still dialling loopback.
+      const browserConfig = await writePlaywrightCliConfig(playwrightCliConfigHome(), entries);
       if (written === undefined) {
         // No `.localhost` endpoints — a cloud plane resolves them normally and
         // there is nothing to pin. Logged so the absence is a decision on the
@@ -267,6 +278,11 @@ async function main(): Promise<number> {
         console.log("[oneshot] endpoints need no curl resolve override");
       } else {
         console.log(`[oneshot] pinned ${entries.length} endpoint host(s) for curl → ${written}`);
+      }
+      if (browserConfig !== undefined) {
+        console.log(
+          `[oneshot] pinned ${entries.length} endpoint host(s) for playwright-cli → ${browserConfig}`,
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -303,13 +319,28 @@ async function main(): Promise<number> {
         .map((e) => `${e.component} → ${e.url}`)
         .join(", ")}`,
     );
+
+    // Resolved against the mirror rather than passed straight through: the BFF
+    // copies a skill only when the org has it enabled, so a name here can be
+    // absent, and this defect already survived weeks of green runs on silence.
+    // A miss is named now, with the path it looked for, instead of arriving as a
+    // rejected Skill call mid-run.
+    const { present } = await resolveSkillPresence(
+      layout.workspace,
+      onDemandSkills(req.taskKind),
+      (l) => console.log(l),
+    );
+    availableSkillNames = present;
+    console.log(
+      `[oneshot] ${availableSkillNames.length} skill(s) loadable on demand: ${availableSkillNames.join(", ") || "none"}`,
+    );
   } else {
     const pinned = await resolveTaskSkills({
       workspace: layout.workspace,
       scope: { kind: "project" },
       log: (l) => console.log(l),
     });
-    const { preload, dangling } = await resolvePinnedSkills(layout.workspace, pinned, (l) => console.log(l));
+    const { present, dangling } = await resolveSkillPresence(layout.workspace, pinned, (l) => console.log(l));
     if (dangling.length > 0) {
       console.warn(
         `[oneshot] ⚠️  ${dangling.length} pinned skill(s) missing from .claude/skills/ — proceeding without them: ${dangling.join(", ")}`,
@@ -320,9 +351,9 @@ async function main(): Promise<number> {
     // goes into the system prompt, which is the only thing that actually
     // preloads guidance.
     availableSkillNames = await listMirroredSkills(layout.workspace);
-    pinnedBodies = await readSkillBodies(layout.workspace, preload);
+    pinnedBodies = await readSkillBodies(layout.workspace, present);
     console.log(
-      `[oneshot] ${availableSkillNames.length} skill(s) available, ${preload.length} pinned into context`,
+      `[oneshot] ${availableSkillNames.length} skill(s) available, ${present.length} pinned into context`,
     );
   }
 

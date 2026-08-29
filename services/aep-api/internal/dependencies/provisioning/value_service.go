@@ -22,6 +22,7 @@ import (
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -55,6 +56,11 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 	dep, err := matchDependency(comps, depName, spec.DependencyKindExternal)
 	if err != nil {
 		return err
+	}
+	// Registered External resources hold values on the org catalog plane;
+	// project POST .../values is Project External only.
+	if s.catalogValuePlane != nil && len(s.catalogValuePlane.EnvCells(orgID, depName)) > 0 {
+		return apierr.Conflict("values live on the org record")
 	}
 	unionConfig, _ := spec.UnionExternalConfigFor(comps, depName)
 
@@ -111,6 +117,19 @@ func (s *Service) SaveValues(ctx context.Context, orgID, ocOrgID, projectID, dep
 		}
 		s.completeProvisionRow(ctx, orgID, projectID, depName, issueNumber, execID,
 			fmt.Sprintf("External resource `%s` configured (OC binding `%s`).", depName, ref))
+	}
+	// The deploy gate's wake-up (ADR-0023). Last, and only on the success path:
+	// the notification says "values landed", so it must not be sent for values
+	// that did not.
+	if s.valuesSaved != nil {
+		if err := s.valuesSaved.ValuesSaved(ctx, orgID, projectID); err != nil {
+			// The values are already durable, so a failed wake-up must not turn a
+			// successful save into an apparent failure — the caller would retry a
+			// write that already landed. The parked run's wait-poll re-derives
+			// readiness on its own; the signal only makes it prompt.
+			slog.WarnContext(ctx, "provisioning: wake parked run after values saved failed",
+				"org", orgID, "project", projectID, "error", err)
+		}
 	}
 	return nil
 }

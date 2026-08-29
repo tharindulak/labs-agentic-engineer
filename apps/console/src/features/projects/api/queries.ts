@@ -92,6 +92,21 @@ type Deployment = components["schemas"]["Deployment"];
 
 function statusIsMoving(status: ProjectStatus): boolean {
   return (
+    // An agent writing the spec is the FIRST thing that moves on a new project
+    // and the longest stretch a first-timer watches (#562): the kickoff fires
+    // at creation, so the overview's opening minutes are exactly this state.
+    // Without it the spec card would sit on the idle interval through the whole
+    // interview and take up to 30s to notice it had finished.
+    status.spec.agent === "working" ||
+    // Mid-interview: a turn HAS run (so not "never-started") and written no
+    // spec yet, and `agent` returns to "" in every gap between turns — keying
+    // only on "working" drops the whole interview onto the idle cadence and
+    // leaves every surface up to 30s behind the agent it describes.
+    //
+    // Scoped to a project that actually has turn history, so an abandoned or
+    // never-started one is not parked on the fast cadence forever: this poll
+    // fans out to four backend sources, OpenChoreo included.
+    (status.spec.agent === "" && !status.spec.exists) ||
     status.build.status === "running" ||
     status.deploy.status === "deploying" ||
     status.repoStatus === "pending" ||
@@ -152,6 +167,28 @@ export function useProjectComponents(projectName: string) {
       }),
     "components",
   );
+}
+
+// Deployed-workload dependencies for the project Overview (deduped rows).
+// Null body is a valid empty list — unresolved design declarations are
+// omitted by the BFF, so we must not treat null as a load failure.
+export function useWorkloadDependencies(projectName: string) {
+  return useQuery({
+    queryKey: projectKeys.workloadDependencies(projectName),
+    queryFn: async () => {
+      const { data, error } = await client.GET(
+        "/projects/{projectName}/workload-dependencies",
+        { params: { path: { projectName } } },
+      );
+      if (error) {
+        throw new Error(
+          apiErrorMessage(error, "Failed to load workload dependencies"),
+        );
+      }
+      return data ?? [];
+    },
+    staleTime: 30_000,
+  });
 }
 
 // The Deployments board's pollers (#216): one list-deployments read per
@@ -238,6 +275,41 @@ export function useComponentOpenApi(
       if (error || data === undefined) {
         throw new Error(
           apiErrorMessage(error, "Failed to load the API contract"),
+        );
+      }
+      return data;
+    },
+    staleTime: 30_000,
+  });
+}
+
+// Whether every external dependency in the design has its values for an
+// environment. The platform answers per dependency (`configured` / `unset` /
+// `not-provisioned`, plus the keys it is still missing) and folds the set into
+// one `configured` flag — the same read the deploy gate consults, so the
+// console and the platform never disagree about what is outstanding.
+//
+// Not polled: the only thing that changes it is a save made from this console,
+// and every save invalidates this key. `staleTime` matches the feature's other
+// design-shaped reads.
+export function useProjectDependencyReadiness(
+  projectName: string,
+  environment: string,
+) {
+  return useQuery({
+    queryKey: projectKeys.dependencyReadiness(projectName, environment),
+    // A project name arrives with the route, but the environment is chosen by
+    // the caller — an empty one would silently read a different environment
+    // than the caller meant.
+    enabled: projectName !== "" && environment !== "",
+    queryFn: async () => {
+      const { data, error } = await client.GET(
+        "/projects/{projectName}/dependencies/readiness",
+        { params: { path: { projectName }, query: { environment } } },
+      );
+      if (error || data === undefined) {
+        throw new Error(
+          apiErrorMessage(error, "Failed to load dependency readiness"),
         );
       }
       return data;

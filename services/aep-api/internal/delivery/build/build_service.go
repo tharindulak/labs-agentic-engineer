@@ -178,6 +178,13 @@ type BuildSummary struct {
 	Reason      string     `json:"reason,omitempty"`
 	StartedAt   time.Time  `json:"startedAt"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	// WaitingReason says WHY an in-progress version is waiting rather than
+	// moving (ADR-0023's deploy gate is `external-values`). Empty for the
+	// ordinary between-cycles park. The ledger row reads as an agent still
+	// working without it; the run row carrying it is already in hand, so this
+	// costs the ledger no extra read. The dependency NAMES are deliberately not
+	// here — see the contract.
+	WaitingReason string `json:"waitingReason,omitempty" enum:"external-values"`
 }
 
 // BuildList is the list-project-builds response, newest build first.

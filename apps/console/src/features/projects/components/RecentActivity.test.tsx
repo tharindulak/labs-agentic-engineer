@@ -18,7 +18,7 @@
 
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecentActivity } from "./RecentActivity";
 
 vi.mock("../../../auth/SessionContext", () => ({
@@ -26,8 +26,14 @@ vi.mock("../../../auth/SessionContext", () => ({
 }));
 
 let mockEvents: unknown[] = [];
+let mockPending = false;
+let mockError = false;
 vi.mock("../../activity/hooks/useActivityFeed", () => ({
-  useActivityFeed: () => ({ events: mockEvents, isPending: false, isError: false }),
+  useActivityFeed: () => ({
+    events: mockEvents,
+    isPending: mockPending,
+    isError: mockError,
+  }),
 }));
 
 function specEvent(id: number) {
@@ -41,10 +47,34 @@ function specEvent(id: number) {
 }
 
 describe("RecentActivity", () => {
+  beforeEach(() => {
+    mockEvents = [];
+    mockPending = false;
+    mockError = false;
+  });
+
   it("shows the empty state with no events", () => {
     mockEvents = [];
     render(<RecentActivity projectName="p" />);
     expect(screen.getByText("No activity yet")).toBeInTheDocument();
+  });
+
+  // "No activity yet" is a claim about the project, not about the fetch —
+  // pending and error must not assert it (#577).
+  it("shows a skeleton, not the empty state, while the seed is pending", () => {
+    mockEvents = [];
+    mockPending = true;
+    render(<RecentActivity projectName="p" />);
+    expect(screen.queryByText("No activity yet")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Loading activity")).toBeInTheDocument();
+  });
+
+  it("shows an error, not the empty state, when the seed fetch fails", () => {
+    mockEvents = [];
+    mockError = true;
+    render(<RecentActivity projectName="p" />);
+    expect(screen.queryByText("No activity yet")).not.toBeInTheDocument();
+    expect(screen.getByText("Failed to load activity")).toBeInTheDocument();
   });
 
   it("renders a deployed line", () => {

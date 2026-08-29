@@ -43,12 +43,13 @@ import { DocFileBundle } from "../collab/doc-bundle.js";
 import { StreamingDocWriter } from "../collab/streaming-add.js";
 import type { RoomPeer } from "../collab/room-peer.js";
 import { runTurn } from "../agents/main/run-turn.js";
-import { buildFileTools } from "../agents/main/tools/files.js";
+import { buildFileTools, buildRegisterDraftTools } from "../agents/main/tools/files.js";
 import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
 import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSkillsBlock } from "../agents/main/prompt.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
 import { buildManifestPart, toTurnUsage } from "./manifest.js";
+import { attachmentsNote } from "../prompts/turn.js";
 import { config } from "../shared/config.js";
 import {
   isAnthropicModel,
@@ -139,6 +140,18 @@ export interface RunConversationTurnInput {
    */
   referenceAttachments?: FilePart[];
   /**
+   * Native file parts for the files the user attached to THIS message (#428).
+   *
+   * Separate from `referenceAttachments` — NOT merely for wording, but because
+   * they must NOT be deduped against history. That dedupe exists for
+   * references, which a flow re-lists automatically with unchanged content, so
+   * re-sending them is pure waste. A chat attachment is the opposite: a
+   * deliberate per-message act. Someone who revises a PDF, keeps its name and
+   * re-attaches it means the new bytes — filtering those out would silently
+   * serve the model the stale copy from history.
+   */
+  chatAttachments?: FilePart[];
+  /**
    * Skill names to inline into THIS turn's prompt up front (#335 latency):
    * bodies resolve through `skillSource` and ride the user prompt — never the
    * system prompt, whose cacheable prefix must stay byte-stable across turns.
@@ -167,6 +180,11 @@ export interface RunConversationTurnInput {
    * before, leave after); this function only writes through it.
    */
   collabPeer?: RoomPeer;
+  /**
+   * Marketplace register flow: merge draftExternalResource onto the files set.
+   * Omitted → byte-identical files tools (spec/project turns).
+   */
+  registerDraft?: boolean;
   /**
    * Attach Anthropic's provider-executed `web_search` tool for this turn
    * (external-dependency-discovery #252). The caller (BFF) sets this true
@@ -240,6 +258,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
         ? new DocFileBundle(input.collabPeer, input.files)
         : new FileBundle(input.files);
       tools = buildFileTools(bundle, skills);
+      if (input.registerDraft) {
+        tools = { ...tools, ...buildRegisterDraftTools() };
+      }
       instructions = buildInstructions(skills, input.surface);
     }
 
@@ -303,10 +324,13 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // Stamps this turn's steps with the conversation they belong to, so two
     // projects generating at once are attributable in the trace UI.
     const telemetry = turnTelemetry(conv.id);
-    // Attachments dedupe against history by filename: a flow naming the same
-    // document a kickoff already attached must not re-enter it — one copy of a
-    // 5MB PDF per conversation, not one per flow invocation. The model reads
-    // the history copy either way.
+    // REFERENCE attachments dedupe against history by filename: a flow naming
+    // the same document a kickoff already attached must not re-enter it — one
+    // copy of a 5MB PDF per conversation, not one per flow invocation. The model
+    // reads the history copy either way, because a reference's content is
+    // whatever the store holds and re-listing it says nothing new.
+    //
+    // Chat attachments (#428) are deliberately EXEMPT — see `chatAttachments`.
     const attachedAlready = new Set(
       conv.messages.flatMap((m) =>
         Array.isArray(m.content)
@@ -317,14 +341,21 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
           : [],
       ),
     );
-    const freshAttachments = (input.referenceAttachments ?? []).filter(
+    const freshReferences = (input.referenceAttachments ?? []).filter(
       (part) => !part.filename || !attachedAlready.has(part.filename),
     );
+    // Attachments last so a re-attached file is the LATER copy in the message,
+    // which is the one the model reads as current.
+    const freshAttachments = [...freshReferences, ...(input.chatAttachments ?? [])];
     const startLen = conv.messages.length;
     const res = await runTurn({
       model: input.model,
       instructions,
-      prompt: note + eagerBlock + buildPrompt(input.files, input.instruction),
+      prompt:
+        note +
+        attachmentsNote((input.chatAttachments ?? []).flatMap((p) => (p.filename ? [p.filename] : []))) +
+        eagerBlock +
+        buildPrompt(input.files, input.instruction),
       messages: conv.messages, // appended in place by runTurn
       ...(freshAttachments.length ? { fileParts: freshAttachments } : {}),
       tools,

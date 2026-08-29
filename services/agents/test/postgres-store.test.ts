@@ -324,3 +324,58 @@ test("sweepExpired deletes rows past the TTL and keeps fresh ones", async () => 
   assert.equal(await store.get("stale"), null);
   assert.ok(await store.get("fresh"));
 });
+
+// The bug this pins: attachment names were WRITTEN to the turns jsonb correctly
+// and dropped on the way back OUT, because rowToConversation rebuilds each entry
+// field by field. A chip therefore showed while the turn was live and vanished
+// the moment the thread rehydrated — the write side looked perfect.
+test("the journal's attachment names survive the jsonb round-trip", async () => {
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save({
+    ...fresh("c-attach"),
+    turns: [
+      {
+        turnId: "t1",
+        text: "add this form as well",
+        messageIndex: 0,
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        attachments: ["2025-Motor Claim Form.pdf"],
+      },
+    ],
+  });
+  const got = await store.get("c-attach");
+  assert.ok(got);
+  assert.deepEqual(got.turns[0]?.attachments, ["2025-Motor Claim Form.pdf"]);
+});
+
+test("a turn with no attachments round-trips without the field", async () => {
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save({
+    ...fresh("c-plain"),
+    turns: [{ turnId: "t1", text: "hello", messageIndex: 0, createdAt: new Date(0) }],
+  });
+  const got = await store.get("c-plain");
+  assert.ok(got);
+  assert.equal("attachments" in (got.turns[0] ?? {}), false);
+});
+
+test("a malformed attachments value reads back as absent, not as blank chips", async () => {
+  // The column is jsonb written by an older or buggier build; a non-string entry
+  // must not reach the UI as an empty chip.
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save({
+    ...fresh("c-bad"),
+    turns: [
+      {
+        turnId: "t1",
+        text: "hi",
+        messageIndex: 0,
+        createdAt: new Date(0),
+        attachments: ["ok.pdf", "", 42, null] as unknown as string[],
+      },
+    ],
+  });
+  const got = await store.get("c-bad");
+  assert.ok(got);
+  assert.deepEqual(got.turns[0]?.attachments, ["ok.pdf"]);
+});

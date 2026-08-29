@@ -126,6 +126,14 @@ type harness struct {
 	// dispatchFailures records what was written onto the cycle for each failed
 	// launch: the only durable trace of a failure that leaves no Job behind.
 	dispatchFailures []NoteCycleDispatchFailureInput
+	// stateWrites keeps the full SetRunState payloads, so a test can assert on
+	// the PARK's explanation — the reason and the dependency names — and not
+	// merely that the run went to `waiting`. A park that does not say what it is
+	// waiting for is the failure this slice exists to prevent.
+	stateWrites []SetRunStateInput
+	// gateChecks counts the deploy gate's reads, so a test can assert the gate
+	// was consulted (or deliberately was not, on a cycle that promotes nothing).
+	gateChecks int
 }
 
 // newHarness registers the activities whose behaviour never varies — the
@@ -164,6 +172,7 @@ func newHarness(t *testing.T) *harness {
 	h.env.RegisterActivity(acts.MintDeployFixIssues)
 	h.env.RegisterActivity(acts.HaltUnfinishedWork)
 	h.env.RegisterActivity(acts.CloseCancelledWork)
+	h.env.RegisterActivity(acts.CheckDeployReadiness)
 
 	h.env.OnActivity(acts.SetRunState, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
@@ -171,6 +180,7 @@ func newHarness(t *testing.T) *harness {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.states = append(h.states, in.State)
+			h.stateWrites = append(h.stateWrites, in)
 		}).Return(nil)
 	h.env.OnActivity(acts.SettleRun, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
@@ -343,6 +353,24 @@ func (h *harness) deploymentsAre(states ...CycleDeployState) {
 	for i, st := range states {
 		call := h.env.OnActivity(h.acts.PollCycleDeployments, mock.Anything, mock.Anything).Return(st, nil)
 		if i < len(states)-1 {
+			call.Once()
+		}
+	}
+}
+
+// gateVerdictsAre queues the deploy gate's answers, in order; the last repeats.
+// The gate is polled on every pass of the park, so a test that wants to see the
+// run resume gives a blocked verdict first and an open one after.
+func (h *harness) gateVerdictsAre(verdicts ...DeployGateVerdict) {
+	h.set["gate"] = true
+	for i, v := range verdicts {
+		call := h.env.OnActivity(h.acts.CheckDeployReadiness, mock.Anything, mock.Anything).
+			Run(func(mock.Arguments) {
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				h.gateChecks++
+			}).Return(v, nil)
+		if i < len(verdicts)-1 {
 			call.Once()
 		}
 	}
@@ -569,6 +597,24 @@ func (h *harness) applyDefaults() {
 	if !h.set["deployMint"] {
 		h.deployMintsAre([]int{testRepairIssue})
 	}
+	if !h.set["gate"] {
+		// An OPEN gate is the default: the project is configured, so every test
+		// that is not about the gate deploys exactly as it did before ADR-0023.
+		h.gateVerdictsAre(DeployGateVerdict{})
+	}
+}
+
+// parksOnValues returns the park writes the deploy gate made, and the tally of
+// gate reads, read safely.
+func (h *harness) parksOnValues() (parks []SetRunStateInput, checks int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, in := range h.stateWrites {
+		if in.WaitingReason == delivery.RunWaitingOnExternalValues {
+			parks = append(parks, in)
+		}
+	}
+	return parks, h.gateChecks
 }
 
 // signal schedules one inbound run signal at a virtual offset from start.

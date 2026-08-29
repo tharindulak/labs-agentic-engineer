@@ -17,7 +17,10 @@
 package delivery
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -136,12 +139,12 @@ const (
 	// two send a human to different places: a red build is code that did not
 	// compile, while this is code that compiled and would not run — a bad image,
 	// an unrenderable trait, a missing dependency at runtime.
-	RunReasonDeployBudget = "deploy-budget"
-	RunReasonFixChainBudget       = "fix-chain-budget"
-	RunReasonConflictBudget       = "conflict-budget"
-	RunReasonNoProgress           = "no-progress"
-	RunReasonCycleCeiling         = "cycle-ceiling"
-	RunReasonValidationFailed     = "validation-failed"
+	RunReasonDeployBudget     = "deploy-budget"
+	RunReasonFixChainBudget   = "fix-chain-budget"
+	RunReasonConflictBudget   = "conflict-budget"
+	RunReasonNoProgress       = "no-progress"
+	RunReasonCycleCeiling     = "cycle-ceiling"
+	RunReasonValidationFailed = "validation-failed"
 	// RunReasonValidationUnreported is its own failure class, distinct from
 	// validation-failed: the suite going red and the agent delivering no report at
 	// all are different explanations, and a terminal reason exists to explain.
@@ -315,6 +318,49 @@ const (
 // deliberately outside the index, so they run concurrently on their own
 // milestones. A second partial index, on (org_id, project_id,
 // milestone_number), makes "one live run per milestone, of ANY kind" true.
+// DependencyNames is a jsonb-serialized list of dependency names. Named so the
+// column's shape is declared once rather than spelled out at the field, matching
+// IssueNumbers on RunCycle.
+type DependencyNames []string
+
+// Value/Scan make DependencyNames encode itself as jsonb.
+//
+// The gorm `serializer:json` tag that RunCycle.Resolves uses only covers the
+// STRUCT write path. The run repository parks a run through updateNonTerminal,
+// which writes a map[string]any — and a map update hands the value straight to
+// the driver, serializer untouched. A bare []string is then encoded as a
+// Postgres array literal (`{stripe}`), which jsonb rejects with SQLSTATE 22P02,
+// so the deploy gate's park would fail the moment it had a dependency to name —
+// which is every park it makes. Owning the encoding on the type makes both write
+// paths agree.
+func (d DependencyNames) Value() (driver.Value, error) {
+	if d == nil {
+		return nil, nil
+	}
+	return json.Marshal([]string(d))
+}
+
+func (d *DependencyNames) Scan(src any) error {
+	if src == nil {
+		*d = nil
+		return nil
+	}
+	var raw []byte
+	switch v := src.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		return fmt.Errorf("delivery: cannot scan %T into DependencyNames", src)
+	}
+	if len(raw) == 0 {
+		*d = nil
+		return nil
+	}
+	return json.Unmarshal(raw, (*[]string)(d))
+}
+
 type MilestoneRun struct {
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	OrgID     string `gorm:"index;not null" json:"-"`
@@ -350,6 +396,19 @@ type MilestoneRun struct {
 	// TerminalReason is set exactly once, when the run settles into a non-success
 	// terminal state. Empty while non-terminal and on a succeeded run.
 	TerminalReason string `gorm:"type:text" json:"terminalReason,omitempty"`
+
+	// WaitingReason / BlockingDependencies explain a `waiting` run, and are
+	// persisted rather than read off the live workflow query because the console
+	// reads this row. Set by the deploy gate's park (ADR-0023) and cleared on the
+	// next move to running; empty for the ordinary between-cycles park, which
+	// needs no explanation.
+	//
+	// Both columns are plain adds, so BaseModels' AutoMigrate creates them: they
+	// are nullable with no default and no index, which is everything AutoMigrate
+	// can express. Nothing goes in the ordered migration list, which exists for
+	// the partial indexes and CHECK constraints it cannot.
+	WaitingReason        string          `gorm:"type:text" json:"waitingReason,omitempty"`
+	BlockingDependencies DependencyNames `gorm:"type:jsonb" json:"blockingDependencies,omitempty"`
 
 	// Budget counters. CyclesTotal is checked against CycleCeiling; FixCycles and
 	// ConflictCycles bound the two recovery chains; BuildRetriggers is the

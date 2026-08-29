@@ -159,6 +159,14 @@ func (c *componentClient) EnsureReleaseBinding(ctx context.Context, orgName, pro
 		ComponentName: componentName,
 		Environment:   environment,
 		ReleaseName:   releaseName,
+		// MARKED as internal. This verb only ever writes an ephemeral
+		// coding-agent binding, and that binding wraps a batch/v1 Job for which
+		// OpenChoreo registers no health check — its Ready condition reads True
+		// over a Job that is still running or has already failed. The marker is
+		// what keeps ListProjectReleaseBindings from folding it into the
+		// project's deploy status and reporting a project as live before a single
+		// user component has been deployed.
+		Labels: internalMarkerLabels(),
 	})
 	created, err := c.createReleaseBinding(ctx, orgName, bindingName, body)
 	if err != nil {
@@ -303,10 +311,15 @@ func releaseBindingBody(projectName string, in ReleaseBindingDesired) ocgen.Rele
 		}{ComponentName: scoped, ProjectName: projectName},
 	}
 	applyDesiredToBinding(spec, in)
-	return ocgen.ReleaseBinding{
-		Metadata: ocgen.ObjectMeta{Name: ReleaseBindingName(projectName, in.ComponentName, in.Environment)},
-		Spec:     spec,
+	meta := ocgen.ObjectMeta{Name: ReleaseBindingName(projectName, in.ComponentName, in.Environment)}
+	if len(in.Labels) > 0 {
+		labels := make(map[string]string, len(in.Labels))
+		for k, v := range in.Labels {
+			labels[k] = v
+		}
+		meta.Labels = &labels
 	}
+	return ocgen.ReleaseBinding{Metadata: meta, Spec: spec}
 }
 
 // applyDesiredToBinding overlays the owned fields onto a binding spec. It is

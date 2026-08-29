@@ -78,7 +78,11 @@ transient input.
   is no migration.
 - The next feature that wants to attach a file (agent-chat composer attachments,
   explicitly out of #383's scope) inherits this shape: store, overlay, no
-  surface, no commit.
+  surface, no commit. **Amended by ADR-0019**: chat attachments kept "no surface"
+  and "never committed", but took neither the store nor the overlay. The
+  dividing question turned out to be LIFETIME — a reference outlives its request
+  because `/start` can be re-run; a chat attachment does not, because the
+  conversation history holds it the moment its one turn runs.
 
 ## Rejected
 

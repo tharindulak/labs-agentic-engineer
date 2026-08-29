@@ -108,11 +108,35 @@ type MilestoneRunRepository interface {
 	// one click.
 	ActiveValidationRunByProject(ctx context.Context, orgID, projectID string) (*MilestoneRun, error)
 
+	// RunsWaitingOnValues returns EVERY run in the project parked on the deploy
+	// gate's external-values wait — not just the newest.
+	//
+	// The gate's park is the one wait with no poll fallback of its own: the
+	// provisioning branch re-checks on deployPollInterval, but a run blocked on
+	// unconfigured values sleeps until something wakes it. So a wake that reached
+	// only the newest run would leave any older parked sibling — an incident or
+	// revalidate run started before it — asleep for a whole wait-poll interval
+	// longer than it needed to be. Saving one value unblocks every run that value
+	// unblocks, so the wake fans out the same way.
+	RunsWaitingOnValues(ctx context.Context, orgID, projectID string) ([]MilestoneRun, error)
+
 	// SetState moves a non-terminal run between waiting and running (the loop
 	// oscillates across cycle boundaries) and stamps started_at on the first
 	// transition to running. It refuses a terminal state — that is Settle's job
 	// — and returns (nil, nil) when the run is already terminal.
+	//
+	// Moving to running also CLEARS the waiting explanation: a resumed run is not
+	// waiting on anything, and a stale reason would have the console showing
+	// "waiting for your credentials" over a run that is already deploying.
 	SetState(ctx context.Context, id, state string) (*MilestoneRun, error)
+
+	// SetWaiting parks a non-terminal run WITH the reason it is parked and the
+	// dependencies it is parked on — one write, so the console never reads a
+	// `waiting` row whose explanation has not landed yet. Separate from SetState
+	// because only the deploy gate has an explanation to give: every other park
+	// is between cycles and self-evident from the phase. Returns (nil, nil) when
+	// the run is already terminal, like SetState.
+	SetWaiting(ctx context.Context, id, reason string, dependencies []string) (*MilestoneRun, error)
 
 	// Settle ends a run: it writes a terminal state plus its terminal reason and
 	// stamps ended_at, guarded on the run still being non-terminal so the first
@@ -251,8 +275,35 @@ func (r *milestoneRunRepository) SetState(ctx context.Context, id, state string)
 		// COALESCE so a re-entry into running keeps the ORIGINAL start stamp:
 		// started_at marks when the run first did work, not the latest cycle.
 		updates["started_at"] = gorm.Expr("COALESCE(started_at, ?)", time.Now().UTC())
+		// A running run is not waiting on anything. Leaving a stale reason behind
+		// would have the console showing "waiting for your credentials" over a run
+		// that is already deploying — and would keep the row in
+		// RunsWaitingOnValues, so the next save re-signals a run that resumed.
+		updates["waiting_reason"] = ""
+		updates["blocking_dependencies"] = DependencyNames(nil)
 	}
 	return r.updateNonTerminal(ctx, id, updates)
+}
+
+// SetWaiting parks the run WITH its explanation, in one write.
+func (r *milestoneRunRepository) SetWaiting(ctx context.Context, id, reason string, dependencies []string) (*MilestoneRun, error) {
+	return r.updateNonTerminal(ctx, id, map[string]any{
+		"state":                 RunStateWaiting,
+		"waiting_reason":        reason,
+		"blocking_dependencies": DependencyNames(dependencies),
+	})
+}
+
+func (r *milestoneRunRepository) RunsWaitingOnValues(ctx context.Context, orgID, projectID string) ([]MilestoneRun, error) {
+	var rows []MilestoneRun
+	if err := r.db.WithContext(ctx).
+		Where("org_id = ? AND project_id = ? AND state = ? AND waiting_reason = ?",
+			orgID, projectID, RunStateWaiting, RunWaitingOnExternalValues).
+		Order("created_at ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *milestoneRunRepository) Settle(ctx context.Context, id, state, terminalReason string) (*MilestoneRun, error) {

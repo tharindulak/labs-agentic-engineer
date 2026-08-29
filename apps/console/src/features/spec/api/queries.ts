@@ -62,13 +62,24 @@ export function useSpecFiles(projectName: string) {
  * via chat" turn commits, so a different key here would silently break that
  * refresh.
  *
- * Degrades to `[]` on a missing design or a fetch error, same rationale as
- * `useProjectTags` above: this is a supplementary read (status chips on the
- * dependency cards) layered over the Spec view's real content, which already
- * ships its own error states — a failed read here just means the cards
- * render without a status chip rather than blocking the whole view. `staleTime:
- * Infinity` keeps it from refetching on remount/refocus; freshness is driven
- * entirely by the explicit turn-end invalidation, not polling.
+ * Resolves to `[]` for a project with no design yet — a real, empty answer.
+ * A FETCH ERROR is not that answer and no longer pretends to be: it surfaces as
+ * `isError`, because "this project declares no dependencies" and "the console
+ * could not find out" are different facts and at least one caller acts on the
+ * difference. The Builds page's External resources section (ADR-0023) is told
+ * to collect values a parked deploy is waiting on; swallowing the error there
+ * made the whole section vanish, so a run held on missing values pointed at a
+ * section that was not on the page.
+ *
+ * Callers that only decorate — the Spec view's dependency status chips, the
+ * Deployments page's promotion readiness — degrade at their own use sites
+ * (`data ?? []`), so a failed read still renders their content without the
+ * decoration. That is a per-caller choice now, not one this hook makes for
+ * everybody. Surfacing the error also means the query gets the client's default
+ * retries, so a transient failure recovers instead of being cached as "[]".
+ *
+ * `staleTime: Infinity` keeps it from refetching on remount/refocus; freshness
+ * is driven entirely by the explicit turn-end invalidation, not polling.
  */
 export function useDesignDependencies(projectName: string) {
   return useQuery({
@@ -78,7 +89,8 @@ export function useDesignDependencies(projectName: string) {
         "/projects/{projectName}/design/dependencies",
         { params: { path: { projectName } } },
       );
-      if (error || data === undefined) return [];
+      if (error) throw toError(error, "Failed to load the design dependencies");
+      // A design-less project answers with no body — that IS "no dependencies".
       return data ?? [];
     },
     staleTime: Infinity,

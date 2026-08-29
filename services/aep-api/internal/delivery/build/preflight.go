@@ -30,8 +30,8 @@ type PreflightDesignReader interface {
 	ReadDesignComponents(ctx context.Context, orgID, projectID string) ([]spec.DesignComponent, error)
 }
 
-// ProvisionStatusReader reports whether a dependency no longer needs the
-// drawer: it is a TRI-STATE collapsed to a bool — true when the dependency is
+// ProvisionStatusReader reports whether a dependency is already handled — no
+// longer something preflight should report: it is a TRI-STATE collapsed to a bool — true when the dependency is
 // already provisioned OR provisioning is in-flight, false only when nothing
 // has been started yet. This is a DIFFERENT semantics than
 // provisioning.Service.Status's DependencyStatus.Ready: that field is
@@ -40,19 +40,26 @@ type PreflightDesignReader interface {
 // (in-flight) — it does not collapse the tri-state on its own. The real
 // adapter implementing this interface must therefore NOT simply return
 // DependencyStatus.Ready; it must treat any non-"unknown" Status (e.g.
-// "provisioning") as "already handled" so preflight does not re-ask for a
+// "provisioning") as "already handled" so preflight does not re-report a
 // dependency that is already in flight.
 type ProvisionStatusReader interface {
 	Ready(ctx context.Context, orgID, projectID, depName string) (bool, error)
+}
+
+// OrgCatalogReader reports whether a logical name already holds values on the
+// org catalog plane (Registered External — non-empty env cells). Nil means
+// fail-open: treat the name as Project External and still emit external-config.
+type OrgCatalogReader interface {
+	HasOrgEnvCells(ctx context.Context, orgID, name string) bool
 }
 
 // --- wire shapes (names drive the generated schema names — keep them exactly
 // --- BuildPreflight / PreflightItem / ConfigKeyView) ------------------------
 
 // ConfigKeyView is the key/secret view of an external dependency's config
-// schema — never values. Mirrors spec.ConfigKey: the drawer needs the key,
-// whether it is secret-routed, the optional description to render as a hint, and
-// the optional (non-secret) defaultValue to pre-fill the field.
+// schema — never values. Mirrors spec.ConfigKey: a client rendering the schema
+// needs the key, whether it is secret-routed, the optional description to render
+// as a hint, and the optional (non-secret) defaultValue to pre-fill the field.
 type ConfigKeyView struct {
 	Key          string `json:"key"`
 	Secret       bool   `json:"secret,omitempty"`
@@ -60,15 +67,26 @@ type ConfigKeyView struct {
 	DefaultValue string `json:"defaultValue,omitempty"`
 }
 
-// PreflightItem is one drawer entry: a single dependency (or one facet of a
-// dependency — external deps can raise both a spec and a config item) that
-// still needs user input/approval before a build can safely dispatch it.
+// PreflightItem is one thing a version's dependencies still need: a single
+// dependency (or one facet of a dependency — external deps can raise both a
+// spec and a config item) that is not yet settled.
+//
+// Two families, with very different urgency:
+//
+//   - RESOLUTION blockers — external-ambiguous, external-unresolved,
+//     external-spec, org-service — are things the design itself cannot
+//     answer. They gate the version cut: nothing downstream can be authored
+//     while the dependency has no identity.
+//   - external-config and platform-resource are NOT gates. Their values /
+//     approvals are collected alongside the running build and enforced at the
+//     deploy gate, so a build starts without them.
 type PreflightItem struct {
 	Component   string `json:"component" doc:"Owning component name"`
 	Dependency  string `json:"dependency" doc:"Dependency name"`
 	Kind        string `json:"kind" enum:"external-config,external-spec,external-ambiguous,external-unresolved,platform-resource,org-service"`
 	Description string `json:"description"`
-	// external-config only: key/secret views the drawer collects values for.
+	// external-config only: the key/secret schema whose values are collected
+	// while the build runs — views only, never values.
 	Config []ConfigKeyView `json:"config,omitempty"`
 	// platform-resource only: the registered (Cluster)ResourceType + the
 	// design-authored provisioning defaults.
@@ -76,39 +94,59 @@ type PreflightItem struct {
 	Parameters   map[string]any `json:"parameters,omitempty"`
 }
 
-// BuildPreflight is the get-build-preflight response: whether the console
-// must open the dependencies drawer before Build, and the items to render in
-// it.
+// BuildPreflight is the get-build-preflight response: what a version's
+// dependencies still need, and which of it actually blocks the cut.
+//
+// NeedsInput is the broad "there is something to show" flag — any item at all.
+// It does NOT gate Build. NeedsResolution is the only gate: true when at least
+// one item is a resolution blocker (see PreflightItem). External config values
+// are collected on the Builds page while the coding agent runs and are enforced
+// at the deploy gate, so they never hold up starting a build.
 type BuildPreflight struct {
-	NeedsInput bool            `json:"needsInput"`
-	Items      []PreflightItem `json:"items"`
+	NeedsInput      bool            `json:"needsInput"`
+	NeedsResolution bool            `json:"needsResolution"`
+	Items           []PreflightItem `json:"items"`
+}
+
+// resolutionBlockerKinds are the item kinds that gate the version cut: the
+// design cannot name the dependency yet, so nothing downstream can be authored
+// for it. Every other kind is collected-later, deploy-gated work.
+var resolutionBlockerKinds = map[string]bool{
+	"external-ambiguous":  true,
+	"external-unresolved": true,
+	"external-spec":       true,
+	"org-service":         true,
 }
 
 // PreflightDeps carries the preflight service's ports.
 type PreflightDeps struct {
-	Design PreflightDesignReader
-	Status ProvisionStatusReader
+	Design  PreflightDesignReader
+	Status  ProvisionStatusReader
+	Catalog OrgCatalogReader
 }
 
-// PreflightService computes the build dependency-drawer preflight from the
-// design at HEAD, filtering out anything already provisioned or in-flight.
+// PreflightService computes the build preflight from the design at HEAD —
+// what the project's dependencies still need before the version can ship —
+// filtering out anything already provisioned or in-flight. It reports, never
+// collects: resolution blockers gate the version cut, while external config
+// values are gathered on the Builds page and enforced at the deploy gate.
 type PreflightService struct {
-	design PreflightDesignReader
-	status ProvisionStatusReader
+	design  PreflightDesignReader
+	status  ProvisionStatusReader
+	catalog OrgCatalogReader
 }
 
 // NewPreflightService wires the preflight service.
 func NewPreflightService(d PreflightDeps) *PreflightService {
-	return &PreflightService{design: d.Design, status: d.Status}
+	return &PreflightService{design: d.Design, status: d.Status, catalog: d.Catalog}
 }
 
 // Preflight walks every component's dependencies at HEAD — service AND
 // web-application alike (#252 Task 14: a web-application's unresolved
-// dependency needs the same drawer/gate treatment as a service's, since Task 9
-// already surfaces its status chips and the coding-agent wiring already emits
-// consumed-spec instructions for it) — and emits a drawer item for each
-// dependency that still needs user input/approval and is not already
-// provisioned or in-flight:
+// dependency needs the same reporting/gate treatment as a service's, since
+// Task 9 already surfaces its status chips and the coding-agent wiring already
+// emits consumed-spec instructions for it) — and emits an item for each
+// dependency that is not yet settled and not already provisioned or in-flight:
 //
 //   - external: a blocker item — "external-ambiguous" (2+ candidates),
 //     "external-unresolved" (needs information only the user can supply), or
@@ -116,13 +154,18 @@ func NewPreflightService(d PreflightDeps) *PreflightService {
 //     computed Status/Reason (spec.ComputeDependencyStatus, via
 //     dependencyBlocker) says so; this is the dependency-management proceed
 //     gate Task 1 orphaned, reborn here. Otherwise, an "external-config" item
-//     (key/secret views only) when the dependency is not yet Ready.
+//     (key/secret views only) when the dependency is not yet Ready and is not
+//     a Registered External (org catalog already holds env cells — nothing
+//     should re-collect secrets that live on the org record).
 //   - platform-resource: a "platform-resource" item when not yet Ready.
 //   - org-service: an "org-service" item when Status is one of the three
 //     non-resolved resolution states (unresolved | blocked | ambiguous);
 //     resolved dependencies never surface here.
-//   - component (sibling components): never emitted — not provisioned via
-//     the drawer.
+//   - component (sibling components): never emitted — not provisioned per
+//     project.
+//
+// NeedsResolution is then true iff at least one emitted item is a resolution
+// blocker; NeedsInput stays the broad "any item at all" flag.
 //
 // itemsFor switches purely on the dependency's own Kind — never the owning
 // component's ComponentType — so this walk is component-kind-agnostic by
@@ -144,10 +187,18 @@ func (s *PreflightService) Preflight(ctx context.Context, orgID, projectID strin
 		}
 	}
 
-	return BuildPreflight{NeedsInput: len(items) > 0, Items: items}, nil
+	needsResolution := false
+	for _, it := range items {
+		if resolutionBlockerKinds[it.Kind] {
+			needsResolution = true
+			break
+		}
+	}
+
+	return BuildPreflight{NeedsInput: len(items) > 0, NeedsResolution: needsResolution, Items: items}, nil
 }
 
-// itemsFor computes the 0, 1, or 2 drawer items a single dependency raises.
+// itemsFor computes the 0, 1, or 2 preflight items a single dependency raises.
 func (s *PreflightService) itemsFor(ctx context.Context, orgID, projectID, componentName string, d spec.Dependency) ([]PreflightItem, error) {
 	switch d.Kind {
 	case spec.DependencyKindExternal:
@@ -157,13 +208,13 @@ func (s *PreflightService) itemsFor(ctx context.Context, orgID, projectID, compo
 	case spec.DependencyKindOrgService:
 		return orgServiceItems(componentName, d), nil
 	case spec.DependencyKindComponent:
-		return nil, nil // sibling components are not provisioned via the drawer.
+		return nil, nil // sibling components are not provisioned per project.
 	default:
 		return nil, nil
 	}
 }
 
-// externalItems computes the drawer item(s) for one external dependency.
+// externalItems computes the preflight item(s) for one external dependency.
 // dependencyBlocker (the single mapping the build hard-gate also uses) checks
 // FIRST: an ambiguous/unresolved dependency raises exactly one blocker item
 // (external-ambiguous / external-unresolved / external-spec) with a
@@ -172,9 +223,10 @@ func (s *PreflightService) itemsFor(ctx context.Context, orgID, projectID, compo
 // still-ambiguous/unresolved dependency has no derived config keys yet). Once
 // resolved (or when no resolver was ever wired — the fail-open empty Status),
 // the pre-existing external-config item (key/secret views only) is emitted
-// when the dependency is not yet Ready — unchanged: config collection stays a
-// provisioning-readiness concern local to this preflight, not part of
-// ComputeDependencyStatus.
+// when the dependency is not yet Ready and is not Registered (org catalog
+// env cells). The config schema stays a provisioning-readiness concern local
+// to this preflight, not part of ComputeDependencyStatus. Registered names
+// still author from org cells at POST /build; they just do not surface here.
 func (s *PreflightService) externalItems(ctx context.Context, orgID, projectID, componentName string, d spec.Dependency) ([]PreflightItem, error) {
 	if kind, desc, blocked := dependencyBlocker(d); blocked {
 		return []PreflightItem{{
@@ -183,6 +235,11 @@ func (s *PreflightService) externalItems(ctx context.Context, orgID, projectID, 
 			Dependency:  d.Name,
 			Description: desc,
 		}}, nil
+	}
+	if s.catalog != nil && s.catalog.HasOrgEnvCells(ctx, orgID, d.Name) {
+		// Org cells already hold values; project Ready is irrelevant until
+		// POST /build authors the instance from those cells.
+		return nil, nil
 	}
 	ready, err := s.status.Ready(ctx, orgID, projectID, d.Name)
 	if err != nil {

@@ -185,6 +185,7 @@ const REFERENCE_RULES: Record<string, string[]> = {
     // for the name at all — and the skill forbids inventing one.
     "**An endpoint dependency's env var is always `<DEP_NAME>_URL`**",
     "**a pinned contract wins when there is one**",
+    "external-dependency-research.md",
     "delete anything under the repo-root `specs/`",
   ],
   "workload-and-wiring.md": [
@@ -210,6 +211,66 @@ for (const [file, rules] of Object.entries(REFERENCE_RULES)) {
     }
   });
 }
+
+// Design reuses a Registered External resource and writes
+// consumption instructions into `description` / org resource docs into
+// `specPath`. Coding reads those fields. Each rule lives in one skill —
+// architecture must not paste the coding procedure, and the research file
+// must not restate the design-time name choice.
+const ARCHITECTURE = path.join(LIBRARY, "architecture", "SKILL.md");
+const RESEARCH = path.join(LIBRARY, "aep", "references", "external-dependency-research.md");
+
+test("architecture description still triggers on resolving a dependency", () => {
+  const skill = fs.readFileSync(ARCHITECTURE, "utf8");
+  const frontmatter = skill.slice(0, skill.indexOf("\n---", 4));
+  assert.match(frontmatter, /Reuse org catalog resources/);
+  assert.match(frontmatter, /resolving\/reconsidering any dependency/);
+});
+
+test("architecture prefers a Registered External resource over a new-name Project External", () => {
+  const skill = fs.readFileSync(ARCHITECTURE, "utf8");
+  assert.ok(skill.includes("Registered External resource"), "lost Registered External resource");
+  assert.ok(skill.includes("Project External resource"), "lost Project External resource");
+  assert.ok(skill.includes("consumption instructions"), "list_external_resources returns consumption instructions");
+  assert.ok(skill.includes("org resource docs pointers"), "list_external_resources returns org resource docs pointers");
+  assert.ok(
+    skill.includes("Write consumption instructions into the dependency `description`"),
+    "coding reads consumption instructions from description — name that handoff",
+  );
+  assert.ok(skill.includes("**new** name"), "a Project External resource uses a new name");
+  assert.ok(skill.includes("org values stay on the Registered name"), "org values stay on the Registered name");
+  assert.ok(skill.includes("org-level one wins"), "org catalog rows outrank a new Project External name");
+  assert.ok(skill.includes("user-asked reconsider"), "leaving a fitting org row requires a reconsider");
+  assert.ok(!skill.includes("unresolved on purpose"), "catalog reuse is the github example, not an invented needs-spec");
+  assert.ok(!skill.includes("{type, url}"), "MCP pointer shape belongs to the list tool, not the skill");
+  assert.ok(!skill.includes("{type, path}"), "MCP pointer shape belongs to the list tool, not the skill");
+});
+
+test("architecture does not paste the coding research procedure", () => {
+  const skill = fs.readFileSync(ARCHITECTURE, "utf8");
+  assert.ok(!skill.includes("external-dependency-research.md"), "coding procedure belongs in aep references");
+  assert.ok(!skill.includes("vendor's own quickstart"), "sdk quickstart is the coding research procedure");
+});
+
+test("external-dependency-research reads Registered consumption instructions from description and specPath", () => {
+  const research = fs.readFileSync(RESEARCH, "utf8");
+  assert.ok(research.includes("Registered External resource"));
+  assert.ok(research.includes("consumption instructions"));
+  assert.ok(research.includes("dependency `description`"), "consumption instructions arrive in description");
+  assert.ok(
+    !research.includes("there is no catalog to read it out of"),
+    "Registered External resources carry consumption instructions into description and specPath",
+  );
+  assert.ok(!research.includes("list_external_resources"), "MCP list is design-time; coding does not call it");
+  assert.ok(!research.includes("when present"), "name the checkable fields; do not leave a dangling when-present");
+  assert.ok(!research.includes("that file in org resource docs"), "coding cannot read org resource docs");
+  assert.ok(!research.includes("{type, url}"), "MCP pointer shape belongs to the list tool, not the skill");
+  assert.ok(!research.includes("{type, path}"), "MCP pointer shape belongs to the list tool, not the skill");
+  assert.ok(
+    !research.includes("org values stay on the Registered name"),
+    "the design-time name choice belongs in architecture",
+  );
+});
 
 // A subagent gets its contract from its PROMPT, so the fan-out section is the one
 // place the reference can be introduced. If this pointer goes, every subagent
@@ -446,6 +507,95 @@ test("no library skill hardcodes a runner path", () => {
       `${skill} hardcodes /app/skills — use $AEP_SKILLS_DIR, which is right in every mode`,
     );
   }
+});
+
+// The Bash tool keeps ONE shell for a whole run, so a bare relative `cd` is
+// correct exactly once. #49: the RUN block was re-entered after a heal wave and
+// `cd tests/e2e` landed in `tests/e2e/tests/e2e`. Every other path the
+// validation workflow names is repo-root relative, so the one command that
+// moves the shell has to be self-locating. Scoped to aep-validation on purpose:
+// `cd <project-name>` in the ballerina skill is a placeholder after `bal new`,
+// not a fixed path.
+// From the repo root a bare `npx playwright test` is the QUIET failure: it
+// discovers the specs, passes, and exits 0 without loading the config — so no
+// reporter, no results.json, and none of the launch args the deployed endpoints
+// need. Verified against the pinned 1.61.1. Every invocation therefore goes
+// through the package's own `test` script, which `npm --prefix` runs with the
+// package as its working directory — that is what removed the last `cd` from
+// this workflow.
+test("the validation workflow never runs playwright test bare", () => {
+  const docs = ["SKILL.md", "references/authoring.md", "references/healing.md"].map(
+    (rel) => [rel, fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8")] as const,
+  );
+  for (const [rel, body] of docs) {
+    for (const line of body.split("\n")) {
+      // Start-of-line only: prose may name the form it is warning against.
+      if (!/^\s*npx\s+playwright\s+test\b/.test(line)) continue;
+      assert.ok(
+        line.includes("--config"),
+        `aep-validation/${rel}: \`${line.trim()}\` — bare from the repo root this ` +
+          `passes and writes no results.json; use \`npm test --prefix tests/e2e\``,
+      );
+    }
+  }
+  const skill = docs[0][1];
+  assert.match(
+    skill,
+    /"scripts":\s*\{\s*"test":\s*"playwright test"\s*\}/,
+    "the scaffolded package.json lost its `test` script — every invocation depends on it",
+  );
+  assert.ok(
+    skill.includes("npm test --prefix tests/e2e"),
+    "SKILL.md no longer runs the suite through the package script",
+  );
+});
+
+test("the validation workflow never cds to a bare relative path", () => {
+  for (const rel of ["SKILL.md", "references/authoring.md", "references/healing.md"]) {
+    const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", rel), "utf8");
+    for (const line of body.split("\n")) {
+      // The whole argument, not the first token: `cd "$(git rev-parse …)/x"`
+      // contains spaces, and splitting on them would read as a bare path.
+      const target = /^\s*cd\s+(.+)$/.exec(line)?.[1]?.trim();
+      if (!target) continue;
+      assert.ok(
+        target.replace(/^["']/, "").startsWith("/") ||
+          target.includes("$(git rev-parse --show-toplevel)"),
+        `aep-validation/${rel}: \`${line.trim()}\` — the shell persists across calls, so a ` +
+          `cd must be self-locating (absolute, or rooted at $(git rev-parse --show-toplevel))`,
+      );
+    }
+  }
+});
+
+// #137/#140: the validation deny-list summarised the rules as a flat "no
+// force-push" while step 10 needed one, and the agent resolved the
+// contradiction by ignoring its own skill. A validation branch name repeats
+// every cycle, so the push must force — but never the form that ignores what
+// the remote says.
+test("no skill licenses a force-push without the lease", () => {
+  for (const rel of fs.readdirSync(LIBRARY, { recursive: true, encoding: "utf8" })) {
+    if (!rel.endsWith(".md")) continue;
+    const full = path.join(LIBRARY, rel);
+    if (!fs.statSync(full).isFile()) continue;
+    for (const line of fs.readFileSync(full, "utf8").split("\n")) {
+      if (!line.includes("push") || !line.includes("--force")) continue;
+      assert.ok(
+        line.includes("--force-with-lease"),
+        `${rel}: \`${line.trim()}\` — a force-push must carry --force-with-lease`,
+      );
+    }
+  }
+});
+
+// The half a reader misses: the deny-list can go on governing a force-push
+// after the step that needed one has lost it.
+test("aep-validation still names the force-push its push step needs", () => {
+  const body = fs.readFileSync(path.join(LIBRARY, "aep-validation", "SKILL.md"), "utf8");
+  assert.ok(
+    body.includes("git push --force-with-lease"),
+    "step 10 lost its lease form while the deny-list still governs one",
+  );
 });
 
 test("re-mirroring the same workspace replaces the previous mode's body", async () => {

@@ -56,6 +56,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import type { FilePart } from "ai";
+import type { TurnAttachment } from "@aep/agent-stream";
 import { parse as parseYaml } from "yaml";
 // Reuse the bundle's single frontmatter grammar + LF canonicalizer so SKILL.md
 // fence parsing cannot drift from the spec-file fence parsing (same approach as
@@ -412,6 +413,49 @@ export function overlayReferenceTexts(
   const out = { ...roomFiles };
   for (const [path, content] of refs) out[path] = content;
   return out;
+}
+
+/**
+ * Chat attachments (#428) → native AI SDK file parts.
+ *
+ * The sibling of `readReferenceAttachments`, and the difference is where the
+ * bytes come from: a reference is READ FROM THE SNAPSHOT by path, because the
+ * platform stored it and overlaid it there. An attachment is never stored at all
+ * (console ADR-0019), so its bytes arrive INLINE on the turn request and this
+ * touches no filesystem — no path to fence, no symlink to resolve, no ENOENT to
+ * survive.
+ *
+ * The same per-turn budget applies, and it is shared with the reference parts
+ * rather than doubled: `spent` carries over, because the ceiling is a property of
+ * the MODEL REQUEST, not of either channel. Attachments are taken in order until
+ * the budget runs out; each one that does not fit is warned and skipped, and the
+ * rest still get their chance.
+ *
+ * Best-effort per item, like every other reader here: a malformed base64 payload
+ * is warned and skipped rather than failing the whole turn.
+ */
+export function toAttachmentParts(
+  attachments: TurnAttachment[] | undefined,
+  alreadySpentEncodedBytes = 0,
+): FilePart[] {
+  const parts: FilePart[] = [];
+  let spent = alreadySpentEncodedBytes;
+  for (const a of attachments ?? []) {
+    const name = a.name.trim();
+    if (name === "") continue;
+    // `data` IS the encoded form, so its length is exactly what this costs the
+    // budget — no need to decode to measure.
+    const encodedBytes = a.data.length;
+    if (spent + encodedBytes > MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES) {
+      console.warn(
+        `[attachments] skipping oversized attachment ${name}: ${encodedBytes} encoded bytes exceeds the ${MAX_REFERENCE_ATTACHMENT_ENCODED_BYTES - spent} left of the turn's budget`,
+      );
+      continue;
+    }
+    parts.push({ type: "file", data: a.data, mediaType: a.mediaType, filename: name });
+    spent += encodedBytes;
+  }
+  return parts;
 }
 
 // --- The `_skills` snapshot → lazy SkillSource --------------------------------

@@ -287,11 +287,14 @@ _Avoid_: reserved name, well-known type name (no `resourceType` value carries
 platform-level meaning; see ADR-0007's rejected alternatives).
 
 ### External resource registry
-Org-level definitions (name + config-key schema) reusable across projects; the
-design agent discovers them via MCP (`list_external_resources`) and reuses the
-exact registered name. Values are per-project, per-environment; secret values
-live in OpenBao via SM-API (`extres-<name>-<env>` entities) and reach pods
-through ResourceReleaseBinding → ExternalSecret → env.
+The org-namespaced OpenChoreo `ResourceType` (ADR-0009). Domain terms live in
+[`CONTEXT.md`](../CONTEXT.md): **Registered External resource**, **Project
+External resource**, **consumption instructions**.
+
+A Registered External's values are org-held (org-catalog vault path); a Project
+External's values are per-project. Secret bytes never leave SM-API/OpenBao.
+After aep-api restart the ResourceType still marks Registered (ADR-0021). The
+design agent discovers rows via MCP `list_external_resources`.
 
 ### Unset
 A declared external dependency config key authored on its binding with an empty
@@ -306,6 +309,18 @@ true while values are unset; use `configured` for the AEP value state.
 ### Proceed-gate
 `design/save` refuses (409) while any dependency is unresolved, naming the
 component, dependency, and reason.
+
+### Deploy gate
+The milestone run's refusal to promote until every external dependency is
+**configured** and every platform resource is provisioned (ADR-0023). It is not
+a build gate: Build never blocks on a value, the coding agent runs with its env
+vars defined and empty, and values are collected on the builds page meanwhile.
+The two blockers are kept apart because they are different facts — a resource
+still provisioning is the platform working, so the stage polls; an unconfigured
+dependency is a person who has not acted, so the run parks in `waiting` with
+reason `external-values` and names what it is waiting on. A Registered External
+is outside the gate: its values are org-held and no project surface could clear
+it.
 
 ---
 
@@ -333,6 +348,9 @@ it, and only `dev` takes the one-build-per-project mutex. Origin (`spec-build`,
 milestone is written, so it names work the platform is doing; `waiting` is the
 unbounded wait, where something outside the platform is needed; `blocked` is
 terminal and is not a failure — the org has no agent concurrency slot left.
+A `waiting` run may carry a **waiting reason**: empty for the ordinary
+between-cycles park, `external-values` for the [deploy gate](#deploy-gate), which
+also names the dependencies it is blocked on so the console can link to them.
 A milestone sees **sequential** runs across its life, so the workflow id is reused.
 A run dispatches its cycles **one at a time**, so an org's concurrent-agent
 entitlement counts in-flight milestone runs rather than tasks.

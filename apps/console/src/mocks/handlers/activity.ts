@@ -25,10 +25,33 @@ import { activityFeed } from "../fixtures/activity";
 // treats that as a clean end and reconnects (matching prod's reconnect
 // behaviour on a dropped connection), but since the seeded read already has
 // every event, no visible gap results.
+// Scenario switch (api-guidelines: error and empty scenarios; ADR-0004):
+//   localStorage.setItem('aep:mock:activity', 'empty' | 'some' | 'error')
+// Unset, the feed follows the project scenario: a 'fresh' project has done
+// nothing yet, so its activity is empty without a second devtools key.
+type ActivityScenario = "empty" | "some" | "error";
+
+function activityScenario(): ActivityScenario {
+  const chosen = localStorage.getItem("aep:mock:activity");
+  if (chosen === "empty" || chosen === "some" || chosen === "error") {
+    return chosen;
+  }
+  return localStorage.getItem("aep:mock:project") === "fresh"
+    ? "empty"
+    : "some";
+}
+
 export const activityHandlers = [
-  http.get("*/api/v1/projects/:projectName/activity", () =>
-    HttpResponse.json(activityFeed),
-  ),
+  http.get("*/api/v1/projects/:projectName/activity", () => {
+    const s = activityScenario();
+    if (s === "error") {
+      return HttpResponse.json(
+        { code: "internal_error", message: "Mock error scenario for activity" },
+        { status: 500 },
+      );
+    }
+    return HttpResponse.json(s === "empty" ? { items: [] } : activityFeed);
+  }),
 
   http.get("*/api/v1/projects/:projectName/activity/stream", () => {
     const encoder = new TextEncoder();

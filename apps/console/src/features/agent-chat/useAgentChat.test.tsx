@@ -26,9 +26,16 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addMessage, chatKeyFor, getMessages, replaceMessages } from "./chatStore";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  addMessage,
+  chatKeyFor,
+  getMessages,
+  replaceMessages,
+  upsertQuestionMessage,
+} from "./chatStore";
 import { useAgentChat } from "./useAgentChat";
+import { useConversationLog } from "./useConversationLog";
 
 const ORG = "acme";
 const PROJECT = "proj1";
@@ -42,6 +49,8 @@ vi.mock("./api/conversations", async (importOriginal) => {
     ...real,
     fetchCurrentConversationId: (...a: unknown[]) => mockFetchCurrent(...a),
     rotateConversation: (...a: unknown[]) => mockRotate(...a),
+    rotateCurrentConversation: async (_qc: unknown, projectName: string) =>
+      mockRotate(projectName),
   };
 });
 
@@ -143,17 +152,42 @@ describe("useAgentChat — the shared thread (#430)", () => {
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockResolvedValue("turn-1");
-    act(() => result.current.send("hello"));
+    await act(async () => {
+      await result.current.send("hello");
+    });
 
-    await waitFor(() => expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello"));
+    // The 4th arg is the message's chat attachments (#428) — empty for a plain
+    // send, and passed explicitly rather than omitted so the wire shape is one
+    // code path.
+    await waitFor(() =>
+      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", [], true),
+    );
   });
 
-  it("holds sends until the thread id resolves", () => {
+  it("omits collab when this chat is not a spec workspace", async () => {
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT, { collab: false }), {
+      wrapper: createWrapper(),
+    });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    mockStartTurn.mockResolvedValue("turn-1");
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    await waitFor(() =>
+      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", "hello", [], false),
+    );
+  });
+
+  it("holds sends until the thread id resolves", async () => {
     mockFetchCurrent.mockReturnValue(new Promise(() => {})); // never resolves
     const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
 
     expect(result.current.conversationReady).toBe(false);
-    act(() => result.current.send("too early"));
+    await act(async () => {
+      await result.current.send("too early");
+    });
     expect(mockStartTurn).not.toHaveBeenCalled();
   });
 
@@ -176,7 +210,9 @@ describe("useAgentChat — the shared thread (#430)", () => {
     // A teammate rotated: the send 409s, the re-resolve answers the NEW id.
     mockStartTurn.mockRejectedValue(new ConversationRotatedError());
     mockFetchCurrent.mockResolvedValue("conv-2");
-    act(() => result.current.send("into the demoted thread"));
+    await act(async () => {
+      await result.current.send("into the demoted thread");
+    });
 
     await waitFor(() => {
       const msgs = getMessages(KEY);
@@ -253,7 +289,9 @@ describe("useAgentChat — the shared thread (#430)", () => {
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockRejectedValue(new Error("502 upstream"));
-    act(() => result.current.send("do not lose me"));
+    await act(async () => {
+      await result.current.send("do not lose me");
+    });
     await waitFor(() =>
       expect(getMessages(KEY).some((m) => m.role === "user" && m.status === "failed")).toBe(true),
     );
@@ -269,5 +307,214 @@ describe("useAgentChat — the shared thread (#430)", () => {
       expect(contents).toContain("do not lose me");
       expect(contents).toContain("502 upstream");
     });
+  });
+});
+
+// #562 review: the window between "the server has the turn" and "this client
+// knows its id". The turn row exists the moment StartTurn returns 202, but
+// `startCollabTurn` has not resolved yet — so `attachedRef` is still false and
+// the foreign-turn poll would happily find that turn, attach it, and fold it,
+// while `send` was about to fold the very same stream. Two concurrent folds,
+// and a second user bubble beside the one the user is already looking at,
+// because the optimistic row has no turn id to be recognised by yet.
+describe("useAgentChat — a local send in flight", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockFetchCurrent.mockResolvedValue("conv-1");
+    mockGetHistory.mockResolvedValue([]);
+    mockGetActive.mockResolvedValue(null);
+    mockAttach.mockResolvedValue(undefined);
+    // The poll is a timeout; `shouldAdvanceTime` keeps waitFor working while
+    // letting the test fire that timeout on demand.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // The optimistic row has no turn id and the server has no record of it, so it
+  // survives neither the rehydrate's REPLACE nor its `localOnly` filter (error
+  // and failed rows only). A tab switch inside the ~2s dispatch would drop the
+  // user's own message, and `settleUserMessage` would then no-op onto an id
+  // that no longer exists — the message simply gone until the turn ended.
+  it("keeps the user's message through a refocus mid-dispatch", async () => {
+    let resolveDispatch: (id: string) => void = () => {};
+    mockStartTurn.mockImplementation(
+      () => new Promise<string>((res) => { resolveDispatch = res; }),
+    );
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    act(() => {
+      void result.current.send("tidy the requirements");
+    });
+    await waitFor(() => expect(getMessages(KEY)).toHaveLength(1));
+
+    // The server still has no record of this turn.
+    mockGetHistory.mockResolvedValue([]);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      getMessages(KEY).filter((m) => m.role === "user" && m.content === "tidy the requirements"),
+    ).toHaveLength(1);
+
+    act(() => resolveDispatch("t1"));
+    await waitFor(() => expect(mockAttach).toHaveBeenCalled());
+  });
+
+  it("holds the poll off, and never doubles the user's message", async () => {
+    // The dispatch hangs; the turn nonetheless exists server-side.
+    let resolveDispatch: (id: string) => void = () => {};
+    mockStartTurn.mockImplementation(
+      () => new Promise<string>((res) => { resolveDispatch = res; }),
+    );
+
+    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+
+    act(() => {
+      void result.current.send("tidy the requirements");
+    });
+
+    // The user's row is up immediately, with no turn id yet.
+    await waitFor(() => expect(getMessages(KEY)).toHaveLength(1));
+
+    // The poll now reports the very turn this client is still dispatching.
+    mockGetActive.mockResolvedValue({
+      turnId: "t1",
+      conversationId: "conv-1",
+      useCase: "general",
+      status: "running",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      instruction: "tidy the requirements",
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(13_000);
+      await Promise.resolve();
+    });
+
+    act(() => resolveDispatch("t1"));
+    await waitFor(() => expect(mockAttach).toHaveBeenCalled());
+
+    // One user row, one fold.
+    const users = getMessages(KEY).filter((m) => m.role === "user");
+    expect(users).toHaveLength(1);
+    expect(mockAttach).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+// A turn that ENDS while the user sits on one page.
+//
+// The log has two sources of truth: the SSE fold appends turn rows into
+// `chatStore` live, and the `/messages` query is the authority that REPLACES
+// them. The query is `staleTime: Infinity` on the grounds that "the thread only
+// moves when a turn ends, and every surface that mounts this has a trigger for
+// that" — but the commit itself was never one of those triggers. It refreshed
+// the project tree and left the thread cache holding a PRE-TURN snapshot, so
+// the next surface to mount the log replayed that snapshot over the rows the
+// fold had just painted.
+//
+// It is a new project that makes this certain rather than merely possible: the
+// panel is force-opened at creation and mounts BEFORE the platform's kickoff
+// dispatches, so the seeded snapshot is an EMPTY thread — and the kickoff
+// always ends on questions. The replay then empties the log outright, which is
+// what took the spec workspace back to "Nothing written yet" plus a Retry with
+// the agent standing waiting on answers.
+describe("useAgentChat — a committed turn refreshes the thread cache", () => {
+  const QUESTION = {
+    question: "Who raises tickets?",
+    options: [{ label: "Staff" }],
+  };
+  // What the server serves ONCE the kickoff turn is persisted.
+  const POST_TURN_HISTORY = [
+    { role: "user", content: "/start a helpdesk" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tc-1",
+          toolName: "ask_questions",
+          input: { questions: [QUESTION] },
+        },
+      ],
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockFetchCurrent.mockResolvedValue("conv-1");
+    // The new-project ordering, and the precondition for the whole bug: the
+    // thread is server-minted at creation, and the panel's mount read lands
+    // BEFORE the platform's kickoff has produced anything. The snapshot the
+    // cache is seeded with is therefore the empty thread.
+    mockGetHistory.mockResolvedValue([]);
+    mockGetActive.mockResolvedValue({
+      turnId: "t-kickoff",
+      conversationId: "conv-1",
+      status: "running",
+      useCase: "general",
+    });
+    mockAttach.mockImplementation(
+      async (chatKey: string, _p: string, turnId: string, _s: unknown, onCommitted: () => void) => {
+        // The fold paints the question card live. The pointer in the panel
+        // exists because of THIS, never the query — which is what lets the two
+        // disagree in the first place.
+        upsertQuestionMessage(chatKey, {
+          role: "question",
+          turnId,
+          toolCallId: "tc-1",
+          questions: [QUESTION],
+          streaming: false,
+        });
+        // The turn is over: the poll must not find it again and rehydrate on
+        // its own, which would mask exactly the staleness under test.
+        mockGetActive.mockResolvedValue(null);
+        // The turn is persisted before the commit frame is emitted, so anyone
+        // who asks from here on is served it.
+        mockGetHistory.mockResolvedValue(POST_TURN_HISTORY);
+        onCommitted();
+      },
+    );
+  });
+
+  it("keeps a question the fold painted when a later surface mounts the log", async () => {
+    const Wrapper = createWrapper(); // ONE QueryClient — both surfaces share it
+    const panel = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: Wrapper });
+    await waitFor(() => expect(panel.result.current.conversationReady).toBe(true));
+    await waitFor(() =>
+      expect(getMessages(KEY).some((m) => m.role === "question")).toBe(true),
+    );
+
+    // The commit re-reads the thread — BEFORE any navigation. That is the fix:
+    // the cache holds post-turn truth while the user is still looking at the
+    // pointer, so nothing stale is left for a later surface to replay.
+    await waitFor(
+      () =>
+        expect(
+          mockGetHistory.mock.calls.length,
+          "the committed turn must re-read the thread",
+        ).toBeGreaterThan(1),
+      { timeout: 3000 },
+    );
+
+    // The click: the spec workspace mounts the log on the same client. It is
+    // served fresh data, so the replace lands the question instead of wiping
+    // it — and no stale frame paints "Nothing written yet" over the question
+    // the agent is standing there waiting on.
+    renderHook(() => useConversationLog(ORG, PROJECT), { wrapper: Wrapper });
+    await waitFor(() =>
+      expect(getMessages(KEY).some((m) => m.role === "question")).toBe(true),
+    );
   });
 });

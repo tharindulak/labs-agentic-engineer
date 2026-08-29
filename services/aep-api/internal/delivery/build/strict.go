@@ -66,6 +66,9 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 			Reason:          row.TerminalReason,
 			StartedAt:       row.CreatedAt,
 			CompletedAt:     row.EndedAt,
+			// Only a run that IS waiting may explain a wait. A reason left on a
+			// row that has moved on would read as a hang that is not happening.
+			WaitingReason: waitingReasonFor(row.State, row.WaitingReason),
 		})
 	}
 	return BuildList{Builds: builds}, nil

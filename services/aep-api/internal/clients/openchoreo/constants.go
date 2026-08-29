@@ -50,9 +50,12 @@ const (
 	LabelKeyComponentType LabelKeys = "openchoreo.dev/component-type"
 	LabelKeyProjectName   LabelKeys = "openchoreo.dev/project-name"
 
-	// Markers on ephemeral coding-agent Components (and their Workloads).
-	// ListComponents filters on LabelKeyAepInternal; retention / cancel /
-	// watchers key on the rest.
+	// Markers on ephemeral coding-agent Components, and on their Workloads and
+	// ReleaseBindings. ListComponents and ListProjectReleaseBindings both filter
+	// on LabelKeyAepInternal — a binding MUST carry it, because it wraps a
+	// batch/v1 Job whose Ready condition OpenChoreo reports as True regardless of
+	// the Job's state, and an unmarked one is counted as one of the project's
+	// deployments. Retention / cancel / watchers key on the rest.
 	LabelKeyAepInternal  LabelKeys = "aep.wso2.com/internal"
 	LabelKeyAepMilestone LabelKeys = "aep.wso2.com/milestone"
 	LabelKeyAepCycle     LabelKeys = "aep.wso2.com/cycle"

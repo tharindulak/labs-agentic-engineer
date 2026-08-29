@@ -17,7 +17,19 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mapConversationMessage } from "./turns";
+import { mapConversationMessage, startTurnBody } from "./turns";
+
+describe("startTurnBody", () => {
+  it("includes collab: true for a spec-room turn", () => {
+    expect(startTurnBody("hello", true)).toEqual({ instruction: "hello", collab: true });
+  });
+
+  it("omits collab for Marketplace register chat", () => {
+    expect(startTurnBody("/register-external-resource github", false)).toEqual({
+      instruction: "/register-external-resource github",
+    });
+  });
+});
 
 describe("mapConversationMessage", () => {
   it("keeps an author present on the payload", () => {
@@ -50,6 +62,43 @@ describe("mapConversationMessage", () => {
   it("drops a malformed author instead of throwing", () => {
     expect(
       mapConversationMessage({ role: "user", content: "hi", author: { id: 42 } }),
+    ).toEqual({ role: "user", content: "hi" });
+  });
+
+  it("carries attachment names off the journal (#428)", () => {
+    expect(
+      mapConversationMessage({
+        role: "user",
+        content: "what is wrong here?",
+        attachments: ["error.png", "rows.csv"],
+      }),
+    ).toEqual({
+      role: "user",
+      content: "what is wrong here?",
+      attachments: ["error.png", "rows.csv"],
+    });
+  });
+
+  it("omits attachments entirely when the payload has none", () => {
+    // A message without attachments must keep the exact row shape it had
+    // before the feature existed — not gain an empty array.
+    expect(mapConversationMessage({ role: "user", content: "hi" })).toEqual({
+      role: "user",
+      content: "hi",
+    });
+  });
+
+  it("drops malformed attachment entries rather than rendering blank chips", () => {
+    // Untyped extension field in the contract, so this is untrusted input.
+    expect(
+      mapConversationMessage({
+        role: "user",
+        content: "hi",
+        attachments: ["ok.pdf", 42, "", "   ", null],
+      }),
+    ).toEqual({ role: "user", content: "hi", attachments: ["ok.pdf"] });
+    expect(
+      mapConversationMessage({ role: "user", content: "hi", attachments: "nope" }),
     ).toEqual({ role: "user", content: "hi" });
   });
 

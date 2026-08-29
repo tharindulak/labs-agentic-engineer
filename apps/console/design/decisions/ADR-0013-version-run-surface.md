@@ -1,6 +1,16 @@
 # ADR-0013: The Builds page is one version's run story, and the run state is the only liveness
 
-- **Status:** Accepted; decisions 3, 4b, 6 and 9 superseded in part by
+- **Status:** Historical as of
+  [ADR-0021](./ADR-0021-builds-is-a-version-ledger.md) — the version-run
+  card this ADR designed is no longer mounted, and §5 (rows are not clickable) is
+  overturned for the LEDGER, whose rows now have somewhere of their own to go. A
+  task row keeps §5's spirit: its issue chip still links to GitHub.
+  The `?connections=open` deep link decision 4b describes is also gone
+  ([ADR-0023](../../../../docs/decisions/ADR-0023-external-dependency-values-are-a-deploy-gate.md)):
+  the spec route no longer accepts that search param, because Build no longer
+  collects an external dependency's values at all. The body below is left as
+  written — it records the decision as it was made.
+  Previously: Accepted; decisions 3, 4b, 6 and 9 superseded in part by
   [ADR-0014](./ADR-0014-build-session-spine.md), which turns the run card into
   one rail of staged sections
 - **Date:** 2026-07-27 (issue-driven execution,

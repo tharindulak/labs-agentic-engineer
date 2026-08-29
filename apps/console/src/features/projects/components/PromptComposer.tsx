@@ -25,106 +25,15 @@ import {
   InputBase,
   Stack,
   Tooltip,
-  Typography,
 } from "@wso2/oxygen-ui";
-import { Paperclip, Send, X } from "@wso2/oxygen-ui-icons-react";
+import { Paperclip, Send } from "@wso2/oxygen-ui-icons-react";
+import { AttachmentCardStrip } from "../../../components/AttachmentCard";
 import {
   MAX_REFERENCE_FILES,
   REFERENCE_ACCEPT,
-  referenceTypeLabel,
   screenReferenceFiles,
   type RejectedFile,
 } from "../lib/referenceFiles";
-
-const CARD_WIDTH = 132;
-const CARD_HEIGHT = 108;
-
-// One attached reference. The name is the whole card — no size, because an
-// oversized file never becomes a card (it becomes a rejection notice below), so
-// the only thing left worth saying is which kind of document this is.
-//
-// The remove control sits OUTSIDE the card's corner and is revealed on hover.
-// It is opacity-toggled rather than mounted on hover so it stays in the tab
-// order: `:focus-within` brings it back for keyboard users, who get no hover.
-function ReferenceCard({ file, onRemove }: { file: File; onRemove: () => void }) {
-  return (
-    <Box
-      sx={{
-        position: "relative",
-        flexShrink: 0,
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
-        p: 1.25,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        borderRadius: 1.5,
-        border: "1px solid",
-        borderColor: "divider",
-        bgcolor: "background.paper",
-        "&:hover .reference-card-remove, &:focus-within .reference-card-remove": {
-          opacity: 1,
-          pointerEvents: "auto",
-        },
-      }}
-    >
-      <Typography
-        variant="body2"
-        title={file.name}
-        sx={{
-          overflow: "hidden",
-          // Four lines, then ellipsis: a hashed export name fills the card and
-          // a short one leaves the badge where the eye expects it.
-          display: "-webkit-box",
-          WebkitBoxOrient: "vertical",
-          WebkitLineClamp: 4,
-          wordBreak: "break-word",
-          lineHeight: 1.35,
-        }}
-      >
-        {file.name}
-      </Typography>
-      <Box
-        sx={{
-          alignSelf: "flex-start",
-          px: 0.75,
-          py: 0.25,
-          borderRadius: 0.75,
-          border: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Typography variant="caption" color="text.secondary">
-          {referenceTypeLabel(file.name)}
-        </Typography>
-      </Box>
-      <Tooltip title={`Remove ${file.name}`}>
-        <IconButton
-          className="reference-card-remove"
-          size="small"
-          aria-label={`Remove ${file.name}`}
-          onClick={onRemove}
-          sx={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            transform: "translate(-40%, -40%)",
-            opacity: 0,
-            pointerEvents: "none",
-            transition: "opacity 120ms",
-            bgcolor: "background.paper",
-            border: "1px solid",
-            borderColor: "divider",
-            "&:hover": { bgcolor: "action.hover" },
-            "&:focus-visible": { opacity: 1, pointerEvents: "auto" },
-          }}
-        >
-          <X size={12} />
-        </IconButton>
-      </Tooltip>
-    </Box>
-  );
-}
 
 /**
  * The create view's prompt box (#383): one composer holding the typed idea and
@@ -185,38 +94,10 @@ export function PromptComposer({
           "&:focus-within": { borderColor: "primary.main" },
         }}
       >
-        {files.length > 0 && (
-          <Box
-            sx={{
-              display: "flex",
-              gap: 1,
-              mb: 1.5,
-              // Scroll rather than wrap: the composer must not grow taller as
-              // documents are added, or the Start button walks down the page.
-              overflowX: "auto",
-              // Room for the remove button, which is translated OUTSIDE each
-              // card's top-left corner. `overflow-x: auto` makes this a scroll
-              // container, and a scroll container clips on BOTH axes — setting
-              // one axis to a non-visible value computes the other to `auto`
-              // rather than leaving it `visible`. So the button was cut off
-              // against this box's top and left edges. The padding has to
-              // exceed the button's translated overhang (~10px at size
-              // "small"), not merely be non-zero.
-              pt: 1.5,
-              pl: 1.5,
-            }}
-          >
-            {files.map((file) => (
-              <ReferenceCard
-                key={file.name}
-                file={file}
-                onRemove={() =>
-                  onFilesChange(files.filter((f) => f.name !== file.name))
-                }
-              />
-            ))}
-          </Box>
-        )}
+        <AttachmentCardStrip
+          names={files.map((f) => f.name)}
+          onRemove={(name) => onFilesChange(files.filter((f) => f.name !== name))}
+        />
         <InputBase
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}

@@ -25,11 +25,13 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -64,24 +66,50 @@ const createTurnMaxInstructionBytes = 64 << 10
 const genaiStreamKeepAliveEvery = 15 * time.Second
 
 func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestObject) (gen.CreateTurnResponseObject, error) {
+	// Two content types (#428), and `JSONBody` rather than `Body` because the
+	// generator names one field per type once there is more than one.
+	//
+	// multipart is the arm that carries chat attachments. It exists because the
+	// bytes have nowhere else to be: nothing stores them (ADR-0019), so they ride
+	// this request into the detached turn and are durable only as parts of the
+	// conversation's history afterwards.
+	in := spec.TurnInput{ConversationID: request.ConversationID}
+	switch {
+	case request.MultipartBody != nil:
+		parsed, err := readMultipartTurn(request.MultipartBody)
+		if err != nil {
+			return nil, err
+		}
+		in.Instruction = parsed.Instruction
+		in.Target = parsed.Target
+		in.Collab = parsed.Collab
+		in.Attachments = parsed.Attachments
+	case request.JSONBody != nil:
+		in.Instruction = request.JSONBody.Instruction
+		in.Target = request.JSONBody.Target
+		in.Collab = request.JSONBody.Collab
+	default:
+		return nil, apierr.BadRequest("request body is required")
+	}
 	// The retired edge capped this body at 64 KiB (it carries no file content —
 	// useCase + instruction + target); the edge-wide 10 MiB cap alone would be
 	// a 160x loosening on a payload that is buffered whole and forwarded to
-	// the agents service.
-	if request.Body != nil && len(request.Body.Instruction) > createTurnMaxInstructionBytes {
+	// the agents service. Attachments are capped separately and on their own
+	// bytes (see attachments.go) — they are the one thing on this body that IS
+	// file content.
+	if len(in.Instruction) > createTurnMaxInstructionBytes {
 		return nil, apierr.New(http.StatusRequestEntityTooLarge, "request_too_large",
 			"instruction exceeds the size limit", nil)
 	}
-	org := tenant.BoundOrgFromContext(ctx)
-	if request.Body == nil {
-		return nil, apierr.BadRequest("request body is required")
+	// Text is required even when files are attached: the shared TurnSpec
+	// validator rejects an empty chat turn, so accepting one here would only
+	// move the failure to a worse place — mid-dispatch, after the turn row
+	// exists.
+	if strings.TrimSpace(in.Instruction) == "" {
+		return nil, apierr.BadRequest("instruction is required")
 	}
-	turnID, err := h.genai.StartTurn(ctx, org, request.ProjectName, spec.TurnInput{
-		ConversationID: request.ConversationID,
-		Instruction:    request.Body.Instruction,
-		Target:         request.Body.Target,
-		Collab:         request.Body.Collab,
-	})
+	org := tenant.BoundOrgFromContext(ctx)
+	turnID, err := h.genai.StartTurn(ctx, org, request.ProjectName, in)
 	if err != nil {
 		if conflict, ok := turnConflictOf(err); ok {
 			return conflict, nil
@@ -251,6 +279,12 @@ func turnStatusModel(st *spec.TurnStatus) gen.TurnStatus {
 		Message:        st.Message,
 		CreatedAt:      st.CreatedAt,
 		UpdatedAt:      st.UpdatedAt,
+
+		// The turn's display record (#562) — what a client attaching to a
+		// running turn paints as the message that started it.
+		Instruction:       st.Instruction,
+		AuthorID:          st.AuthorID,
+		AuthorDisplayName: st.AuthorDisplayName,
 	}
 }
 
@@ -373,6 +407,12 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		// skills-repo arm above.
 		slog.ErrorContext(ctx, "genai turn: conversation store not configured", "error", err)
 		return apierr.ServiceUnavailable(spec.ErrConversationsUnavailable.Error())
+	case errors.Is(err, gitfs.ErrDiskAdmission):
+		// New snapshot dests are refused at ≥90% workspace usage. Operator
+		// recovery (reap / prune), not a client bug — 503 with a sentence
+		// the console can show, cause in the logs. Same posture as skills.
+		slog.ErrorContext(ctx, "genai turn: workspace disk admission refused", "error", err)
+		return apierr.ServiceUnavailable("workspace disk is full — try again in a few minutes, or contact your platform admin")
 	default:
 		return genaiInternalError(ctx, "genai turn", err)
 	}

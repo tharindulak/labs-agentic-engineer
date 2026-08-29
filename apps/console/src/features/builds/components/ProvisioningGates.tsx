@@ -94,16 +94,26 @@ export function ProvisioningGates({
           </Stack>
         ))}
         {needsAction && (
+          // The way out used to be the SPEC page's connection drawer opened by
+          // `?connections=open`. That drawer is gone (ADR-0023): values are no
+          // longer collected in front of the Build button, and the search param
+          // went with it. They are supplied in the External resources section of
+          // a version's build page instead, which is one click down from the
+          // ledger — this component has no tag to link straight to, so it points
+          // at Builds.
+          //
+          // This component is itself unmounted (ADR-0021 consequences) and is
+          // only edited because the route it linked to no longer accepts that
+          // search param. Nothing here is reachable.
           <Box>
             <LinkButton
               size="small"
               variant="outlined"
               color={state === "failed" ? "error" : "warning"}
-              to="/projects/$projectName/spec"
+              to="/projects/$projectName/builds"
               params={{ projectName }}
-              search={{ connections: "open" }}
             >
-              Resolve connections
+              Go to Builds
             </LinkButton>
           </Box>
         )}

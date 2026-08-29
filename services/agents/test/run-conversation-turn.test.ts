@@ -234,6 +234,96 @@ test("an attachment already in history is not attached twice (#383 follow-up)", 
   assert.equal(fileParts.length, 1, "the document must appear in history exactly once");
 });
 
+// --- Chat attachments are EXEMPT from that dedupe (#428) ---------------------
+
+test("a re-attached chat attachment re-enters history — the user meant the new bytes", async () => {
+  // The bug this pins: chat attachment parts used to be merged into
+  // referenceAttachments and so inherited the dedupe above. Someone who revises
+  // a PDF, keeps its name and re-attaches it would have had the new bytes
+  // filtered out by NAME, and the model would silently read the stale copy.
+  //
+  // A reference is re-listed automatically by a flow with content the store
+  // decides; an attachment is a deliberate per-message act. Same mechanism,
+  // different intent.
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const v1 = { type: "file" as const, data: "djE=", mediaType: "application/pdf", filename: "claim-form.pdf" };
+  const v2 = { type: "file" as const, data: "djI=", mediaType: "application/pdf", filename: "claim-form.pdf" };
+
+  await runConversationTurn({
+    id: "chat-attach",
+    instruction: "add this form",
+    files: SEED_FILES,
+    chatAttachments: [v1],
+    model: textModel("ok"),
+    store,
+    guard,
+    onEvent: collector().onEvent,
+  });
+  // Same NAME, revised bytes.
+  await runConversationTurn({
+    id: "chat-attach",
+    instruction: "I revised it — use this one",
+    files: SEED_FILES,
+    chatAttachments: [v2],
+    model: textModel("ok"),
+    store,
+    guard,
+    onEvent: collector().onEvent,
+  });
+
+  const stored = (await store.get("chat-attach"))!;
+  const parts = stored.messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? (m.content.filter((part) => (part as { type?: string }).type === "file") as Array<{ data?: unknown }>)
+      : [],
+  );
+  assert.equal(parts.length, 2, "both versions must reach the model");
+  assert.deepEqual(
+    parts.map((p) => p.data),
+    ["djE=", "djI="],
+    "and the revised bytes must be the LATER copy, which the model reads as current",
+  );
+});
+
+test("chat attachments and reference parts share one message, references still deduped", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const ref = {
+    type: "file" as const,
+    data: "cmVm",
+    mediaType: "application/pdf",
+    filename: "specs/requirements/references/brief.pdf",
+  };
+  const chat = { type: "file" as const, data: "Y2hhdA==", mediaType: "image/png", filename: "shot.png" };
+
+  for (let i = 0; i < 2; i++) {
+    await runConversationTurn({
+      id: "mixed",
+      instruction: `turn ${i}`,
+      files: SEED_FILES,
+      referenceAttachments: [ref],
+      chatAttachments: [chat],
+      model: textModel("ok"),
+      store,
+      guard,
+      onEvent: collector().onEvent,
+    });
+  }
+
+  const stored = (await store.get("mixed"))!;
+  const names = stored.messages.flatMap((m) =>
+    Array.isArray(m.content)
+      ? (m.content as Array<{ type?: string; filename?: string }>)
+          .filter((p) => p.type === "file")
+          .map((p) => p.filename)
+      : [],
+  );
+  // The reference appears once (deduped); the attachment appears per turn.
+  assert.equal(names.filter((n) => n === "specs/requirements/references/brief.pdf").length, 1);
+  assert.equal(names.filter((n) => n === "shot.png").length, 2);
+});
+
 // --- Reference PDF attachments (#384) ----------------------------------------
 
 test("referenceAttachments ride the turn's user message as native file parts", async () => {

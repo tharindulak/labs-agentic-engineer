@@ -121,6 +121,21 @@ func (e BuildSummaryStatus) Valid() bool {
 	}
 }
 
+// Defines values for BuildSummaryWaitingReason.
+const (
+	BuildSummaryWaitingReasonExternalValues BuildSummaryWaitingReason = "external-values"
+)
+
+// Valid indicates whether the value is a known member of the BuildSummaryWaitingReason enum.
+func (e BuildSummaryWaitingReason) Valid() bool {
+	switch e {
+	case BuildSummaryWaitingReasonExternalValues:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeployStageValidation.
 const (
 	DeployStageValidationAwaitingFix  DeployStageValidation = "awaiting-fix"
@@ -160,21 +175,39 @@ func (e DeployStageValidation) Valid() bool {
 	}
 }
 
+// Defines values for EnvValueCellDTOStatus.
+const (
+	EnvValueCellDTOStatusConfigured EnvValueCellDTOStatus = "configured"
+	EnvValueCellDTOStatusUnset      EnvValueCellDTOStatus = "unset"
+)
+
+// Valid indicates whether the value is a known member of the EnvValueCellDTOStatus enum.
+func (e EnvValueCellDTOStatus) Valid() bool {
+	switch e {
+	case EnvValueCellDTOStatusConfigured:
+		return true
+	case EnvValueCellDTOStatusUnset:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ExternalDependencyValueState.
 const (
-	Configured     ExternalDependencyValueState = "configured"
-	NotProvisioned ExternalDependencyValueState = "not-provisioned"
-	Unset          ExternalDependencyValueState = "unset"
+	ExternalDependencyValueStateConfigured     ExternalDependencyValueState = "configured"
+	ExternalDependencyValueStateNotProvisioned ExternalDependencyValueState = "not-provisioned"
+	ExternalDependencyValueStateUnset          ExternalDependencyValueState = "unset"
 )
 
 // Valid indicates whether the value is a known member of the ExternalDependencyValueState enum.
 func (e ExternalDependencyValueState) Valid() bool {
 	switch e {
-	case Configured:
+	case ExternalDependencyValueStateConfigured:
 		return true
-	case NotProvisioned:
+	case ExternalDependencyValueStateNotProvisioned:
 		return true
-	case Unset:
+	case ExternalDependencyValueStateUnset:
 		return true
 	default:
 		return false
@@ -256,6 +289,51 @@ func (e MilestoneRunViewState) Valid() bool {
 	}
 }
 
+// Defines values for MilestoneRunViewWaitingReason.
+const (
+	MilestoneRunViewWaitingReasonExternalValues MilestoneRunViewWaitingReason = "external-values"
+)
+
+// Valid indicates whether the value is a known member of the MilestoneRunViewWaitingReason enum.
+func (e MilestoneRunViewWaitingReason) Valid() bool {
+	switch e {
+	case MilestoneRunViewWaitingReasonExternalValues:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OrgEndpointDTOType.
+const (
+	GRPC      OrgEndpointDTOType = "gRPC"
+	GraphQL   OrgEndpointDTOType = "GraphQL"
+	HTTP      OrgEndpointDTOType = "HTTP"
+	TCP       OrgEndpointDTOType = "TCP"
+	UDP       OrgEndpointDTOType = "UDP"
+	Websocket OrgEndpointDTOType = "Websocket"
+)
+
+// Valid indicates whether the value is a known member of the OrgEndpointDTOType enum.
+func (e OrgEndpointDTOType) Valid() bool {
+	switch e {
+	case GRPC:
+		return true
+	case GraphQL:
+		return true
+	case HTTP:
+		return true
+	case TCP:
+		return true
+	case UDP:
+		return true
+	case Websocket:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PreflightItemKind.
 const (
 	PreflightItemKindExternalAmbiguous  PreflightItemKind = "external-ambiguous"
@@ -298,6 +376,60 @@ func (e ProgressEventEmitter) Valid() bool {
 	case ProgressEventEmitterMain:
 		return true
 	case ProgressEventEmitterSubagent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceDocPointerDTOType.
+const (
+	ResourceDocPointerDTOTypeAsyncapi      ResourceDocPointerDTOType = "asyncapi"
+	ResourceDocPointerDTOTypeDocumentation ResourceDocPointerDTOType = "documentation"
+	ResourceDocPointerDTOTypeGraphql       ResourceDocPointerDTOType = "graphql"
+	ResourceDocPointerDTOTypeOpenapi       ResourceDocPointerDTOType = "openapi"
+	ResourceDocPointerDTOTypeProtobuf      ResourceDocPointerDTOType = "protobuf"
+)
+
+// Valid indicates whether the value is a known member of the ResourceDocPointerDTOType enum.
+func (e ResourceDocPointerDTOType) Valid() bool {
+	switch e {
+	case ResourceDocPointerDTOTypeAsyncapi:
+		return true
+	case ResourceDocPointerDTOTypeDocumentation:
+		return true
+	case ResourceDocPointerDTOTypeGraphql:
+		return true
+	case ResourceDocPointerDTOTypeOpenapi:
+		return true
+	case ResourceDocPointerDTOTypeProtobuf:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceDocWriteDTOType.
+const (
+	ResourceDocWriteDTOTypeAsyncapi      ResourceDocWriteDTOType = "asyncapi"
+	ResourceDocWriteDTOTypeDocumentation ResourceDocWriteDTOType = "documentation"
+	ResourceDocWriteDTOTypeGraphql       ResourceDocWriteDTOType = "graphql"
+	ResourceDocWriteDTOTypeOpenapi       ResourceDocWriteDTOType = "openapi"
+	ResourceDocWriteDTOTypeProtobuf      ResourceDocWriteDTOType = "protobuf"
+)
+
+// Valid indicates whether the value is a known member of the ResourceDocWriteDTOType enum.
+func (e ResourceDocWriteDTOType) Valid() bool {
+	switch e {
+	case ResourceDocWriteDTOTypeAsyncapi:
+		return true
+	case ResourceDocWriteDTOTypeDocumentation:
+		return true
+	case ResourceDocWriteDTOTypeGraphql:
+		return true
+	case ResourceDocWriteDTOTypeOpenapi:
+		return true
+	case ResourceDocWriteDTOTypeProtobuf:
 		return true
 	default:
 		return false
@@ -577,6 +709,42 @@ func (e TurnConflictCode) Valid() bool {
 	}
 }
 
+// Defines values for WorkloadDependencyDTOKind.
+const (
+	OrgService WorkloadDependencyDTOKind = "org-service"
+	Resource   WorkloadDependencyDTOKind = "resource"
+)
+
+// Valid indicates whether the value is a known member of the WorkloadDependencyDTOKind enum.
+func (e WorkloadDependencyDTOKind) Valid() bool {
+	switch e {
+	case OrgService:
+		return true
+	case Resource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WorkloadDependencyDTOTag.
+const (
+	External WorkloadDependencyDTOTag = "external"
+	Platform WorkloadDependencyDTOTag = "platform"
+)
+
+// Valid indicates whether the value is a known member of the WorkloadDependencyDTOTag enum.
+func (e WorkloadDependencyDTOTag) Valid() bool {
+	switch e {
+	case External:
+		return true
+	case Platform:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListTasksParamsState.
 const (
 	All    ListTasksParamsState = "all"
@@ -710,8 +878,13 @@ type BuildLogs struct {
 
 // BuildPreflight defines model for BuildPreflight.
 type BuildPreflight struct {
-	Items      []PreflightItem `json:"items"`
-	NeedsInput bool            `json:"needsInput"`
+	Items []PreflightItem `json:"items"`
+
+	// NeedsInput Whether preflight emitted any item at all. Kept as the broad "there is something to show" flag; it does NOT gate Build, because an external dependency's values are collected on the Builds page while the coding agent runs and are enforced at the deploy gate instead.
+	NeedsInput bool `json:"needsInput"`
+
+	// NeedsResolution Whether any emitted item blocks the version cut — a dependency the design itself cannot resolve (ambiguous, unresolved, missing spec, or an org service awaiting access). This is the ONLY flag a client may block Build on.
+	NeedsResolution bool `json:"needsResolution"`
 }
 
 // BuildProgressEvent One SSE frame on the VERSION progress stream, which spans every run that has worked the version. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by id), `line` one RunProgressLine, and `done` says why the stream ended (the server then closes it). `cycle` and `line` frames also carry `run` — a version's story spans several executions, so a cycle is only identified once you know which run opened it.
@@ -792,10 +965,16 @@ type BuildSummary struct {
 	StartedAt time.Time          `json:"startedAt"`
 	Status    BuildSummaryStatus `json:"status"`
 	Tag       string             `json:"tag"`
+
+	// WaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
+	WaitingReason BuildSummaryWaitingReason `json:"waitingReason,omitempty"`
 }
 
 // BuildSummaryStatus defines model for BuildSummary.Status.
 type BuildSummaryStatus string
+
+// BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
+type BuildSummaryWaitingReason string
 
 // ClientSecretOutputBody defines model for ClientSecretOutputBody.
 type ClientSecretOutputBody struct {
@@ -926,6 +1105,9 @@ type CreateProjectRequest struct {
 	// Prompt The user's initial requirement — what they want built. Persisted as the project's requirement and kicks off spec derivation for the new project (issue #72). Projects created without a prompt keep today's behavior.
 	Prompt string `json:"prompt,omitempty"`
 
+	// ReferencesPending The caller will POST reference documents for this project next (`put-project-references`), so the platform must hold the `/start` kickoff (#562) until they land — they are the primary brief, and a kickoff dispatched before the upload interviews the user about a document the agent never saw. The kickoff then fires from the references call instead. Omitted/false fires it from this call. Nothing else waits on it: an abandoned upload simply leaves the project un-started, which the overview's spec card offers as a CTA.
+	ReferencesPending bool `json:"referencesPending,omitempty"`
+
 	// RepoName Repository name for the project's GitHub repo; defaults to the project name, the organization is fixed server-side (issue #71).
 	RepoName string `json:"repoName,omitempty"`
 }
@@ -1054,10 +1236,26 @@ type DiscoverOutputBody struct {
 	JwksURL string `json:"jwksUrl"`
 }
 
+// EnvValueCellDTO One org-held env cell. Secrets never include value.
+type EnvValueCellDTO struct {
+	Environment string                `json:"environment"`
+	Key         string                `json:"key"`
+	Status      EnvValueCellDTOStatus `json:"status"`
+	Value       string                `json:"value,omitempty"`
+}
+
+// EnvValueCellDTOStatus defines model for EnvValueCellDTO.Status.
+type EnvValueCellDTOStatus string
+
 // EnvVar defines model for EnvVar.
 type EnvVar struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
+}
+
+// EnvironmentDTO defines model for EnvironmentDTO.
+type EnvironmentDTO struct {
+	Name string `json:"name"`
 }
 
 // Error Flat error envelope returned by every non-2xx response.
@@ -1105,10 +1303,16 @@ type ExternalDependencyValueState string
 
 // ExternalResourceDTO defines model for ExternalResourceDTO.
 type ExternalResourceDTO struct {
-	Config      []ConfigKeyDTO `json:"config"`
-	Consumers   []ConsumerDTO  `json:"consumers"`
-	Description string         `json:"description,omitempty"`
-	Name        string         `json:"name"`
+	Config                  []ConfigKeyDTO `json:"config"`
+	Consumers               []ConsumerDTO  `json:"consumers"`
+	ConsumptionInstructions string         `json:"consumptionInstructions,omitempty"`
+	Description             string         `json:"description,omitempty"`
+
+	// EnvCells Org value plane. Present with one cell per config key × OpenChoreo Environment on a Registered External resource. Omitted or empty on a Project External resource. Secrets never include value.
+	EnvCells     []EnvValueCellDTO       `json:"envCells,omitempty"`
+	Instances    []ResourceInstanceDTO   `json:"instances,omitempty"`
+	Name         string                  `json:"name"`
+	ResourceDocs []ResourceDocPointerDTO `json:"resourceDocs,omitempty"`
 }
 
 // FileBundle A set of files read at ONE commit. commitSha names that commit; every entry's sha is a blob of that same tree.
@@ -1154,6 +1358,18 @@ type InputFailure struct {
 	Reason     string `json:"reason"`
 }
 
+// IssueComment One comment on an issue, exactly as GitHub holds it. The platform stores none of this — it is read live on every request, so GitHub stays the only copy. The platform's OWN machine comments are excluded (a resolved-dependency block, a provisioning note, a closing line — written for the agent, not for a person); what remains is the coding agent's progress notes and whatever a human wrote, which appear alike. They cannot be told apart by author, and are not meant to be — the platform comments through the org's own credential and the coding runner is handed that same credential, so both arrive under one login.
+type IssueComment struct {
+	// Author The commenter's GitHub login. Empty when the account is gone — GitHub answers a null author for a deleted user, which is a fact about the comment, not a read failure.
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// ID GitHub's own node id — stable across reads, and the list key a consumer should render on.
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
 // IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (historical shape the deployed aep-mcp-server parses — do not "fix" without a coordinated MCP-server release).
 type IssueInfo struct {
 	Body   string   `json:"Body"`
@@ -1197,6 +1413,9 @@ type Lineage struct {
 
 // MilestoneRunView One run of the milestone loop, with the cycle records that make up its timeline. Loop POSITION is deliberately absent — it renders from the latest cycle, because fix and conflict cycles re-enter earlier phases and a stored phase enum would lie mid-loop.
 type MilestoneRunView struct {
+	// BlockingDependencies The external dependency names a `waiting` run is blocked on, so a client can name them and link straight to their configuration. Empty unless waitingReason is set.
+	BlockingDependencies []string `json:"blockingDependencies,omitempty"`
+
 	// Budgets The run's budget counters as the supervisor wrote them out. Read-model bookkeeping — the loop counts its own budgets and never reads these back.
 	Budgets   RunBudgets `json:"budgets"`
 	CreatedAt time.Time  `json:"createdAt"`
@@ -1225,6 +1444,9 @@ type MilestoneRunView struct {
 
 	// Validation The run's validation outcome. The verdict is a RUN property, not a per-issue one, and this is where the deployment surface reads it.
 	Validation RunValidation `json:"validation"`
+
+	// WaitingReason Why a `waiting` run is waiting. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. That park is unbounded and only cancellation or the values arriving exits it, so a client that renders `waiting` without this reads a working run as a hung one.
+	WaitingReason MilestoneRunViewWaitingReason `json:"waitingReason,omitempty"`
 }
 
 // MilestoneRunViewKind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's acceptance criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
@@ -1235,6 +1457,25 @@ type MilestoneRunViewOrigin string
 
 // MilestoneRunViewState planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked).
 type MilestoneRunViewState string
+
+// MilestoneRunViewWaitingReason Why a `waiting` run is waiting. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. That park is unbounded and only cancellation or the values arriving exits it, so a client that renders `waiting` without this reads a working run as a hung one.
+type MilestoneRunViewWaitingReason string
+
+// OrgEndpointDTO One Marketplace Endpoint — thin list_org_endpoints item, not the MCP {endpoints:[…]} wrapper.
+type OrgEndpointDTO struct {
+	Endpoint string `json:"endpoint"`
+
+	// Name org-service dependency name = provider component name
+	Name string `json:"name"`
+
+	// NamespaceVisible always true on this operation
+	NamespaceVisible bool               `json:"namespaceVisible"`
+	Project          string             `json:"project"`
+	Type             OrgEndpointDTOType `json:"type"`
+}
+
+// OrgEndpointDTOType defines model for OrgEndpointDTO.Type.
+type OrgEndpointDTOType string
 
 // OrganizationList defines model for OrganizationList.
 type OrganizationList struct {
@@ -1386,6 +1627,33 @@ type ProjectList struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
+// ProjectRoleState One role as it exists on the identity provider right now, joined against the platform's own record. Roles are shared at the provider's scope, so a row here is not owned by the project reading it.
+type ProjectRoleState struct {
+	// Description The group description on the directory. Seeded at create and never rewritten (a shared role may have been described by whoever declared it first).
+	Description string `json:"description,omitempty"`
+
+	// MemberCount How many accounts currently hold the role. Best-effort — a per-role read failure leaves it 0 rather than failing the whole panel.
+	MemberCount int `json:"memberCount,omitempty"`
+
+	// Name The role name verbatim; it is the identity, and it is what reaches an app as a groups claim.
+	Name string `json:"name"`
+
+	// PlatformCreated True when the platform created this role and may therefore enrol test users into it. A hand-made group reads false and the platform leaves it alone.
+	PlatformCreated bool `json:"platformCreated"`
+}
+
+// ProjectRolesView The Security panel's read model.
+type ProjectRolesView struct {
+	// DirectoryAvailable False when the identity provider could not be reached. The store-derived fields are still populated; the console must say "unknown" for the live ones instead of rendering absence as "does not exist".
+	DirectoryAvailable bool `json:"directoryAvailable"`
+
+	// Roles The WHOLE directory catalog, name-ordered — not just this project's roles. Roles are shared, so the panel shows which existing role a design reuses. Empty when directoryAvailable is false.
+	Roles []ProjectRoleState `json:"roles,omitempty"`
+
+	// TestUsers The test accounts THIS project's design references, role-ordered.
+	TestUsers []ProjectTestUserState `json:"testUsers,omitempty"`
+}
+
 // ProjectStatus Computed SDLC phase and artifact states.
 type ProjectStatus struct {
 	// Build Build-stage aggregate on ProjectStatus (#184) — the version the newest milestone run is working, and how that run is doing. Deliberately count-free - the only honest source of a per-version task tally is the version's milestone on GitHub, and this endpoint is polled at 5s. The console renders counts from the list-tasks response it already holds, on the surface that already pays for it.
@@ -1415,6 +1683,34 @@ type ProjectStatus struct {
 
 	// SpecStatus "", draft, approved
 	SpecStatus string `json:"specStatus"`
+}
+
+// ProjectTestUserState One test account this project references. The account itself is shared at the identity provider's scope; only the reference is the project's.
+type ProjectTestUserState struct {
+	// ColdStart True for the account holding this project's cold-start role — the one served when a caller asks for credentials without naming a role.
+	ColdStart bool `json:"coldStart"`
+
+	// Exists True when the account is present on the identity provider. Meaningless when directoryAvailable is false.
+	Exists bool `json:"exists"`
+
+	// Owned True when the platform holds a sealed password for this account and may therefore reveal, rotate or delete it. False means the username belongs to somebody else and every mutation is refused.
+	Owned bool `json:"owned"`
+
+	// ReferencingCount How many projects reference this account IN TOTAL, across every org. A bare count with no names — the minimum disclosure that makes "others may still be using this" a true statement before a delete.
+	ReferencingCount int `json:"referencingCount,omitempty"`
+
+	// ReferencingProjects THIS ORG's projects that reference the account. Never another org's — a project name is one org's data, and the shared directory does not license disclosing it.
+	ReferencingProjects []string `json:"referencingProjects,omitempty"`
+
+	// RoleName The role this account holds.
+	RoleName string `json:"roleName"`
+
+	// RotatedAt When the password was last replaced; null when never.
+	RotatedAt *time.Time `json:"rotatedAt,omitempty"`
+
+	// Supplied True when the design named no test user for the role and the platform generated the username.
+	Supplied bool   `json:"supplied"`
+	Username string `json:"username"`
 }
 
 // ProjectUsageCard One project's lifetime agent usage (#291). Identity comes from the usage rows' stored project slug, so a card survives its project's deletion.
@@ -1490,6 +1786,50 @@ type RcaAgentReportList struct {
 
 	// NextCursor Cursor for the next page; absent on the last page.
 	NextCursor string `json:"nextCursor,omitempty"`
+}
+
+// RegisterExternalResourceRequest defines model for RegisterExternalResourceRequest.
+type RegisterExternalResourceRequest struct {
+	Config                  []ConfigKeyDTO `json:"config"`
+	ConsumptionInstructions string         `json:"consumptionInstructions"`
+	Description             string         `json:"description"`
+	EnvValues               []struct {
+		Environment string `json:"environment"`
+		Key         string `json:"key"`
+		Value       string `json:"value"`
+	} `json:"envValues"`
+	Name         string                `json:"name"`
+	ResourceDocs []ResourceDocWriteDTO `json:"resourceDocs,omitempty"`
+}
+
+// ResourceDocPointerDTO Org resource docs pointer (type + URL or repo path), not file bodies.
+type ResourceDocPointerDTO struct {
+	Path string                    `json:"path,omitempty"`
+	Type ResourceDocPointerDTOType `json:"type"`
+	URL  string                    `json:"url,omitempty"`
+}
+
+// ResourceDocPointerDTOType defines model for ResourceDocPointerDTO.Type.
+type ResourceDocPointerDTOType string
+
+// ResourceDocWriteDTO One resource-docs write row on register/update. Exactly one of {type,url} | {type,path} | {type,fileName,content}. List/GET never use this schema.
+type ResourceDocWriteDTO struct {
+	// Content UTF-8 text of a new or replacement file; never returned on GET.
+	Content  string                  `json:"content,omitempty"`
+	FileName string                  `json:"fileName,omitempty"`
+	Path     string                  `json:"path,omitempty"`
+	Type     ResourceDocWriteDTOType `json:"type"`
+	URL      string                  `json:"url,omitempty"`
+}
+
+// ResourceDocWriteDTOType defines model for ResourceDocWriteDTO.Type.
+type ResourceDocWriteDTOType string
+
+// ResourceInstanceDTO defines model for ResourceInstanceDTO.
+type ResourceInstanceDTO struct {
+	Environment string `json:"environment"`
+	Project     string `json:"project"`
+	Status      string `json:"status"`
 }
 
 // RevalidateAccepted The run that will answer the question. Its cycles stream on the ordinary run progress endpoint, and its verdict becomes the version's once it settles.
@@ -1751,8 +2091,21 @@ type SkillUpdateList struct {
 
 // SpecStage Spec-stage aggregate on ProjectStatus (#184). Approved/draft is derived, not stored — version set and not dirty = approved (vN); dirty = draft changes (vN+); no version = unpublished draft; exists false = no spec yet.
 type SpecStage struct {
+	// Agent Whether an agent is working on this project's spec right now, and how the last attempt ended (#562). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `working` — a turn is in flight; `failed` — the newest turn ended in failure and none has run since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Derived from the newest `agent_turns` row for the project, which is what `exists`/`version`/`dirty` cannot say: all three read committed git, and a kickoff writes nothing until it lands. The overview's spec card needs it to say *Writing requirements* while the platform-fired `/start` runs, and the spec view needs it to explain an empty workspace instead of offering a file picker.
+	Agent string `json:"agent"`
+
+	// AgentFlow WHICH work the running turn is doing — the `/<skill>` token it runs under (`start`, `design`, `settle`, `amend`, …); `""` for plain chat or when nothing is running (#575). `agent` says an agent is working; this says on what, which the spec rail needs to pulse the right section.
+	// Without it the rail could only guess from which sections were still empty, and guessed wrongly in both directions: settling an assumption lit Design (the first empty section, though the work was requirements), and the moment a design run wrote its first file the pulse jumped to Validation while the rest of the design was still being written.
+	// Reported for the RUNNING turn only. A finished turn's flow says nothing about what is happening now, and the section states are derived from committed files from then on.
+	AgentFlow string `json:"agentFlow,omitempty"`
+
 	// Design Design files exist for the spec (gates the Spec view's design button).
 	Design bool `json:"design"`
+
+	// DesignOutdated The requirements have changed since the design was last derived from them (#575), so the design may no longer describe what the user asked for. Derived by comparing the requirements as they stand now against the requirements as they stood in the snapshot the newest successful `/design` turn read — no stored fingerprint, so there is nothing to fall out of sync and it answers for projects that predate the field.
+	// Coarse ON PURPOSE: it reports that the requirements moved, never which components are affected. The two failures are not symmetric — over-marking costs one re-derivation the agent mostly no-ops through, while under-marking ships a design the user has already changed their mind about to the coding agents.
+	// False while a project has no design or no successful design turn: there is nothing to be behind.
+	DesignOutdated bool `json:"designOutdated,omitempty"`
 
 	// Dirty specs/ moved on GitHub past the latest tag.
 	Dirty bool `json:"dirty"`
@@ -1843,8 +2196,11 @@ type TaskView struct {
 	Attention []string `json:"attention"`
 
 	// BlockedBy Names of the dependencies this task is waiting on; present when derivedStatus is on_hold.
-	BlockedBy     []string                 `json:"blockedBy,omitempty"`
-	Body          string                   `json:"body,omitempty"`
+	BlockedBy []string `json:"blockedBy,omitempty"`
+	Body      string   `json:"body,omitempty"`
+
+	// Comments The issue's newest comments, OLDEST FIRST, capped per issue, with the platform's own machine comments excluded. Present only on a `tag`-scoped read taken with `comments=true` (the default); a read spanning versions omits it, for the same reason ledger issues are invisible there — the fetch is anchored on one milestone and a cross-version read has no bounded set to ask for. Absence covers every empty case (not asked for, nothing there, nothing left after the machine comments were dropped); the field is never an empty array.
+	Comments      []IssueComment           `json:"comments,omitempty"`
 	Component     string                   `json:"component,omitempty"`
 	DependsOn     []string                 `json:"dependsOn"`
 	DerivedStatus string                   `json:"derivedStatus"`
@@ -1870,6 +2226,15 @@ type TaskView struct {
 
 // TaskViewExecutorClass WHO works this issue, derived from its labels: `coding` for anything a coding agent is dispatched at (planned work, a bug, a merge conflict — all armed with the `aep` label), `provision` for a dispatch gate the platform resolves, `validation` for the version's validation task, `ledger` for a bare human issue that joined the milestone unarmed. Deliberately coarser than `kind`: the three coding kinds are dispatched identically, so they are one class here and are told apart by `kind`. Nothing here is parsed out of the body — issue bodies are prose the platform writes for the agent and never reads back.
 type TaskViewExecutorClass string
+
+// TestUserPassword A test account's password, disclosed deliberately by reveal or rotate. It is never returned by any read.
+type TestUserPassword struct {
+	Password string `json:"password"`
+
+	// RotatedAt When the password was last replaced; null when it is the one minted at create.
+	RotatedAt *time.Time `json:"rotatedAt,omitempty"`
+	Username  string     `json:"username"`
+}
 
 // TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
 type TimelineEvent struct {
@@ -1953,6 +2318,27 @@ type TurnInputBody struct {
 	Target string `json:"target,omitempty"`
 }
 
+// TurnInputMultipart The same turn input as `TurnInputBody`, sent as multipart so it can carry chat attachments (#428). The JSON form stays the canonical one — a message with no attachments MUST use it, and every existing caller is unaffected.
+//
+// Attachments are CONVERSATION-SCOPED MODEL CONTENT (console ADR-0019): the platform never writes them to disk and never commits them. They ride this request into the turn and are durable only as parts of the conversation's history, which is also what makes re-sending one free — the agents service dedupes by file name.
+//
+// Deliberately NOT the reference-document channel: `POST /projects/{name}/references` REPLACES a project's whole stored set, and the create view is the only door to it. A file attached here never becomes a project reference, even when the instruction is `/start`.
+type TurnInputMultipart struct {
+	// Collab As `TurnInputBody.collab`.
+	Collab bool `json:"collab,omitempty"`
+
+	// Files Chat attachments, two groups and the split matters downstream. Read NATIVELY as file parts: `.pdf`, and the four image media types the Messages API accepts — `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`. Read AS TEXT (sent as `text/plain`, the only text document type the Anthropic provider maps): `.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`. Office formats are not accepted — the models do not read them natively.
+	//
+	// Three caps, and all of them restate ONE number: the agents service already enforces a 20 MiB base64-ENCODED per-turn attachment budget (#384), past which it warns and skips. So at most 10 files, each at most 5 MiB, and at most 15 MiB of raw bytes in TOTAL — 15 MiB raw is 20 MiB encoded. The total is the load- bearing one: a per-file cap alone cannot hold the line, since ten 5 MiB files each pass it and together overrun the budget by 3x.
+	Files []openapi_types.File `json:"files,omitempty"`
+
+	// Instruction As `TurnInputBody.instruction`. Required — an attachment alone cannot start a turn, and the shared TurnSpec validator rejects an empty chat text.
+	Instruction string `json:"instruction"`
+
+	// Target As `TurnInputBody.target`.
+	Target string `json:"target,omitempty"`
+}
+
 // TurnOutputBody defines model for TurnOutputBody.
 type TurnOutputBody struct {
 	// TurnID The started turn's id — poll/attach with it
@@ -1961,13 +2347,21 @@ type TurnOutputBody struct {
 
 // TurnStatus One turn's lifecycle view (create-turn 202 → poll/attach).
 type TurnStatus struct {
+	// AuthorDisplayName The acting user's display name, paired with authorId.
+	AuthorDisplayName string `json:"authorDisplayName,omitempty"`
+
+	// AuthorID Who started this turn — EMAIL-anchored, matching the console's live author identity, which is what lets a client tell its own turn from a teammate's. Empty when no attributable human sent it (an M2M token, a minimal user token, or a turn dispatched before the display record was stored). Flat rather than a nested object so "absent" is one convention across this schema: the empty string, exactly as `instruction` uses it.
+	AuthorID       string    `json:"authorId,omitempty"`
 	CommitSha      string    `json:"commitSha,omitempty"`
 	ConversationID string    `json:"conversationId"`
 	CreatedAt      time.Time `json:"createdAt"`
-	Message        string    `json:"message,omitempty"`
-	NoChanges      bool      `json:"noChanges,omitempty"`
-	Paths          []string  `json:"paths,omitempty"`
-	Reason         string    `json:"reason,omitempty"`
+
+	// Instruction What this turn's DISPLAY record says — the transcript line for the message that started it. Present so a client attaching to a turn it did not send can render the sender's message immediately, instead of narration under a blank space: the conversation store persists a turn's transcript only when the turn ENDS, so a history read mid-turn cannot supply it. Empty on turns dispatched before this field existed. Not the model's prompt — the agents service composes that from the turn spec and it never crosses this boundary.
+	Instruction string   `json:"instruction,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	NoChanges   bool     `json:"noChanges,omitempty"`
+	Paths       []string `json:"paths,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
 
 	// Status running, completed, failed
 	Status    string    `json:"status"`
@@ -2032,6 +2426,27 @@ type WorkflowRunTask struct {
 	Phase       string `json:"phase,omitempty"`
 	StartedAt   string `json:"startedAt,omitempty"`
 }
+
+// WorkloadDependencyDTO defines model for WorkloadDependencyDTO.
+type WorkloadDependencyDTO struct {
+	// Component Provider component (org-service rows)
+	Component string                    `json:"component,omitempty"`
+	Kind      WorkloadDependencyDTOKind `json:"kind"`
+	Name      string                    `json:"name,omitempty"`
+
+	// Project Provider project (org-service rows)
+	Project string `json:"project,omitempty"`
+
+	// Ref Resource type (resource rows)
+	Ref string                   `json:"ref,omitempty"`
+	Tag WorkloadDependencyDTOTag `json:"tag,omitempty"`
+}
+
+// WorkloadDependencyDTOKind defines model for WorkloadDependencyDTO.Kind.
+type WorkloadDependencyDTOKind string
+
+// WorkloadDependencyDTOTag defines model for WorkloadDependencyDTO.Tag.
+type WorkloadDependencyDTOTag string
 
 // WriteOp defines model for WriteOp.
 type WriteOp struct {
@@ -2163,6 +2578,9 @@ type ListTasksParams struct {
 
 	// Tag Filter to the Tasks of one spec/build version tag (e.g. v3). The tag is resolved to a milestone number through the platform's run rows and the filter is milestone MEMBERSHIP — never a title match against GitHub. Empty returns every version.
 	Tag string `form:"tag,omitempty" json:"tag,omitempty"`
+
+	// Comments Include each issue's newest comments (defaults true). Honoured only on a `tag`-scoped read — the comment fetch is anchored on the milestone, so a read spanning versions has no bounded set to ask for. Pass false to skip the GitHub round trip when the caller does not render them.
+	Comments *bool `form:"comments,omitempty" json:"comments,omitempty"`
 }
 
 // ListTasksParamsState defines parameters for ListTasks.
@@ -2203,11 +2621,20 @@ type UpdateConfigJSONRequestBody = ConfigPatch
 // StartGitProviderConnectJSONRequestBody defines body for StartGitProviderConnect for application/json ContentType.
 type StartGitProviderConnectJSONRequestBody = StartConnectInputBody
 
+// RegisterExternalResourceJSONRequestBody defines body for RegisterExternalResource for application/json ContentType.
+type RegisterExternalResourceJSONRequestBody = RegisterExternalResourceRequest
+
+// UpdateExternalResourceJSONRequestBody defines body for UpdateExternalResource for application/json ContentType.
+type UpdateExternalResourceJSONRequestBody = RegisterExternalResourceRequest
+
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectRequest
 
 // CreateTurnJSONRequestBody defines body for CreateTurn for application/json ContentType.
 type CreateTurnJSONRequestBody = TurnInputBody
+
+// CreateTurnMultipartRequestBody defines body for CreateTurn for multipart/form-data ContentType.
+type CreateTurnMultipartRequestBody = TurnInputMultipart
 
 // BuildProjectJSONRequestBody defines body for BuildProject for application/json ContentType.
 type BuildProjectJSONRequestBody = BuildRequest

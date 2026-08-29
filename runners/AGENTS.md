@@ -55,13 +55,25 @@ into the runner pod at `/app/skills` for live skill edits (see
   can ride it into a console build log), and overload is load-dependent so a flag
   would be off during every incident. **A retry must never reach
   `watchdog.observe`** — it is the absence of progress, and resetting the idle
-  clock hides the stall it explains. `debugFile`, `stderr` and
-  `includePartialMessages` are the opposite call: on for every playground run,
-  off in a pod unless `AEP_RUNNER_DEBUG=1`, and they write files beside
-  `claude.log` rather than to the feed — nothing collects a pod's files and the
+  clock hides the stall it explains. **A running subagent is known only from
+  `emitterId`** — the translator emits no `tool_use` for a fan-out call, so a
+  watchdog that expects one reports "no tool in flight" for the whole of a
+  subagent's run (it did, through a ten-minute live stall). **A failed fan-out
+  prints its error text as a second, `error`-level line**, because that text is
+  the last copy of the reason: the subagent's transcript is not on the feed and
+  `claude.log` dies with the pod. `debugFile`, `stderr`,
+  `includePartialMessages` and the reasoning pair (`thinking` +
+  `forwardSubagentText`) are the opposite call: on for every playground run,
+  off in a pod unless `AEP_RUNNER_DEBUG=1`, and they land in files beside
+  `claude.log` rather than on the feed — nothing collects a pod's files and the
   debug log holds prompt text. Streaming frames reach neither the feed nor
-  `claude.log`. ADR-0002 decisions 14–15 have the measurements, including why
-  stderr is *not* where retry detail lives.
+  `claude.log`. **The reasoning pair only works as a pair**: without a
+  `thinking` display the blocks arrive signed and empty, and without
+  `forwardSubagentText` the subagents forward none at all — which is why a
+  transcript could show 120 subagent tool calls and not one word of why. Adding
+  either alone re-creates a log that says reasoning happened without saying what
+  it was. ADR-0002 decisions 14–16 have the measurements, including why stderr
+  is *not* where retry detail lives.
 - **Fan-out runs in the foreground.** A `PreToolUse` hook
   (`lib/fanout_foreground.ts`) forces `run_in_background: false` on every
   `Agent`/`Task` call that did not already say so. Backgrounding does not add
@@ -114,9 +126,13 @@ into the runner pod at `/app/skills` for live skill edits (see
   keeps a project's own `.mcp.json` from declaring servers into a run.
 - **`skills:` is an allowlist, and it preloads nothing.** Both halves are
   measured, not assumed. A mirrored skill absent from the array is *rejected* by
-  the Skill tool, so the run lists the WHOLE mirror
+  the Skill tool, so a CODING run lists the WHOLE mirror
   (`listMirroredSkills`) — the BFF already decided what this build may use, and
-  omitting the unpinned copies would leave them as inert files on disk. And
+  omitting the unpinned copies would leave them as inert files on disk. A
+  VALIDATION run lists `onDemandSkills` instead: it builds nothing, so the stack
+  skills in the mirror are not its to reach for, and one named skill is a
+  narrower statement than the whole checkout. Passing `[]` there — which shipped
+  — is not "defer the load", it is "no load is possible". And
   membership only buys a name and a description in the catalog: the body arrives
   when the model invokes the skill. So a pin, which asserts the guidance IS
   needed for this work, appends that body to the system prompt
@@ -150,7 +166,13 @@ into the runner pod at `/app/skills` for live skill edits (see
   is a `skillsPinned` entry someone put in a `design.json` — but no design decides
   whether a coding run follows the coding workflow. `playwright-cli` is
   deliberately NOT always-on: `aep-validation` names it, and mechanics a run may
-  not reach for should cost a load, not every turn.
+  not reach for should cost a load, not every turn. **That decision only works
+  in pairs** — `onDemandSkills` (same file) must then ALLOW it, because `skills:`
+  gates the Skill tool and a skill in neither list is unreachable rather than
+  deferred. It was in neither for three weeks: validation runs looked healthy
+  (their workflow arrives as prompt text, not through the tool) while every
+  `Skill playwright-cli` call was rejected and the agent grepped the mirror's
+  files by hand.
 - **A mirror with no workflow skill is FATAL.** `requireWorkflowBodies` throws and
   both entrypoints report a failed run. Every other skill degrades — a dangling
   pin warns and the build continues — because missing guidance costs quality and
@@ -181,6 +203,34 @@ into the runner pod at `/app/skills` for live skill edits (see
   playground has no library to mirror: `build-runner.sh`, `release.yml`'s matrix
   row, and `local/run-local.sh` all pass it. A dispatched run does not read it —
   its skills come from the clone — but `local.ts` does.
+- **The `bal library` tool is BUILT BY THE IMAGE and installed, not bundled onto
+  `PATH`.** It is what the `ballerina` skill drives by name (`bal library
+  overview <org/name>`), and it is a Ballerina CLI tool: the image installs it
+  into the `aep` user's local bala repository and `bal` dispatches `library` to
+  it, so there is no command and no `PATH` entry. The image's FIRST STAGE
+  compiles it from `packages/bal-library-tool`, reached as the
+  `bal-library-tool` named build context — so there is no artifact to refresh
+  and a build cannot use a tool that is not this commit's (ADR-0008; a committed
+  copy used to live here and went stale silently, because its version string
+  never moved). That stage needs a token that can read ballerina-platform's
+  GitHub Packages, passed as a BuildKit **secret** and never a build arg, since
+  the release workflow publishes builder stages to a public buildcache. Every
+  build path has to pass both the context and the secret: `build-runner.sh`,
+  `release.yml`'s matrix row, and `local/run-local.sh`.
+  The install runs the tool's OWN installer so
+  the bala is stamped with this image's pinned distribution — `bal` rejects a
+  tool stamped newer than the distribution running it. Tools a skill invokes by
+  name belong here rather than in the skill directory: nothing but prose then
+  reaches an org's editable skills repo. See
+  `remote-worker/design/decisions/ADR-0008-the-bal-library-tool-is-built-in-the-image.md`.
+- **The image installs from `remote-worker/package-lock.json`, not from
+  `pnpm-lock.yaml`.** Two lockfiles, one `package.json`: pnpm's covers the
+  workspace (tests, typecheck, the playground), npm's is what `npm ci` in the
+  Dockerfile reads. Bump a dependency and BOTH have to move —
+  `npm install --package-lock-only` in this directory — or the image build fails
+  on an out-of-sync `npm ci`, which is the loud outcome. The quiet one is worse:
+  a range that still resolves leaves the pod running a version the tests never
+  saw.
 - **One image**, `remote-worker/Dockerfile`, serves BOTH task kinds
   (`AEP_TASK_KIND=implementation` and `=validation`). It is Debian-based
   because Playwright's browsers are glibc-linked; do not reintroduce a second,

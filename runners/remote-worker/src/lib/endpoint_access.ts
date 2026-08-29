@@ -31,9 +31,15 @@
 //     affected (`dns.lookup` returns the real address), which is why the probe
 //     below needs no override of its own.
 //
-//     The fix is a `resolve` entry per endpoint in curl's own config file, so a
-//     plain `curl <url>` works with the real hostname, through the real gateway,
-//     carrying the real Host header the HTTPRoute matches on. Rewriting the URL
+//     The fix is per-client, because no one mechanism reaches all three: a
+//     `resolve` entry per endpoint in curl's own config file, and the equivalent
+//     `--host-resolver-rules` in a config playwright-cli is pointed at, so a
+//     plain `curl <url>` and a bare `playwright-cli open <url>` both work with
+//     the real hostname, through the real gateway, carrying the real Host header
+//     the HTTPRoute matches on. (The third client, the browser `playwright test`
+//     launches, is configured by `playwright.config.template.ts` in the project's
+//     own repo — it is the one the specs run in, and it is not ours to set from
+//     here.) Rewriting the URL
 //     was the alternative and is worse: an IP in the URL sends `Host: <ip>` and
 //     matches no route, and a Service-DNS URL bypasses the gateway altogether —
 //     dropping the api-configuration trait's auth, CORS and path rewrites, so an
@@ -207,6 +213,159 @@ export async function writeCurlResolveConfig(
   const staging = await fs.promises.mkdtemp(path.join(dir, ".aep-curlrc-"));
   try {
     const staged = path.join(staging, CURL_CONFIG_FILE);
+    await fs.promises.writeFile(staged, body, { mode: 0o600 });
+    await fs.promises.rename(staged, file);
+  } finally {
+    await fs.promises.rm(staging, { recursive: true, force: true });
+  }
+  return file;
+}
+
+/**
+ * playwright-cli's config file, pointed at by `$PLAYWRIGHT_MCP_CONFIG`.
+ *
+ * Deliberately NOT `.playwright/cli.config.json`, the name the CLI looks for by
+ * default: that default is resolved against the CWD, and an exploring agent
+ * moves between the repo root and `tests/e2e`, so a CWD-relative config is
+ * present for some of its commands and absent for the rest. An absolute path in
+ * the env holds for every invocation from every directory.
+ */
+export const PLAYWRIGHT_CLI_CONFIG_FILE = ".aep-playwright-cli.json";
+
+/**
+ * Where that config goes. Same home-directory reasoning as `curlConfigHome`,
+ * and the same one-function rule so the writer and the env record cannot drift.
+ */
+export function playwrightCliConfigHome(): string {
+  return os.homedir();
+}
+
+/** The absolute path the env variable carries — writer and reader share it. */
+export function playwrightCliConfigPath(): string {
+  return path.join(playwrightCliConfigHome(), PLAYWRIGHT_CLI_CONFIG_FILE);
+}
+
+/**
+ * The IdP's name family, and where it is actually reachable from inside a pod.
+ *
+ * A wildcard, unlike every endpoint rule below it, because the runner never
+ * learns the IdP's hostname: the validation context carries the app's endpoints
+ * and nothing else, so a pattern is the only handle there is. The same pattern
+ * `playwright.config.template.ts` uses, for the same reason.
+ *
+ * `host.k3d.internal` rather than the address DNS returns, because DNS is
+ * measurably wrong here: the CoreDNS rewrite maps `(openchoreo|openchoreoapis)
+ * .localhost` alike onto the DATA-plane gateway, while `*.openchoreo.localhost`
+ * is served by the CONTROL-plane one. Following DNS gets a transport failure
+ * (curl exit 7); the k3d bridge, which publishes the control-plane gateway,
+ * answers. Local-plane only — see the caller's gate.
+ */
+export const AUTH_HOST_PATTERN = "*.openchoreo.localhost";
+export const AUTH_BRIDGE_HOST = "host.k3d.internal";
+
+/**
+ * The Chromium flag that makes the deployed hostnames resolvable in a browser.
+ *
+ * `--host-resolver-rules` is the one override Chromium honours for RFC 6761:
+ * it maps `localhost` and every `*.localhost` name to loopback itself, ahead of
+ * DNS and `/etc/hosts`, so nothing else reaches it. One `MAP <host> <address>`
+ * per endpoint rather than a pattern — these are the hosts this run actually
+ * resolved, and a wildcard would also capture names nobody probed. The IdP is
+ * the one exception, appended last and explained above.
+ *
+ * No port in any rule: Chromium maps names, and each URL keeps its own port.
+ */
+export function hostResolverRules(
+  entries: readonly CurlResolveEntry[],
+  authAddress?: string,
+): string[] {
+  const seen = new Set<string>();
+  const rules: string[] = [];
+  for (const e of entries) {
+    if (seen.has(e.host)) continue;
+    seen.add(e.host);
+    rules.push(`MAP ${e.host} ${e.address}`);
+  }
+  if (rules.length === 0) {
+    return [];
+  }
+  // Specific first, pattern last. The suffixes cannot overlap
+  // (`…openchoreoapis.localhost` never matches `*.openchoreo.localhost`), so
+  // this is for a reader rather than for Chromium.
+  if (authAddress !== undefined) {
+    rules.push(`MAP ${AUTH_HOST_PATTERN} ${authAddress}`);
+  }
+  return [`--host-resolver-rules=${rules.join(",")}`];
+}
+
+/**
+ * Where the IdP is reachable from this pod, or undefined if it is not.
+ *
+ * Forgiving on purpose: a cloud plane has no k3d bridge to resolve, and an
+ * exploration hop the agent may never take is not worth failing a run over. The
+ * app endpoints — which the preflight DOES prove — are unaffected either way.
+ */
+export async function resolveAuthGatewayAddress(
+  lookup: LookupFn = dns.promises.lookup as LookupFn,
+): Promise<string | undefined> {
+  try {
+    const { address } = await lookup(AUTH_BRIDGE_HOST, { family: 4 });
+    return address;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Write the browser's half of the same override, for the EXPLORATION browser.
+ *
+ * `.curlrc` is a curl mechanism and never reaches a browser, and
+ * `playwright.config.template.ts` covers only the browser `playwright test`
+ * launches — so playwright-cli, which reads neither, was the one client left
+ * dialling loopback. The agent then rediscovered RFC 6761 from scratch each
+ * authoring run: 180s of DNS spelunking, a throwaway probe spec and two edits
+ * to a config that was never in the path, on the run that measured it (#570).
+ *
+ * `launchOptions.args` ONLY. Naming `browser.browserName` here would leave
+ * `channel` undefined and re-enable the Chromium sandbox, which cannot start as
+ * the pod's non-root user — the failure ADR-0007 exists to keep out of this
+ * file. The browser is chosen by `PLAYWRIGHT_MCP_BROWSER` in the image; this
+ * only says how to resolve a name.
+ *
+ * The IdP is mapped alongside them, so an exploration that follows a login
+ * redirect does not meet an unresolvable host — the gap that used to leave a
+ * dead hop for the agent to misread as a broken deployment, which is the exact
+ * fault ADR-0006 exists to remove. Gated on there being an endpoint to map at
+ * all: `curlResolveEntries` yields only `.localhost` hosts, so a non-empty list
+ * IS the local-plane signal, and a cloud run writes no file and gets no rule.
+ *
+ * Returns the path written, or undefined when there is nothing to map — and in
+ * that case REMOVES any file a previous run left behind. `$PLAYWRIGHT_MCP_CONFIG`
+ * is fatal when it points at a missing file (the daemon exits on ENOENT), so the
+ * env is set from this file's existence; a stale file would silently pin a
+ * cluster that no longer exists.
+ */
+export async function writePlaywrightCliConfig(
+  dir: string,
+  entries: readonly CurlResolveEntry[],
+  lookup: LookupFn = dns.promises.lookup as LookupFn,
+): Promise<string | undefined> {
+  const file = path.join(dir, PLAYWRIGHT_CLI_CONFIG_FILE);
+  if (entries.length === 0) {
+    await fs.promises.rm(file, { force: true });
+    return undefined;
+  }
+  const args = hostResolverRules(entries, await resolveAuthGatewayAddress(lookup));
+  if (args.length === 0) {
+    await fs.promises.rm(file, { force: true });
+    return undefined;
+  }
+  const body = `${JSON.stringify({ browser: { launchOptions: { args } } }, null, 2)}\n`;
+
+  await fs.promises.mkdir(dir, { recursive: true });
+  const staging = await fs.promises.mkdtemp(path.join(dir, ".aep-pwcli-"));
+  try {
+    const staged = path.join(staging, PLAYWRIGHT_CLI_CONFIG_FILE);
     await fs.promises.writeFile(staged, body, { mode: 0o600 });
     await fs.promises.rename(staged, file);
   } finally {

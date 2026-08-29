@@ -24,6 +24,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/run"
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
+	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -85,6 +86,11 @@ func (a runRuns) ListByMilestone(ctx context.Context, orgID, projectID string, m
 
 func (a runRuns) SetState(ctx context.Context, id, state string) error {
 	_, err := a.runs.SetState(ctx, id, state)
+	return err
+}
+
+func (a runRuns) SetWaiting(ctx context.Context, id, reason string, dependencies []string) error {
+	_, err := a.runs.SetWaiting(ctx, id, reason, dependencies)
 	return err
 }
 
@@ -265,4 +271,57 @@ func (a runreadProjectBuilds) ListProjectBuildRuns(ctx context.Context, orgID, p
 		})
 	}
 	return out, nil
+}
+
+// valuesSavedNotifier bridges the provisioning feature's ValuesSavedNotifier
+// onto the run supervisor: external values landed, so a run parked on the deploy
+// gate should re-derive readiness now rather than at its next poll.
+//
+// It lives at the composition root for the reason the port exists at all —
+// provisioning must not import delivery/run. The signal carries no payload
+// because it carries no instruction: the supervisor re-reads readiness itself,
+// so a save that leaves another dependency unset parks the run straight back.
+type valuesSavedNotifier struct {
+	runs       delivery.MilestoneRunRepository
+	supervisor *run.Supervisor
+}
+
+func (n valuesSavedNotifier) ValuesSaved(ctx context.Context, orgID, projectID string) error {
+	// EVERY parked run, any kind — not just the newest. A task or validation run
+	// parks on this gate exactly like a dev run, and they can be live at the same
+	// time on their own milestones. One saved value can unblock several at once.
+	rows, err := n.runs.RunsWaitingOnValues(ctx, orgID, projectID)
+	if err != nil {
+		return err
+	}
+	// Values saved with no parked run is the ordinary case — a developer
+	// configuring ahead of the next build. Nothing to wake.
+	var errs []error
+	for i := range rows {
+		// Keep going after a failure: one run whose workflow has already gone
+		// (settled between the read and the signal) must not strand its siblings.
+		// The supervisor's own not-found handling decides what is benign; anything
+		// it still reports is joined and returned.
+		if err := n.supervisor.SignalRun(ctx, &rows[i],
+			delivery.SigRunValuesSaved, delivery.RunSignal{Signal: delivery.SigRunValuesSaved}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// deployGate projects the provisioning service's readiness read onto the run
+// supervisor's DeployGate. It calls the service METHOD, not its HTTP handler:
+// the handler is a thin projection of this same call, and routing an in-process
+// workflow activity back through the edge would buy nothing but a socket.
+type deployGate struct {
+	prov *provisioning.Service
+}
+
+func (g deployGate) DeploymentReadiness(ctx context.Context, orgID, projectID, env string) ([]string, []string, error) {
+	readiness, err := g.prov.DeploymentReadiness(ctx, orgID, projectID, env)
+	if err != nil {
+		return nil, nil, err
+	}
+	return readiness.Unconfigured, readiness.Provisioning, nil
 }

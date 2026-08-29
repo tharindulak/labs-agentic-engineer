@@ -17,43 +17,40 @@
  */
 
 // Reference documents attached on the create view (#383). Grilling decisions:
-// 5 MB per file, at most 10 files, and only types the models can actually read
-// — PDF and the four native image media types (png, jpeg, gif, webp), plus text
-// formats a brief or an API spec actually arrives in.
+// 5 MB per file, at most 10 files, and only types the models can actually read.
 //
-// Office formats (.docx/.xlsx/.pptx) stay out: the models do not read them
-// natively, so accepting one would store bytes no turn can use.
+// The accepted set, the per-file cap, the count cap and the type badge now live
+// in `src/lib/attachments.ts`, shared with the chat composer's attachments
+// (#428) — a picker that took a PDF on one surface and refused it on the other
+// would be indefensible. What stays HERE is what is specific to a reference:
+// the repo-shaped path it lands on inside each turn's snapshot, and therefore
+// name sanitization and the collides-on-one-path rule. Chat attachments never
+// land on a path and need neither (ADR-0019).
 //
 // The bytes go up as multipart to POST /projects/{name}/references and are
 // never committed (ADR-0017) — the server stores them off-git and overlays them
 // into each turn's snapshot AT this path, which is why the screening below
 // still cares about the repo-path a name lands on.
+
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENT_FILES,
+  MAX_ATTACHMENT_FILE_BYTES,
+  acceptedTypesSentence,
+  attachmentTypeLabel,
+  isAcceptedAttachment,
+  type RejectedFile,
+} from "../../../lib/attachments";
+
 // Where the server overlays the stored documents inside each turn's snapshot.
 // The console never writes this path — it only screens for collisions on it.
 const REFERENCES_DIR = "specs/requirements/references";
-export const MAX_REFERENCE_FILE_BYTES = 5 * 1024 * 1024;
-export const MAX_REFERENCE_FILES = 10;
-const NATIVE_EXTENSIONS = ["pdf", "png", "jpg", "jpeg", "gif", "webp"] as const;
-const TEXT_EXTENSIONS = [
-  "md", "txt", "csv", "tsv", "json", "yaml", "yml", "xml", "html", "rst",
-] as const;
 
-// The input's own accept list, derived from the two groups so the picker, the
-// screening below, and the hint text can never disagree about what is allowed.
-export const REFERENCE_ACCEPT = [...NATIVE_EXTENSIONS, ...TEXT_EXTENSIONS]
-  .map((e) => `.${e}`)
-  .join(",");
+export const MAX_REFERENCE_FILE_BYTES = MAX_ATTACHMENT_FILE_BYTES;
+export const MAX_REFERENCE_FILES = MAX_ATTACHMENT_FILES;
+export const REFERENCE_ACCEPT = ATTACHMENT_ACCEPT;
 
-const ACCEPTED_EXTENSIONS = new Set<string>([...NATIVE_EXTENSIONS, ...TEXT_EXTENSIONS]);
-
-export interface RejectedFile {
-  name: string;
-  reason: string;
-}
-
-function extensionOf(name: string): string {
-  return name.slice(name.lastIndexOf(".") + 1).toLowerCase();
-}
+export type { RejectedFile };
 
 // Screens a selection against what is already attached: per-file type and
 // size, the total count cap, duplicate names, and names that differ but land on
@@ -70,10 +67,10 @@ export function screenReferenceFiles(
   let count = attached.length;
   for (const file of incoming) {
     const path = referencePathOf(file.name);
-    if (!ACCEPTED_EXTENSIONS.has(extensionOf(file.name))) {
+    if (!isAcceptedAttachment(file.name)) {
       rejected.push({
         name: file.name,
-        reason: `Only ${REFERENCE_ACCEPT.split(",").join(", ")} files are accepted`,
+        reason: `Only ${acceptedTypesSentence()} files are accepted`,
       });
     } else if (file.size > MAX_REFERENCE_FILE_BYTES) {
       rejected.push({ name: file.name, reason: "Larger than 5 MB" });
@@ -125,5 +122,5 @@ function referencePathOf(name: string): string {
 // PNG). Not the file's size: an oversized file never becomes a card, it becomes
 // a rejection notice, so size has nothing left to tell the user here.
 export function referenceTypeLabel(name: string): string {
-  return extensionOf(name).toUpperCase();
+  return attachmentTypeLabel(name);
 }

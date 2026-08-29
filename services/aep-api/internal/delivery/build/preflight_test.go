@@ -303,3 +303,187 @@ func TestPreflight_ExternalResolved_FallsThroughToConfigItem(t *testing.T) {
 	require.Len(t, pf.Items, 1)
 	require.Equal(t, "external-config", pf.Items[0].Kind)
 }
+
+// fakeCatalog reports names that already hold org env cells (Registered
+// External). Missing / false is Project External — same fail-open as a nil
+// Catalog port.
+type fakeCatalog map[string]bool
+
+func (f fakeCatalog) HasOrgEnvCells(_ context.Context, _, name string) bool { return f[name] }
+
+// A Registered External already holds values on the org plane. Preflight must
+// not emit external-config (the Build drawer would force typing secrets that
+// POST /build ignores). Project External still collects as today.
+func TestPreflight_RegisteredExternal_DoesNotEmitConfigItem(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "board", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "openweathermap",
+				Config: []spec.ConfigKey{{Key: "api_key", Secret: true}}},
+			{Kind: spec.DependencyKindExternal, Name: "travel-board-fx",
+				Config: []spec.ConfigKey{{Key: "api_key", Secret: true}}},
+		}}}
+	svc := NewPreflightService(PreflightDeps{
+		Design:  fakeDesign{comps: comps},
+		Status:  fakeStatus{},
+		Catalog: fakeCatalog{"openweathermap": true},
+	})
+	pf, err := svc.Preflight(context.Background(), "acme", "travel-board")
+	require.NoError(t, err)
+	kinds := kindsByDep(pf.Items)
+	_, weather := kinds["openweathermap"]
+	require.False(t, weather, "Registered name must not raise external-config, got %v", kinds["openweathermap"])
+	require.Equal(t, []string{"external-config"}, kinds["travel-board-fx"])
+	require.True(t, pf.NeedsInput)
+}
+
+// An unresolved Registered name still raises the blocker — catalog cells do
+// not skip dependency resolution.
+func TestPreflight_RegisteredExternal_UnresolvedStillEmitsBlocker(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "board", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "openweathermap",
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
+		}}}
+	svc := NewPreflightService(PreflightDeps{
+		Design:  fakeDesign{comps: comps},
+		Status:  fakeStatus{},
+		Catalog: fakeCatalog{"openweathermap": true},
+	})
+	pf, err := svc.Preflight(context.Background(), "acme", "travel-board")
+	require.NoError(t, err)
+	require.Len(t, pf.Items, 1)
+	require.Equal(t, "external-unresolved", pf.Items[0].Kind)
+}
+
+// ----- NeedsResolution: the only flag that gates the version cut --------------
+//
+// NeedsInput stays the broad "preflight emitted something" flag, so it is true
+// for external config and platform resources too. NeedsResolution is narrower:
+// it is set only by the kinds the design itself cannot answer
+// (external-ambiguous | external-unresolved | external-spec | org-service).
+// External values are collected on the Builds page while the coding agent runs
+// and are enforced at the deploy gate, so they must never block Build.
+
+// An external dependency that only needs config VALUES is reported
+// (NeedsInput) but does not gate the cut.
+func TestPreflight_ExternalConfigOnly_NeedsInputWithoutNeedsResolution(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe",
+				Config: []spec.ConfigKey{{Key: "STRIPE_KEY", Secret: true}}},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.Equal(t, []string{"external-config"}, kindsByDep(pf.Items)["stripe"])
+	require.True(t, pf.NeedsInput, "an external-config item is still something to show")
+	require.False(t, pf.NeedsResolution, "external config values must not gate the version cut")
+}
+
+// A platform resource still awaiting approval is reported but does not gate the
+// cut either — its approval rides along with the build request.
+func TestPreflight_PlatformResourceOnly_DoesNotNeedResolution(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg"},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.Equal(t, []string{"platform-resource"}, kindsByDep(pf.Items)["orders-db"])
+	require.True(t, pf.NeedsInput)
+	require.False(t, pf.NeedsResolution, "a platform resource must not gate the version cut")
+}
+
+// Each resolution-blocker kind sets NeedsResolution on its own.
+func TestPreflight_ResolutionBlockers_SetNeedsResolution(t *testing.T) {
+	cases := []struct {
+		name     string
+		dep      spec.Dependency
+		wantKind string
+	}{
+		{
+			name:     "ambiguous external",
+			dep:      spec.Dependency{Kind: spec.DependencyKindExternal, Name: "salesforce", Status: spec.DependencyStatusAmbiguous},
+			wantKind: "external-ambiguous",
+		},
+		{
+			name: "unresolved external",
+			dep: spec.Dependency{Kind: spec.DependencyKindExternal, Name: "weather-api",
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
+			wantKind: "external-unresolved",
+		},
+		{
+			name: "external without a spec",
+			dep: spec.Dependency{Kind: spec.DependencyKindExternal, Name: "partner-api",
+				Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsSpec},
+			wantKind: "external-spec",
+		},
+		{
+			name:     "unresolved org service",
+			dep:      spec.Dependency{Kind: spec.DependencyKindOrgService, Name: "billing", Status: spec.DependencyStatusUnresolved},
+			wantKind: "org-service",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+				Dependencies: []spec.Dependency{tc.dep}}}
+			svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+			pf, err := svc.Preflight(context.Background(), "acme", "shop")
+			require.NoError(t, err)
+			require.Len(t, pf.Items, 1)
+			require.Equal(t, tc.wantKind, pf.Items[0].Kind)
+			require.True(t, pf.NeedsInput)
+			require.True(t, pf.NeedsResolution, "%s must gate the version cut", tc.wantKind)
+		})
+	}
+}
+
+// One resolution blocker among otherwise collectable items is enough to gate.
+func TestPreflight_MixedItems_OneBlockerGatesTheCut(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindExternal, Name: "stripe",
+				Config: []spec.ConfigKey{{Key: "STRIPE_KEY", Secret: true}}},
+			{Kind: spec.DependencyKindPlatformResource, Name: "orders-db", ResourceType: "postgres-cnpg"},
+			{Kind: spec.DependencyKindOrgService, Name: "billing", Status: spec.DependencyStatusUnresolved},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.True(t, pf.NeedsResolution)
+}
+
+// Nothing to report at all: neither flag is set.
+func TestPreflight_NoItems_NeitherFlagSet(t *testing.T) {
+	comps := []spec.DesignComponent{{Name: "orders", ComponentType: spec.ComponentTypeService,
+		Dependencies: []spec.Dependency{
+			{Kind: spec.DependencyKindOrgService, Name: "audit", Status: spec.DependencyStatusResolved},
+		}}}
+	svc := NewPreflightService(PreflightDeps{Design: fakeDesign{comps: comps}, Status: fakeStatus{}})
+	pf, err := svc.Preflight(context.Background(), "acme", "shop")
+	require.NoError(t, err)
+	require.False(t, pf.NeedsInput)
+	require.False(t, pf.NeedsResolution)
+}
+
+// The wire mapping carries NeedsResolution across onto the generated response
+// shape — the console reads that field, not the internal struct.
+func TestToBuildPreflight_CarriesNeedsResolution(t *testing.T) {
+	out := toBuildPreflight(BuildPreflight{
+		NeedsInput:      true,
+		NeedsResolution: true,
+		Items:           []PreflightItem{{Kind: "org-service", Component: "orders", Dependency: "billing"}},
+	})
+	require.True(t, out.NeedsInput)
+	require.True(t, out.NeedsResolution)
+	require.Len(t, out.Items, 1)
+
+	collectOnly := toBuildPreflight(BuildPreflight{
+		NeedsInput: true,
+		Items:      []PreflightItem{{Kind: "external-config", Component: "orders", Dependency: "stripe"}},
+	})
+	require.True(t, collectOnly.NeedsInput)
+	require.False(t, collectOnly.NeedsResolution)
+}

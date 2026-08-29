@@ -202,6 +202,12 @@ type ReleaseBindingDesired struct {
 	// Non-nil-but-empty is meaningful: it clears the field.
 	Env   []WorkflowEnvVarRef
 	Files []WorkflowFileVar
+	// Labels, when non-empty, are written to metadata.labels at CREATE only —
+	// nil means unmanaged, the same rule the fields above follow. It exists for
+	// the internal marker: a binding is the one link in the ephemeral
+	// coding-agent chain that carried no marker, which left the project-status
+	// read counting agent Jobs as the project's deployments.
+	Labels map[string]string
 }
 
 // ReleaseBindingState values for ReleaseBindingDesired.State.

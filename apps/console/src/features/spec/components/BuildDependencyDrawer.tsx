@@ -23,33 +23,53 @@ import {
   Chip,
   Divider,
   Drawer,
-  IconButton,
-  Menu,
-  MenuItem,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { EllipsisVertical } from "@wso2/oxygen-ui-icons-react";
 import type { components } from "../../../generated/aep-api";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
+import { approvalInputsFor } from "../lib/buildInputs";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
 type BuildInputItem = components["schemas"]["BuildInputItem"];
 
 /**
- * Per-group working state, keyed by DependencyGroup.key (#252 Task 15 — a
- * merged group's cross-component dedupe identity; a component-local
- * dependency's key is equivalent to its own `${component}::${dependency}`, so
- * this degrades to the pre-Task-15 per-item keying when nothing merges).
- * Only the input kinds (external-config / external-spec) carry state —
- * platform-resource and org-service are informational: clicking Continue is
- * the user's approval of every change listed, so there is no per-item toggle.
+ * The RESOLUTION blockers — the only thing this drawer is for. A dependency
+ * whose identity the design cannot settle blocks the version cut: nothing
+ * downstream can be authored for a dependency nobody can name. Everything else
+ * preflight reports (external config values, platform-resource approvals) is
+ * collected on the Builds page while the coding agent runs and enforced at the
+ * deploy gate, so it never opens this drawer.
  */
+const RESOLUTION_KINDS = new Set([
+  "external-ambiguous",
+  "external-unresolved",
+  "external-spec",
+  "org-service",
+]);
+
+function isResolutionKind(kind: PreflightItem["kind"]): boolean {
+  return RESOLUTION_KINDS.has(kind);
+}
+
+/**
+ * Kinds with NO local form: the drawer can only surface the reason and hand
+ * off to chat (#252 Task 10, restoring the proceed gate Task 1 orphaned).
+ * "external-spec" deliberately stays OUT of this set — it keeps its own local
+ * form (paste a spec URL/content), which the build request carries as an
+ * `external-spec` input and the BFF commits to HEAD before the tag is cut
+ * (InputsCoordinator.ApplyPreTag), so Continue can satisfy it without chat.
+ */
+const CHAT_ONLY_KINDS = new Set(["external-ambiguous", "external-unresolved"]);
+
+function isChatOnlyKind(kind: PreflightItem["kind"]): boolean {
+  return CHAT_ONLY_KINDS.has(kind);
+}
+
+/** Per-group working state — only external-spec has anything to type. */
 type ItemState = {
-  /** external-config: value typed per config key, keyed by key name. */
-  values: Record<string, string>;
   /** external-spec: URL field. */
   specUrl: string;
   /** external-spec: pasted-content field. */
@@ -57,73 +77,25 @@ type ItemState = {
 };
 
 /**
- * Kinds computed by the shared resolver (models.ComputeDependencyStatus) that
- * have NO local form — the drawer can only surface the reason and hand off to
- * chat; there is nothing to type here that would resolve them (#252 Task 10,
- * restoring the proceed gate Task 1 orphaned). "external-spec" deliberately
- * stays OUT of this set: it keeps its own pre-existing local form (paste a
- * spec URL/content) below, so Continue can still be satisfied without chat.
- */
-const BLOCKER_KINDS = new Set(["external-ambiguous", "external-unresolved"]);
-
-function isBlockerKind(kind: PreflightItem["kind"]): boolean {
-  return BLOCKER_KINDS.has(kind);
-}
-
-/**
- * #252 Task 15 — cross-component dependency dedupe key: two PreflightItems
- * are "the same shared dependency" when they carry the same `kind` AND the
- * same identity — `resourceType`+`dependency` name for a platform-resource
- * (the canonical case: `thunder-app` end-user auth, a platform resource
- * declared on both a web-application and its backing service), `dependency`
- * name alone for every other kind. Task 14 lifted the ComponentType!=service
- * preflight guard, so a project-scoped shared dependency now surfaces one
- * PreflightItem PER consuming component — this key is what re-collapses
- * those back into one card.
+ * #252 Task 15 — cross-component dependency dedupe key: two PreflightItems are
+ * "the same shared dependency" when they carry the same `kind` and the same
+ * `dependency` name. Task 14 lifted the ComponentType!=service preflight
+ * guard, so a project-scoped shared dependency now surfaces one PreflightItem
+ * PER consuming component — this key is what re-collapses those into one card.
+ * (No resourceType qualifier is needed here: platform resources never reach
+ * this drawer, which only ever renders resolution blockers.)
  */
 function dependencyIdentity(item: PreflightItem): string {
-  return item.kind === "platform-resource"
-    ? `platform-resource:${item.resourceType ?? ""}:${item.dependency}`
-    : `${item.kind}:${item.dependency}`;
-}
-
-/**
- * Order-independent signature of an external-config item's declared config
- * keys. Only `external-config` carries per-item, user-facing config that can
- * legitimately diverge between consumers (different env-var names/
- * descriptions/defaults) — every other kind either has no config
- * (org-service, the blocker kinds) or a platform-provisioned one
- * (platform-resource, e.g. thunder-app: outputs -> env, never user-entered),
- * so only this kind's entries are checked for divergence before merging.
- */
-function configSignature(config: PreflightItem["config"]): string {
-  return JSON.stringify(
-    (config ?? [])
-      .map((c) => ({
-        key: c.key,
-        secret: Boolean(c.secret),
-        description: c.description ?? "",
-        defaultValue: c.defaultValue ?? "",
-      }))
-      .sort((a, b) => a.key.localeCompare(b.key)),
-  );
-}
-
-function sameConfig(items: PreflightItem[]): boolean {
-  const first = configSignature(items[0]?.config);
-  return items.every((i) => configSignature(i.config) === first);
+  return `${item.kind}:${item.dependency}`;
 }
 
 /**
  * One rendered card after cross-component grouping (#252 Task 15). `items`
  * holds every underlying PreflightItem the card represents — length 1 for a
- * component-local dependency, or when an `external-config` group's config
- * diverged across consumers (kept separate, not merged — the per-consumer
- * config grouping + collect-once-fan-out for DIVERGENT config is a
- * documented fast-follow, not this task). `representative` (the first item,
- * sorted by component) drives the type-specific form/gating; `usedBy` is the
- * sorted, deduped list of consuming components, rendered as the "Used by"
- * indicator only when it has 2+ entries.
+ * component-local dependency. `representative` (the first item, sorted by
+ * component) drives the card; `usedBy` is the sorted, deduped list of
+ * consuming components, rendered as the "Used by" indicator only when it has
+ * 2+ entries.
  */
 interface DependencyGroup {
   key: string;
@@ -132,7 +104,7 @@ interface DependencyGroup {
   usedBy: string[];
 }
 
-/** Cross-component dedupe (#252 Task 15) — see dependencyIdentity/sameConfig above. */
+/** Cross-component dedupe (#252 Task 15) — see dependencyIdentity above. */
 export function groupPreflightItems(items: PreflightItem[]): DependencyGroup[] {
   const buckets = new Map<string, PreflightItem[]>();
   for (const item of items) {
@@ -147,132 +119,43 @@ export function groupPreflightItems(items: PreflightItem[]): DependencyGroup[] {
     const sorted = [...bucketItems].sort((a, b) =>
       a.component.localeCompare(b.component),
     );
-    const canMerge =
-      sorted.length === 1 ||
-      sorted[0]!.kind !== "external-config" ||
-      sameConfig(sorted);
-
-    if (canMerge) {
-      groups.push({
-        key,
-        items: sorted,
-        representative: sorted[0]!,
-        usedBy: [...new Set(sorted.map((i) => i.component))].sort(),
-      });
-    } else {
-      // Divergent external-config: each consumer keeps its own card/form.
-      for (const item of sorted) {
-        groups.push({
-          key: `${key}::${item.component}`,
-          items: [item],
-          representative: item,
-          usedBy: [item.component],
-        });
-      }
-    }
+    groups.push({
+      key,
+      items: sorted,
+      representative: sorted[0]!,
+      usedBy: [...new Set(sorted.map((i) => i.component))].sort(),
+    });
   }
   return groups;
 }
 
-/**
- * Initial typed values for an external-config item: a non-secret key with a
- * `defaultValue` renders pre-filled with it (a suggested region, base URL, …);
- * a secret key — or a key with no `defaultValue` — starts empty. A secret never
- * carries a default worth pre-filling (an API key has none), so we defensively
- * never seed one even if a stray `defaultValue` rides along.
- */
-function seedValues(item?: PreflightItem): Record<string, string> {
-  const values: Record<string, string> = {};
-  if (item?.kind === "external-config") {
-    for (const key of item.config ?? []) {
-      values[key.key] = !key.secret ? (key.defaultValue ?? "") : "";
-    }
-  }
-  return values;
-}
-
-/** Fresh per-item state as if the drawer just opened. */
-function seedForItem(item?: PreflightItem): ItemState {
-  return {
-    values: seedValues(item),
-    specUrl: "",
-    specContent: "",
-  };
+/** Fresh per-group state as if the drawer just opened. */
+function seedState(): ItemState {
+  return { specUrl: "", specContent: "" };
 }
 
 // #252 Task 15: keyed by DependencyGroup.key, not per-raw-item — a merged
-// group's config is collected ONCE and shared by every underlying item it
+// group's spec is pasted ONCE and shared by every underlying item it
 // represents (see handleContinue's fan-out below).
 function initialState(groups: DependencyGroup[]): Record<string, ItemState> {
   const state: Record<string, ItemState> = {};
-  for (const group of groups) {
-    state[group.key] = seedForItem(group.representative);
-  }
+  for (const group of groups) state[group.key] = seedState();
   return state;
 }
 
-/** True when this item's required input (if any) has been supplied. */
+/** True when this group no longer stands between the user and the build. */
 function isSatisfied(item: PreflightItem, state: ItemState): boolean {
-  // A blocker item (ambiguous / needs-input) has no local form: it can ONLY
-  // be cleared by resolving it via chat and the parent refetching preflight —
-  // once resolved, it simply stops appearing in `items`. While it's present,
-  // Continue must stay disabled, so this never reports satisfied locally.
-  if (isBlockerKind(item.kind)) {
-    return false;
-  }
-  if (item.kind === "external-config") {
-    const keys = item.config ?? [];
-    return keys.every((k) => (state.values[k.key] ?? "").trim() !== "");
-  }
+  // A chat-only blocker (ambiguous / needs-input) can ONLY be cleared by
+  // resolving it in chat and the parent refetching preflight — once resolved,
+  // it simply stops appearing in `items`. While it is present, Continue stays
+  // disabled, so this never reports satisfied locally.
+  if (isChatOnlyKind(item.kind)) return false;
   if (item.kind === "external-spec") {
     return state.specUrl.trim() !== "" || state.specContent.trim() !== "";
   }
-  // platform-resource / org-service are approvals, never a Continue blocker.
+  // org-service is an approval, never a Continue blocker: clicking Continue is
+  // the consent, and the build publishes the cross-project endpoint.
   return true;
-}
-
-// Only called for items the caller has already filtered to the kinds a
-// BuildInputItem can represent (handleContinue drops blocker items first —
-// they have no input to submit). Each branch's `kind` is a hardcoded literal
-// (rather than reusing `item.kind`) so the return type stays exactly
-// BuildInputItem["kind"], which no longer widens to include the
-// PreflightItem-only blocker kinds (#252 Task 10).
-function toBuildInputItem(
-  item: PreflightItem,
-  state: ItemState,
-): BuildInputItem {
-  const base = { component: item.component, dependency: item.dependency };
-
-  if (item.kind === "external-config") {
-    return {
-      ...base,
-      kind: "external-config",
-      values: (item.config ?? []).map((k) => ({
-        key: k.key,
-        value: state.values[k.key] ?? "",
-      })),
-    };
-  }
-
-  if (item.kind === "external-spec") {
-    return state.specUrl.trim() !== ""
-      ? { ...base, kind: "external-spec", specUrl: state.specUrl }
-      : { ...base, kind: "external-spec", specContent: state.specContent };
-  }
-
-  // platform-resource / org-service are informational — clicking Continue is
-  // the approval, so they are always emitted approved.
-  if (item.kind === "platform-resource") {
-    return {
-      ...base,
-      kind: "platform-resource",
-      approved: true,
-      ...(item.parameters ? { parameters: item.parameters } : {}),
-    };
-  }
-
-  // org-service (the only remaining reachable kind here).
-  return { ...base, kind: "org-service", approved: true };
 }
 
 /**
@@ -295,112 +178,63 @@ function UsedByLine({ usedBy }: { usedBy: string[] }) {
 }
 
 /**
- * #252 Task 17 — the resolved-dependency affordance: a small hamburger that
- * opens a one-item menu ("Discuss in chat & modify", the RECONSIDER intent).
- * Used by the panels whose dependency is already resolved at design time
- * (external-config — config values still to collect; platform-resource).
- * org-service never reaches this drawer in a resolved state — preflight's
- * orgServiceItems only emits a drawer item when the status is Unresolved /
- * Blocked / Ambiguous (services/aep-api/internal/feature/build/preflight.go)
- * — so it uses the BlockerPanel/ExternalSpecPanel's "Resolve via chat" button
- * (RESOLVE intent) instead. Never rendered alongside that button for the same
- * dependency.
+ * "Resolve via chat" — the one affordance every panel here shares (#252 Task
+ * 17). Each item in this drawer is by definition NOT resolved, so the intent
+ * is always RESOLVE; the reconsider/hamburger path belongs to the design view,
+ * where an already-resolved dependency is what the user is looking at.
  */
-function DiscussInChatMenu({
-  dependencyName,
-  onClick,
+function ResolveViaChatButton({
+  item,
+  onResolveViaChat,
 }: {
-  dependencyName: string;
-  onClick: () => void;
+  item: PreflightItem;
+  onResolveViaChat?: ((item: PreflightItem) => void) | undefined;
 }) {
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  if (!onResolveViaChat) return null;
   return (
-    <>
-      <IconButton
-        aria-label={`Actions for ${dependencyName}`}
-        size="small"
-        onClick={(e) => setAnchorEl(e.currentTarget)}
-      >
-        <EllipsisVertical size={16} />
-      </IconButton>
-      <Menu
-        anchorEl={anchorEl}
-        open={anchorEl !== null}
-        onClose={() => setAnchorEl(null)}
-      >
-        <MenuItem
-          onClick={() => {
-            setAnchorEl(null);
-            onClick();
-          }}
-        >
-          Discuss in chat & modify
-        </MenuItem>
-      </Menu>
-    </>
+    <Button
+      size="small"
+      sx={{ alignSelf: "flex-start" }}
+      onClick={() => onResolveViaChat(item)}
+    >
+      Resolve via chat
+    </Button>
   );
 }
 
-/** Title row shared by the panels below: the dependency name, and — only
- * when the caller wired it — the "Discuss in chat & modify" hamburger. */
-function PanelTitle({
-  name,
-  onDiscussInChat,
-}: {
-  name: string;
-  onDiscussInChat?: (() => void) | undefined;
-}) {
-  return (
-    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-      <Typography variant="subtitle1">{name}</Typography>
-      {onDiscussInChat && (
-        <DiscussInChatMenu dependencyName={name} onClick={onDiscussInChat} />
-      )}
-    </Box>
-  );
-}
-
-function ExternalConfigPanel({
+/**
+ * A blocker raised from the shared resolver (ambiguous / needs-input): no
+ * local form can satisfy it — only "Resolve via chat", which seeds the
+ * dependency-resolution turn. The parent refetches preflight when that turn
+ * ends, so the item disappears from `items` once resolved.
+ */
+function BlockerPanel({
   item,
   usedBy,
-  state,
-  onChange,
-  onDiscussInChat,
+  onResolveViaChat,
 }: {
   item: PreflightItem;
   usedBy: string[];
-  state: ItemState;
-  onChange: (key: string, value: string) => void;
-  onDiscussInChat?: ((item: PreflightItem) => void) | undefined;
+  onResolveViaChat?: ((item: PreflightItem) => void) | undefined;
 }) {
   return (
-    <Stack spacing={2}>
-      <PanelTitle
-        name={item.dependency}
-        onDiscussInChat={
-          onDiscussInChat ? () => onDiscussInChat(item) : undefined
-        }
-      />
+    <Stack spacing={1}>
+      <Typography variant="subtitle1">{item.dependency}</Typography>
       <Typography variant="body2" color="text.secondary">
         {item.description}
       </Typography>
       <UsedByLine usedBy={usedBy} />
-      {(item.config ?? []).map((configKey) => (
-        <TextField
-          key={configKey.key}
-          label={configKey.key}
-          type={configKey.secret ? "password" : "text"}
-          value={state.values[configKey.key] ?? ""}
-          onChange={(e) => onChange(configKey.key, e.target.value)}
-          helperText={configKey.description || undefined}
-          fullWidth
-          size="small"
-        />
-      ))}
+      <ResolveViaChatButton item={item} onResolveViaChat={onResolveViaChat} />
     </Stack>
   );
 }
 
+/**
+ * An external dependency with no API spec yet. Unlike the other blockers this
+ * one HAS a local form: a URL or pasted content rides along with the build
+ * request as an `external-spec` input, which the BFF commits to HEAD before
+ * cutting the tag — so the version is cut against the spec the user just gave.
+ */
 function ExternalSpecPanel({
   item,
   usedBy,
@@ -442,26 +276,17 @@ function ExternalSpecPanel({
         fullWidth
         size="small"
       />
-      {onResolveViaChat ? (
-        <Button
-          size="small"
-          sx={{ alignSelf: "flex-start" }}
-          onClick={() => onResolveViaChat(item)}
-        >
-          Resolve via chat
-        </Button>
-      ) : null}
+      <ResolveViaChatButton item={item} onResolveViaChat={onResolveViaChat} />
     </Stack>
   );
 }
 
 /**
- * A blocker item raised from the shared resolver (ambiguous / needs-input):
- * no local form can satisfy it — only "Resolve via chat" (which seeds the
- * dependency-resolution turn; the parent refetches preflight when it ends, so
- * the item simply disappears from `items` once resolved).
+ * An unresolved cross-project endpoint. Informational plus a chat handoff:
+ * preflight only raises an org-service item while its status is
+ * unresolved/blocked/ambiguous, so it is never already-resolved here.
  */
-function BlockerPanel({
+function OrgServicePanel({
   item,
   usedBy,
   onResolveViaChat,
@@ -473,59 +298,10 @@ function BlockerPanel({
   return (
     <Stack spacing={1}>
       <Typography variant="subtitle1">{item.dependency}</Typography>
-      <Typography variant="body2" color="text.secondary">
-        {item.description}
-      </Typography>
-      <UsedByLine usedBy={usedBy} />
-      {onResolveViaChat ? (
-        <Button
-          size="small"
-          sx={{ alignSelf: "flex-start" }}
-          onClick={() => onResolveViaChat(item)}
-        >
-          Resolve via chat
-        </Button>
-      ) : null}
-    </Stack>
-  );
-}
-
-function InfoPanel({
-  item,
-  usedBy,
-  kindLabel,
-  detail,
-  onDiscussInChat,
-  onResolveViaChat,
-}: {
-  item: PreflightItem;
-  usedBy: string[];
-  // A short label shown right under the name (e.g. "Cross-project endpoint").
-  kindLabel: string;
-  // The full "what the platform will do" note — shown on hover of the label
-  // rather than taking up a line in the drawer.
-  detail: string;
-  // Resolved dependency (platform-resource): the title-row hamburger →
-  // "Discuss in chat & modify" (RECONSIDER intent).
-  onDiscussInChat?: ((item: PreflightItem) => void) | undefined;
-  // Non-resolved dependency (org-service — see the docblock above
-  // DiscussInChatMenu): a "Resolve via chat" button (RESOLVE intent),
-  // matching BlockerPanel/ExternalSpecPanel. Mutually exclusive with
-  // onDiscussInChat for a given caller.
-  onResolveViaChat?: ((item: PreflightItem) => void) | undefined;
-}) {
-  return (
-    <Stack spacing={1}>
-      <PanelTitle
-        name={item.dependency}
-        onDiscussInChat={
-          onDiscussInChat ? () => onDiscussInChat(item) : undefined
-        }
-      />
       <UsedByLine usedBy={usedBy} />
       {/* The kind sits right under the name; the verbose action note is on
           hover (dotted underline hints it's interactive) instead of inline. */}
-      <Tooltip title={detail}>
+      <Tooltip title="We'll publish this cross-project endpoint — it updates and rebuilds the owning project; your build continues, and the consuming task waits until it's published.">
         <Typography
           component="span"
           variant="caption"
@@ -537,7 +313,7 @@ function InfoPanel({
             borderColor: "text.disabled",
           }}
         >
-          {kindLabel}
+          Cross-project endpoint
         </Typography>
       </Tooltip>
       {/* The dependency's own description from the design, when the author
@@ -558,34 +334,21 @@ function InfoPanel({
           {item.description}
         </Typography>
       ) : null}
-      {item.parameters ? (
-        <Box
-          component="pre"
-          sx={{
-            m: 0,
-            p: 1,
-            fontSize: "0.75rem",
-            bgcolor: "action.hover",
-            borderRadius: 1,
-            overflowX: "auto",
-          }}
-        >
-          {JSON.stringify(item.parameters, null, 2)}
-        </Box>
-      ) : null}
-      {onResolveViaChat ? (
-        <Button
-          size="small"
-          sx={{ alignSelf: "flex-start" }}
-          onClick={() => onResolveViaChat(item)}
-        >
-          Resolve via chat
-        </Button>
-      ) : null}
+      <ResolveViaChatButton item={item} onResolveViaChat={onResolveViaChat} />
     </Stack>
   );
 }
 
+/**
+ * The resolution drawer: the dependencies whose identity is still unsettled,
+ * and the only thing standing between Build and the cut-version ceremony.
+ *
+ * `items` is the whole preflight response; the drawer renders only the
+ * resolution blockers in it. The rest still matters to the request Continue
+ * sends — a build carries the platform-resource / org-service approvals
+ * derived from the same list (approvalInputsFor) — but it is not something the
+ * user is asked about here.
+ */
 export function BuildDependencyDrawer({
   open,
   items,
@@ -598,15 +361,10 @@ export function BuildDependencyDrawer({
   items: PreflightItem[];
   onClose: () => void;
   onContinue: (inputs: BuildInputItem[]) => void;
-  // Fires the Task 5 seeded-message flow for one item (#252 Task 10/17):
-  // "resolve" from the blocker/external-spec/org-service panels' "Resolve
-  // via chat" button (a non-resolved dependency — org-service items never
-  // reach this drawer resolved, see preflight.go's orgServiceItems);
-  // "reconsider" from the external-config/platform-resource panels'
-  // hamburger → "Discuss in chat & modify" (an already-resolved dependency
-  // the user wants to revisit). Optional so a caller that hasn't wired chat
-  // resolution yet (or a test) can omit it — the affordance simply doesn't
-  // render.
+  // Fires the Task 5 seeded-message flow for one item (#252 Task 10/17). Every
+  // item in this drawer is unresolved, so the intent is always "resolve".
+  // Optional so a caller that hasn't wired chat resolution yet (or a test) can
+  // omit it — the affordance simply doesn't render.
   onResolveDependency?: (
     item: PreflightItem,
     intent: DependencyResolutionIntent,
@@ -617,18 +375,20 @@ export function BuildDependencyDrawer({
   // The parent closes the drawer on success.
   submitting?: boolean;
 }) {
-  // #252 Task 15: cross-component dedupe happens once per `items` change —
-  // every kind-bucket / state lookup below iterates GROUPS, not raw items, so
-  // a shared dependency declared on multiple components (thunder-app style)
-  // renders as one card instead of one per consuming component.
-  const groups = useMemo(() => groupPreflightItems(items), [items]);
+  // #252 Task 15: cross-component dedupe happens once per `items` change, so a
+  // shared dependency declared on multiple components renders as one card
+  // instead of one per consuming component.
+  const groups = useMemo(
+    () => groupPreflightItems(items.filter((i) => isResolutionKind(i.kind))),
+    [items],
+  );
 
   const [state, setState] = useState<Record<string, ItemState>>(() =>
     initialState(groups),
   );
 
   // Fresh state every time the drawer transitions to open, so a reopened
-  // drawer never retains the prior session's typed values/toggles.
+  // drawer never retains the prior session's pasted spec.
   useEffect(() => {
     if (open) {
       setState(initialState(groups));
@@ -636,66 +396,49 @@ export function BuildDependencyDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const canContinue = groups.every((group) => {
-    const groupState = state[group.key];
-    return groupState ? isSatisfied(group.representative, groupState) : false;
-  });
+  const canContinue = groups.every((group) =>
+    isSatisfied(group.representative, state[group.key] ?? seedState()),
+  );
 
   function updateState(group: DependencyGroup, patch: Partial<ItemState>) {
     setState((prev) => ({
       ...prev,
-      [group.key]: {
-        ...(prev[group.key] ?? seedForItem(group.representative)),
-        ...patch,
-      },
+      [group.key]: { ...(prev[group.key] ?? seedState()), ...patch },
     }));
   }
 
   function handleContinue() {
-    // Blocker groups (ambiguous / needs-input) are never representable as a
-    // BuildInputItem — there is no input to submit for them, and Continue is
-    // disabled while any are present anyway (isSatisfied always reports them
-    // unsatisfied). Filtering defensively here, rather than trusting the
-    // disabled button alone, keeps toBuildInputItem total over the kinds it
-    // actually knows how to serialize. A merged group's ONE typed state fans
-    // out to a BuildInputItem per underlying (component, dependency) pair —
-    // the wire contract is unchanged, so the collect-once UI still submits
-    // one input per original consumer.
-    const inputs = groups
-      .filter((group) => !isBlockerKind(group.representative.kind))
+    // The only thing collected here is a pasted external spec; a merged
+    // group's ONE pasted spec fans out to a BuildInputItem per underlying
+    // (component, dependency) pair, so the wire contract is unchanged. The
+    // approvals the build also needs come from the FULL preflight list, not
+    // from what this drawer rendered.
+    const specInputs = groups
+      .filter((group) => group.representative.kind === "external-spec")
       .flatMap((group) => {
-        const groupState = state[group.key] ?? seedForItem(group.representative);
-        return group.items.map((item) => toBuildInputItem(item, groupState));
+        const groupState = state[group.key] ?? seedState();
+        return group.items.map((item): BuildInputItem => {
+          const base = { component: item.component, dependency: item.dependency };
+          return groupState.specUrl.trim() !== ""
+            ? { ...base, kind: "external-spec", specUrl: groupState.specUrl }
+            : { ...base, kind: "external-spec", specContent: groupState.specContent };
+        });
       });
-    onContinue(inputs);
+    onContinue([...specInputs, ...approvalInputsFor(items)]);
   }
 
-  const externalConfigGroups = groups.filter(
-    (g) => g.representative.kind === "external-config",
+  const blockerGroups = groups.filter((g) =>
+    isChatOnlyKind(g.representative.kind),
   );
   const externalSpecGroups = groups.filter(
     (g) => g.representative.kind === "external-spec",
-  );
-  const blockerGroups = groups.filter((g) => isBlockerKind(g.representative.kind));
-  const platformResourceGroups = groups.filter(
-    (g) => g.representative.kind === "platform-resource",
   );
   const orgServiceGroups = groups.filter(
     (g) => g.representative.kind === "org-service",
   );
 
-  // #252 Task 17: the two fixed-intent wrappers each panel binds to its own
-  // affordance — "Resolve via chat" (blocker/external-spec/org-service: a
-  // non-resolved dependency) always fires "resolve"; the hamburger's
-  // "Discuss in chat & modify" (external-config/platform-resource: an
-  // already resolved dependency) always fires "reconsider". Both close
-  // through the SAME onResolveDependency the parent wires (Task 15's
-  // close-drawer-then-open-chat flow) — only the intent differs.
   const resolveViaChat = onResolveDependency
     ? (item: PreflightItem) => onResolveDependency(item, "resolve")
-    : undefined;
-  const discussInChat = onResolveDependency
-    ? (item: PreflightItem) => onResolveDependency(item, "reconsider")
     : undefined;
 
   return (
@@ -719,9 +462,20 @@ export function BuildDependencyDrawer({
       }}
     >
       <Box sx={{ width: 420, p: 3 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>
           Dependencies to resolve
         </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          These dependencies have no identity yet, so the version can&apos;t be
+          cut against them. Connection values are collected later, on the build
+          itself.
+        </Typography>
+
+        {groups.length === 0 ? (
+          <Typography variant="body2" sx={{ mb: 3 }}>
+            Everything is resolved — continue to build.
+          </Typography>
+        ) : null}
 
         {blockerGroups.length > 0 ? (
           <>
@@ -739,32 +493,6 @@ export function BuildDependencyDrawer({
           </>
         ) : null}
 
-        {externalConfigGroups.length > 0 ? (
-          <>
-            <Stack spacing={3} sx={{ mb: 3 }}>
-              {externalConfigGroups.map((group) => (
-                <ExternalConfigPanel
-                  key={group.key}
-                  item={group.representative}
-                  usedBy={group.usedBy}
-                  state={state[group.key] ?? seedForItem(group.representative)}
-                  onChange={(key, value) =>
-                    updateState(group, {
-                      values: {
-                        ...(state[group.key] ?? seedForItem(group.representative))
-                          .values,
-                        [key]: value,
-                      },
-                    })
-                  }
-                  onDiscussInChat={discussInChat}
-                />
-              ))}
-            </Stack>
-            <Divider sx={{ mb: 3 }} />
-          </>
-        ) : null}
-
         {externalSpecGroups.length > 0 ? (
           <>
             <Stack spacing={3} sx={{ mb: 3 }}>
@@ -773,7 +501,7 @@ export function BuildDependencyDrawer({
                   key={group.key}
                   item={group.representative}
                   usedBy={group.usedBy}
-                  state={state[group.key] ?? seedForItem(group.representative)}
+                  state={state[group.key] ?? seedState()}
                   onUrlChange={(value) => updateState(group, { specUrl: value })}
                   onContentChange={(value) =>
                     updateState(group, { specContent: value })
@@ -786,33 +514,13 @@ export function BuildDependencyDrawer({
           </>
         ) : null}
 
-        {platformResourceGroups.length > 0 ? (
-          <>
-            <Stack spacing={2} sx={{ mb: 3 }}>
-              {platformResourceGroups.map((group) => (
-                <InfoPanel
-                  key={group.key}
-                  item={group.representative}
-                  usedBy={group.usedBy}
-                  kindLabel={group.representative.resourceType ?? "Platform resource"}
-                  detail={`We'll provision this ${group.representative.resourceType ?? "resource"} for you.`}
-                  onDiscussInChat={discussInChat}
-                />
-              ))}
-            </Stack>
-            <Divider sx={{ mb: 3 }} />
-          </>
-        ) : null}
-
         {orgServiceGroups.length > 0 ? (
           <Stack spacing={2} sx={{ mb: 3 }}>
             {orgServiceGroups.map((group) => (
-              <InfoPanel
+              <OrgServicePanel
                 key={group.key}
                 item={group.representative}
                 usedBy={group.usedBy}
-                kindLabel="Cross-project endpoint"
-                detail="We'll publish this cross-project endpoint — it updates and rebuilds the owning project; your build continues, and the consuming task waits until it's published."
                 onResolveViaChat={resolveViaChat}
               />
             ))}

@@ -178,6 +178,11 @@ type loop struct {
 	builds   workflow.ReceiveChannel
 	conflict workflow.ReceiveChannel
 	noWork   workflow.ReceiveChannel
+	// valuesSaved wakes a run parked on the DEPLOY GATE. Separate from workable
+	// because the two park for different reasons and re-derive different
+	// predicates: workable is "the dispatch gate opened", this is "a credential
+	// arrived".
+	valuesSaved workflow.ReceiveChannel
 
 	// lastResult is what the previous cycle produced — it selects the next
 	// cycle's kind and feeds the no-progress rule.
@@ -260,6 +265,7 @@ func newLoop(ctx workflow.Context, in RunInput) *loop {
 		builds:                workflow.GetSignalChannel(ctx, delivery.SigRunBuildTerminal),
 		conflict:              workflow.GetSignalChannel(ctx, delivery.SigRunConflict),
 		noWork:                workflow.GetSignalChannel(ctx, delivery.SigRunNoWork),
+		valuesSaved:           workflow.GetSignalChannel(ctx, delivery.SigRunValuesSaved),
 		st: delivery.RunStatus{
 			RunID:           in.RunID,
 			MilestoneNumber: in.MilestoneNumber,
@@ -647,7 +653,7 @@ func (l *loop) await(ctx workflow.Context) (cancelled bool) {
 		c.Receive(ctx, nil)
 		cancelled = true
 	})
-	for _, ch := range []workflow.ReceiveChannel{l.workable, l.merged, l.builds, l.conflict} {
+	for _, ch := range []workflow.ReceiveChannel{l.workable, l.merged, l.builds, l.conflict, l.valuesSaved} {
 		sel.AddReceive(ch, func(c workflow.ReceiveChannel, _ bool) { c.Receive(ctx, nil) })
 	}
 	sel.AddFuture(workflow.NewTimer(timerCtx, waitPollInterval), func(workflow.Future) {})
@@ -734,6 +740,14 @@ func (l *loop) setState(ctx workflow.Context, state string) error {
 		return err
 	}
 	l.st.State = state
+	if state == delivery.RunStateRunning {
+		// Mirror what the repository's SetState does to the row: a resumed run is
+		// not waiting on anything. The row alone is not enough — QueryRunStatus
+		// answers out of l.st, so leaving these set would have a query report a
+		// deploying run as still parked on credentials that already arrived.
+		l.st.WaitingReason = ""
+		l.st.BlockingDependencies = nil
+	}
 	return nil
 }
 

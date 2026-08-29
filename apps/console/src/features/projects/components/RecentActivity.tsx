@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { Box, Typography } from "@wso2/oxygen-ui";
+import { Alert, Box, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { Activity } from "@wso2/oxygen-ui-icons-react";
 import { EmptyState } from "../../../components/EmptyState";
 import { SectionTitle } from "../../../components/SectionTitle";
@@ -56,7 +56,7 @@ const OVERVIEW_EVENT_LIMIT = 6;
 // (seeded read + SSE tail). The Builds page owns the detail.
 export function RecentActivity({ projectName }: { projectName: string }) {
   const { user } = useSession();
-  const { events } = useActivityFeed(projectName);
+  const { events, isPending, isError } = useActivityFeed(projectName);
   const items = events
     .slice(0, OVERVIEW_EVENT_LIMIT)
     .map((e) => activityLine(e, user.email));
@@ -64,12 +64,16 @@ export function RecentActivity({ projectName }: { projectName: string }) {
   return (
     <div>
       <SectionTitle>Recent activity</SectionTitle>
-      {items.length === 0 ? (
+      {isError ? (
+        <Alert severity="error">Failed to load activity</Alert>
+      ) : isPending ? (
+        <Skeleton variant="rounded" height={72} aria-label="Loading activity" />
+      ) : items.length === 0 ? (
         <EmptyState
           bordered
           icon={<Activity size={28} />}
           title="No activity yet"
-          description="Publish the plan and start a build — agents report progress here as they work."
+          description="Agents report what they are doing here as they work."
         />
       ) : (
         <Box sx={{ mt: 1 }}>

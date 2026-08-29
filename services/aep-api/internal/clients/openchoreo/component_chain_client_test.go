@@ -270,6 +270,12 @@ func TestEnsureReleaseBinding_Create(t *testing.T) {
 	if spec["environment"] != chainTestEnv {
 		t.Errorf("unexpected environment: %v", spec["environment"])
 	}
+	// MARKED internal, or the project-status poll folds this agent Job's binding
+	// into the project's deploy status and reports it live.
+	labels, _ := meta["labels"].(map[string]any)
+	if labels[string(LabelKeyAepInternal)] != LabelValueAepInternal {
+		t.Errorf("binding not marked internal: labels=%v", labels)
+	}
 }
 
 func TestEnsureReleaseBinding_ConflictIsSuccess(t *testing.T) {

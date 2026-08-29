@@ -18,9 +18,13 @@ package run
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
+
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 // The DEPLOY STAGE: plan the waves, promote them in order, wait for each to
@@ -54,6 +58,19 @@ func (l *loop) deployCycle(ctx workflow.Context, components []string) (cycleResu
 		// wait for.
 		return cycleGreen, nil
 	}
+	// THE DEPLOY GATE (ADR-0023). Before anything is ordered or promoted: every
+	// external dependency configured, every platform resource provisioned.
+	//
+	// It sits here, and not at settle, because ADR-0017 put the deploy between
+	// builds-green and validation so validation asserts against a version that is
+	// genuinely serving. A gate after validation would be gating the wrong thing.
+	// It sits after the empty-components return above, so a converge/validation
+	// cycle — which promotes nothing — is never parked on a credential it will
+	// not use.
+	if res, err := l.awaitDeployable(ctx, components); err != nil || res != cycleGreen {
+		return res, err
+	}
+
 	waves, err := l.planDeployWaves(ctx, components)
 	if err != nil {
 		// An unsatisfiable ORDER is a deployment failure like any other, and has to
@@ -93,6 +110,218 @@ func (l *loop) deployCycle(ctx workflow.Context, components []string) (cycleResu
 		return cycleNone, err
 	}
 	return l.awaitDeployments(ctx, components, deadline)
+}
+
+// awaitDeployable holds the deploy stage until the project may deploy, and is
+// the only place in the loop where the two blockers behave differently.
+//
+//	platform resource provisioning ─► POLL   the platform is still working
+//	external dependency unset      ─► PARK   a human has not acted yet
+//
+// Parking on the first would hang the run on something that resolves itself.
+// Polling the second would burn the deploy stage's attention on a credential
+// that arrives when somebody gets round to it — possibly tomorrow. The park is
+// deliberately unbounded and OUTSIDE deployReadyTimeout: that budget bounds how
+// long a BINDING may take to serve, and charging a person's credential lookup
+// against it would settle `deploy-budget` on a run behaving exactly as designed.
+//
+// The POLL, on the other hand, is bounded, and by exactly that budget. "The
+// platform is still working" is an assumption, not a fact: a binding whose
+// ResourceType does not exist, or whose provisioner fails forever, never reaches
+// Ready and never will. Polling it without an expiry would leave the run
+// `running`/`deploying` for good — no waiting reason, no blocking names, no
+// terminal reason — which is the silent hang the park was designed to avoid,
+// reintroduced on the other branch. On expiry the cycle ends as a deploy failure
+// naming the resources, exactly as awaitDeployments ends a binding that never
+// served.
+//
+// It does NOT wait for the secret operator, and that is deliberate rather than
+// an omission — this is the kind of thing a later reader "fixes" by adding a
+// wait, so the reasoning lives here. The platform has no read path for it: its
+// only read for external resources is control-plane custom resources, the
+// data-plane proxy client has apply and delete but no get, and the binding's
+// Ready condition says nothing about the operator. Nor is one needed, and that
+// is structural, not lucky. An empty secret-store path produces NO Kubernetes
+// secret at all, so at deploy the secret either exists holding real values or
+// does not exist, and a pod referencing a missing secret retries until
+// Kubernetes finds it. The dangerous case — a secret that exists holding STALE
+// values, so the pod starts happily and never restarts — cannot arise. The cost
+// is a few seconds of pod crash-looping after deploy, which is cosmetic.
+//
+// Returns cycleGreen when the gate opens, cycleCancelled if a human gave up,
+// and cycleDeployFailed when the provisioning budget runs out — in which case
+// components are the ones the failure is filed against, since a resource that
+// will not provision is a stage-wide failure of the whole cycle rather than any
+// one component's fault (see reasonForAll).
+func (l *loop) awaitDeployable(ctx workflow.Context, components []string) (cycleResult, error) {
+	parked := false
+	// leaveValuesPark undoes setWaitingOnValues, and every exit from the values
+	// park goes through it — not only the one that finds the gate open. The park
+	// stamps a reason and a list of dependency names on the run row; a pass that
+	// moved on to provisioning while leaving them there would have the console
+	// ask for a credential the developer has already supplied, naming a
+	// dependency that is no longer the blocker.
+	//
+	// A no-op unless this call actually parked: the stage is already running
+	// otherwise, and a redundant write would show the console a state transition
+	// that did not happen. SetState(running) clears both columns on the row, and
+	// setState mirrors that onto l.st, so restoring the state IS clearing the
+	// park.
+	leaveValuesPark := func() error {
+		if !parked {
+			return nil
+		}
+		if err := l.setState(ctx, delivery.RunStateRunning); err != nil {
+			return err
+		}
+		l.st.Phase = delivery.RunPhaseDeploying
+		parked = false
+		return nil
+	}
+
+	budget := provisioningBudget{ctx: ctx}
+	defer budget.drop()
+
+	for {
+		cancelled, err := l.cancelledAtGate(ctx, parked)
+		if err != nil {
+			return cycleNone, err
+		}
+		if cancelled {
+			return cycleCancelled, nil
+		}
+		var verdict DeployGateVerdict
+		if err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).CheckDeployReadiness,
+			ProjectRef{OrgID: l.in.OrgID, ProjectID: l.in.ProjectID}).Get(ctx, &verdict); err != nil {
+			return cycleNone, err
+		}
+
+		switch {
+		case len(verdict.Unconfigured) > 0:
+			// Whatever the platform had left to do, it is not what the run is
+			// waiting for now — and the wait ahead is a person's, which the
+			// budget must not measure.
+			budget.drop()
+			// Re-asserted on every pass, not only on entry: the set of blocking
+			// dependencies shrinks as values arrive, and a stale list would name
+			// dependencies the developer has already configured.
+			if err := l.setWaitingOnValues(ctx, verdict.Unconfigured); err != nil {
+				return cycleNone, err
+			}
+			parked = true
+			if cancelled := l.await(ctx); cancelled {
+				return cycleCancelled, nil
+			}
+		case len(verdict.Provisioning) > 0:
+			if err := leaveValuesPark(); err != nil {
+				return cycleNone, err
+			}
+			if budget.expired {
+				// Out of time. Reported the way a binding that never served is:
+				// the cycle's components could not be delivered, and each fix
+				// issue carries the same stage-wide cause, which names the
+				// resources rather than the component it is filed against.
+				l.deployFailed = components
+				l.deployFailures = reasonForAll(components, errProvisioningTimedOut(verdict.Provisioning))
+				return cycleDeployFailed, nil
+			}
+			workflow.GetLogger(ctx).Info("deploy gate: platform resources still provisioning",
+				"resources", verdict.Provisioning)
+			cancelled, hitDeadline := l.awaitWake(ctx, deployPollInterval, budget.deadline())
+			if cancelled {
+				return cycleCancelled, nil
+			}
+			budget.expired = budget.expired || hitDeadline
+		default:
+			if err := leaveValuesPark(); err != nil {
+				return cycleNone, err
+			}
+			return cycleGreen, nil
+		}
+	}
+}
+
+// cancelledAtGate asks the cancel question the way the PREVIOUS pass waited.
+//
+// After a values park it has to be the row-deriving question (see cancelled):
+// the cancel surface swallows a failed signal delivery so a dead engine cannot
+// wedge the console, and the park is unbounded — so a run whose signal was lost
+// would sit at the gate forever on a run the user has already cancelled, which
+// is precisely the case that comment describes. After a provisioning poll it
+// must NOT be: that wait is bounded by the provisioning budget, so a lost signal
+// costs latency rather than a wedge, and a row read every fifteen seconds would
+// spend an activity per poll to buy nothing.
+func (l *loop) cancelledAtGate(ctx workflow.Context, parked bool) (bool, error) {
+	if !parked {
+		return l.cancelRequested(), nil
+	}
+	return l.cancelled(ctx)
+}
+
+// provisioningBudget is deployReadyTimeout, spent only while the PLATFORM is
+// working.
+//
+// It is created lazily — on the first pass that finds a resource provisioning —
+// and dropped again whenever the gate parks on values, because the two waits are
+// charged differently. deployReadyTimeout bounds how long a binding may take to
+// become usable; a developer taking a day to find an API key must not spend a
+// second of it, or a run behaving exactly as ADR-0023 designed would settle
+// `deploy-budget`. A timer started when the stage was entered would do exactly
+// that, which is why this one is not.
+type provisioningBudget struct {
+	ctx     workflow.Context
+	timer   workflow.Future
+	stop    workflow.CancelFunc
+	expired bool
+}
+
+// deadline is the budget's timer, started on first use.
+func (b *provisioningBudget) deadline() workflow.Future {
+	if b.timer == nil {
+		timerCtx, stop := workflow.WithCancel(b.ctx)
+		b.timer, b.stop = workflow.NewTimer(timerCtx, deployReadyTimeout), stop
+	}
+	return b.timer
+}
+
+// drop abandons an unspent budget so the next provisioning stretch starts a
+// fresh one, and releases the timer. Idempotent: it is both the values park's
+// reset and the stage's cleanup.
+func (b *provisioningBudget) drop() {
+	if b.stop != nil {
+		b.stop()
+	}
+	b.timer, b.stop, b.expired = nil, nil, false
+}
+
+// errProvisioningTimedOut is the cause a cycle carries when a platform resource
+// never became usable. It names the resources — the one fact a reader of the fix
+// issue cannot derive from anything else — and the budget it outlived.
+func errProvisioningTimedOut(resources []string) error {
+	return fmt.Errorf("platform resources were still provisioning after %s: %s",
+		deployReadyTimeout, strings.Join(resources, ", "))
+}
+
+// setWaitingOnValues parks the row with the reason AND the dependency names.
+// `waiting` is unbounded and only cancellation exits it, so a park that does not
+// say what it is waiting for is indistinguishable from a hung run — and runs
+// pile up behind it while nobody knows there is something to do.
+func (l *loop) setWaitingOnValues(ctx workflow.Context, deps []string) error {
+	reason := delivery.RunWaitingOnExternalValues
+	if err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).SetRunState,
+		SetRunStateInput{
+			RunID:                l.in.RunID,
+			State:                delivery.RunStateWaiting,
+			WaitingReason:        reason,
+			BlockingDependencies: deps,
+		}).Get(ctx, nil); err != nil {
+		return err
+	}
+	l.st.State = delivery.RunStateWaiting
+	l.st.Phase = delivery.RunPhaseWaiting
+	l.st.WaitingReason = reason
+	l.st.BlockingDependencies = deps
+	return nil
 }
 
 // convergeNoPromotion is the commit a converge deploys at: none. The deployer

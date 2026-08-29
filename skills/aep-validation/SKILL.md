@@ -31,6 +31,12 @@ directory (templates under `assets/`, the report generator under
 must invoke by absolute path is under `$AEP_SKILLS_DIR/aep-validation/` —
 the runner sets it.
 
+**Every command below runs from the repo root, and none of them needs a
+`cd`.** One shell serves the whole run, so a `cd` you make persists into
+every later call and a relative one is right only once. `Read`, `Write`
+and `Edit` never move with the shell — their relative paths always
+resolve from the repo root.
+
 ## Workflow
 
 ### 1. Read the issue
@@ -46,9 +52,10 @@ path + per-criterion tables), a **Test layout** section, and **Report**
 requirements. If a required section is missing, post an issue comment
 naming what's missing and exit with failure.
 
-Deployed endpoint URLs and any test credentials are NOT in the issue —
-they are runtime inputs kept out of the public issue. The endpoints are
-already on disk for you (step 4); credentials you request on demand.
+Deployed endpoint URLs are NOT in this issue — they are runtime inputs the
+platform resolved for you and left on disk (step 4). Test-user logins are
+not here either: they are published in this milestone's roles gate ticket,
+which is a different issue (step 4).
 
 Post a brief opening comment (`Starting validation: <one-line plan>`).
 
@@ -113,27 +120,75 @@ yourself; the URL is not something you can work out from inside the cluster.
   Never start, build, or deploy the app; you validate what is already
   running. If a request fails once you are authoring, that is a finding
   about the app, not a target to go re-derive.
-- **Test credentials (on demand):** request them only when a criterion
-  needs a login — POST the test-credentials endpoint with an optional
-  `role` hint (the role the flow requires). `AEP_TASK_ID` is this run's
-  validation cycle id; the bearer rides a file:
+- **Test users and their passwords** come from the **roles gate ticket**,
+  not from the context file and not from a spec file. A project whose design
+  declares roles gets one issue per version titled *Provision roles and test
+  users*, and the platform posts a comment on it carrying every test account's
+  login. Find that ticket in your own milestone:
 
   ```bash
-  curl -sf -X POST "$AEP_PLATFORM_URL/internal/v1/validation/$AEP_TASK_ID/test-credentials" \
-    -H "Authorization: Bearer $(cat "$AEP_BEARER_FILE")" \
-    -H "Content-Type: application/json" \
-    --data '{"role":"admin"}' > /tmp/creds.json
+  # newest gate in THIS milestone — only its table is current, and a rebuild can
+  # leave an older ticket beside it
+  GATE=$(gh issue list --repo <owner/repo> --label "aep:gate/roles" \
+    --milestone "$MILESTONE" --state all --json number,createdAt \
+    --jq 'sort_by(.createdAt) | .[-1].number // empty')
+  [ -n "$GATE" ] && gh issue view "$GATE" --repo <owner/repo> --comments
   ```
 
-  The response is `{ "username", "password", "mock": true|false, "note":
-  "..." }`. Export it in-session and never commit it:
-  `export AEP_E2E_USERNAME=… AEP_E2E_PASSWORD=…`. When `mock` is true the
-  account is a shared stand-in (real user provisioning isn't implemented
-  yet) — use it, and state in your PR description and closing comment that
-  auth-gated criteria ran against mock credentials, since such a login may
-  legitimately fail against a generated app that doesn't recognise it.
-  Only if the request itself errors do you let the affected criterion land
-  `not_run`, blocker noted.
+  It is normally CLOSED — the platform resolves this gate itself — so
+  `--state all` is required, and the logins are a comment, so `--comments` is
+  too. `$MILESTONE` is the one you read in step 2; if it is empty here, read it
+  again rather than running the query without it — unfiltered, it returns
+  another version's ticket.
+
+  The logins are the markdown table under the `<!-- aep:test-users -->`
+  marker — the LAST such comment if the ticket carries more than one, since an
+  earlier one is a superseded build's. One row per account:
+
+  | Username | Password | Role | Cold start |
+  |---|---|---|---|
+  | `test-trainer` | `tdyjkfmq5t` | Trainer | no |
+  | `test-team-member` | `n3pe5cw8s4` | Team Member | yes |
+
+  Read the table, never the prose around it — a human may rewrite that at any
+  time, and the marker is what the platform guarantees.
+
+  **Which row.** Match the criterion's role to the `Role` column and use that
+  row. For a criterion that needs *a* signed-in user but names no role, use
+  the row with **Cold start: yes** — that is the role a person holds before
+  anyone grants them one. Do not reuse one role's login to exercise another
+  role's screens; that is the difference between judging a permission and
+  judging a page.
+
+  Export the pair in-session, per role, as you need it:
+
+  ```bash
+  export AEP_E2E_USERNAME='test-trainer' AEP_E2E_PASSWORD='…'
+  ```
+
+  **Never write a password into anything you commit or post** — not the
+  specs, not `targets.json`, not the report, not the PR body, not an issue
+  comment. Read it from the ticket into the environment and leave it there.
+  Playwright specs take it from `process.env`, never as a literal.
+
+  These accounts are the platform's own, created for this purpose. They hold
+  only the project's application roles, so a criterion judged with one is
+  judged against a real sign-in.
+
+  **When a login is missing.** Never improvise one, and never fall back to a
+  guess like `admin`/`admin` — a verdict from a login the app does not
+  recognise is worth less than no verdict. Land the affected criteria
+  `not_run` and say WHICH of these you hit, in the report and in your closing
+  comment; they mean different things and only some are a problem:
+
+  | What you see | What it means | Report it as |
+  |---|---|---|
+  | No gate ticket in the milestone | The design declares no roles — this system has no sign-in | Expected; no finding |
+  | A ticket, but no login table | Every role the design declares is one the platform does not own, so it could provision no usable account | A provisioning problem — say so |
+  | The ticket is OPEN and carries a failure comment | Provisioning failed; quote the cause | A provisioning problem — say so |
+  | A table, but no row for the role you need | That account was refused or could not be enrolled — the ticket's other comment says which | A provisioning problem — name the role |
+  | A row whose password says *unavailable* | The platform holds the account but could not publish its password | A platform problem — name the account |
+  | No row has **Cold start: yes** | The design says a caller with no role reaches nothing. Use the least-privileged role the criterion implies; if it implies none, the criterion is unreachable by design | Expected; explain the reasoning |
 - **Local dev servers (experimental runs only):** if the fetched
   endpoints are `localhost` dev servers you must start (the local
   harness), this overrides the base "never start servers" rule: start
@@ -169,16 +224,22 @@ tests/e2e/
   {
     "name": "e2e",
     "private": true,
+    "scripts": { "test": "playwright test" },
     "devDependencies": { "@playwright/test": "<value of $AEP_PLAYWRIGHT_VERSION>" }
   }
   ```
+
+  The `test` script is what lets every command below run from the repo
+  root: `npm --prefix` executes a script with the package as its working
+  directory, so Playwright finds this config without you moving your
+  shell.
 - `targets.json` shape: `{"targets": {"<component>": "<url>", ...},
   "primary": "<the web-facing component>"}`, filled from the step-4
   validation-context `endpoints`. On a re-validation run, refresh it from
   the context file — a committed `targets.json` may name URLs from an
   earlier deployment.
-- Install with `npm install` on first scaffold (commit the lockfile),
-  `npm ci` on later runs.
+- Install with `npm install --prefix tests/e2e` on first scaffold (commit
+  the lockfile), `npm ci --prefix tests/e2e` on later runs.
 - `scripts/generate-report.mjs` is platform-owned: the REPORT step
   always executes the plugin's copy directly and refreshes this
   committed copy, which exists only so humans can reproduce the report
@@ -192,7 +253,7 @@ memory:
 - **Read `references/authoring.md` now and follow it as the binding
   authoring discipline** (plan format, collect-generated-code loop,
   assertion rules, criterion↔spec contract).
-- Load `aep:playwright-cli` with the Skill tool — the CLI's own skill
+- Load `playwright-cli` with the Skill tool — the CLI's own skill
   (commands, refs, eval, storage state; vendored from @playwright/cli).
 
 Then: write the test plan, author one spec per uncovered e2e criterion
@@ -214,10 +275,14 @@ The suite outlives the Bash tool's DEFAULT timeout (120s), so ask for the
 time up front — `timeout` is a parameter on the Bash call, max `600000`:
 
 ```bash
-cd tests/e2e
-rm -f test-results/results.json          # never read a previous run's verdict
-npx playwright test                      # Bash timeout: 600000
+rm -f tests/e2e/test-results/results.json   # never read a previous run's verdict
+npm test --prefix tests/e2e                 # Bash timeout: 600000
 ```
+
+Never `npx playwright test` from the repo root. It finds the specs and
+passes anyway, without loading the config — so no reporter, no
+`results.json`, and none of the launch args the endpoints need. Exit 0,
+nothing written.
 
 Two things about this step will mislead you if you let them:
 
@@ -225,7 +290,7 @@ Two things about this step will mislead you if you let them:
   harness detaches the command and hands back an OK result with no
   output — identical, from where you sit, to a suite that finished. So
   never infer the run completed from the call returning. Confirm
-  `test-results/results.json` exists and is NEWER than the moment you
+  `tests/e2e/test-results/results.json` exists and is NEWER than the moment you
   started the run; if it is missing or stale, the run was severed and
   its results do not exist.
 - **You cannot wait for a detached run.** `sleep` is blocked, and
@@ -237,14 +302,15 @@ If the suite is too big for one window, **shard it** — never let one
 call run past the limit:
 
 ```bash
-npx playwright test specs/AC-001-a.spec.ts specs/AC-001-b.spec.ts   # a batch that fits
+# the `--` is what passes the filter through npm to Playwright
+npm test --prefix tests/e2e -- specs/AC-001-a.spec.ts specs/AC-001-b.spec.ts
 ```
 
 Merge each batch's results yourself and keep the per-criterion verdicts;
 sharding changes how the suite is run, never what the report claims. A
 batch that severs is a batch you re-run smaller, not one you skip.
 
-The config writes `test-results/results.json`. The run includes the
+The config writes `tests/e2e/test-results/results.json`. The run includes the
 regression set — that's free regression coverage, not an accident.
 
 ### 8. HEAL (bounded)
@@ -305,6 +371,10 @@ belongs in the report, and you still open the PR (step 10).
 ### 10. PR
 
 ```bash
+# always the lease: this branch name repeats every cycle, so a re-validation
+# diverges from what the last one left on it
+git push --force-with-lease -u origin "aep/m${MILESTONE}-validation"
+
 gh pr create \
   --title "Validation: <pass>/<total> e2e criteria passing (issue #<N>)" \
   --body $'Validates #<N>\n\n<summary table: pass/fail/not_run + manual/scenario counts>\n\nReport: tests/validation/report.md'
@@ -335,9 +405,11 @@ and the PR link; the platform closes the issue itself.
 - Leave `.only` / `.skip` / `.fixme` in committed specs.
 - Hand-edit `report.md` / `report.json` — regenerate via the script.
 - Commit playwright-cli session state, server logs, `test-results/`,
-  or credentials. Credentials come only from the step-4 test-credentials
-  request (exported in-session as `AEP_E2E_USERNAME` / `AEP_E2E_PASSWORD`,
-  never written to a file); if the request errors and a criterion needs
-  login, mark it blocked in an issue comment and let it land `not_run`.
-- Everything in the `aep` skill's deny-list (no default-branch pushes,
-  no force-push, one PR, no merging, no repo-settings changes).
+  or credentials. A login comes only from the step-4 roles gate ticket,
+  exported in-session as `AEP_E2E_USERNAME` / `AEP_E2E_PASSWORD` and never
+  written to a file, a spec, a report or a comment; if there is no login to
+  read and a criterion needs one, mark it blocked in an issue comment and let
+  it land `not_run`.
+- Everything in the `aep` skill's deny-list (no default-branch pushes, one
+  PR, no merging, no repo-settings changes). Its force-push exception is
+  yours: `--force-with-lease` on your own branch, per step 10.

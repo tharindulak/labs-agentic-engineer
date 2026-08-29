@@ -48,6 +48,12 @@ const (
 	// agent that finishes having decided nothing needs changing looks exactly
 	// like one that died, and the deadline calls it death.
 	SigRunNoWork = "run-no-work"
+	// SigRunValuesSaved — an external dependency's values were saved, so a run
+	// parked on the deploy gate has something new to re-derive from. A fact like
+	// the rest of the set, deliberately NOT "deploy now": the supervisor re-reads
+	// readiness itself, so a save that leaves another dependency unset parks the
+	// run straight back. Losing it costs one wait-poll interval, not correctness.
+	SigRunValuesSaved = "run-values-saved"
 	// SigRunCancel — a human abandoned the increment. It is the ONLY expiry the
 	// unbounded wait state has, and like every other signal here it is a WAKE-UP
 	// rather than evidence: the cancel surface stamps the request on the run row

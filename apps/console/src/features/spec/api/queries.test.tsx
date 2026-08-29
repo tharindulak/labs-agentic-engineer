@@ -83,16 +83,24 @@ describe("useDesignDependencies (#252 Task 9)", () => {
     expect(result.current.data).toEqual([]);
   });
 
-  it("degrades to [] on a fetch error, never surfacing isError (status chips just don't render)", async () => {
+  // The read used to swallow its errors and resolve to [], which made "this
+  // project declares no dependencies" and "the console could not find out"
+  // indistinguishable. The Builds page's External resources section acts on the
+  // difference — it is where a parked deploy sends people to supply values, and
+  // a swallowed error removed the whole section. Callers that only decorate
+  // degrade at their own use sites (`data ?? []`) instead.
+  it("surfaces a fetch error rather than passing it off as an empty design", async () => {
     mockGET.mockResolvedValue({ data: undefined, error: { message: "boom" } });
-    const queryClient = new QueryClient();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
 
     const { result } = renderHook(() => useDesignDependencies("proj1"), {
       wrapper: wrapper(queryClient),
     });
 
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual([]);
-    expect(result.current.isError).toBe(false);
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.error?.message).toContain("boom");
   });
 });

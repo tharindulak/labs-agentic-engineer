@@ -693,6 +693,60 @@ func TestListBuilds_FailedVersionCarriesItsTerminalReason(t *testing.T) {
 	}
 }
 
+// A version parked at the deploy gate (ADR-0023) says so on the ledger row.
+// `status` alone is `in_progress` for a waiting run as much as a running one,
+// so without the reason the row reads as a coding agent still working when the
+// run has stopped and is waiting on a PERSON. The run row is already in hand,
+// so this costs the ledger no extra read.
+func TestListBuilds_ParkedVersionCarriesItsWaitingReason(t *testing.T) {
+	spy := newPlanSpy()
+	spy.rows = []delivery.MilestoneRun{
+		{MilestoneNumber: 12, MilestoneTitle: "v2", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
+			State: delivery.RunStateWaiting, WaitingReason: delivery.RunWaitingOnExternalValues,
+			BlockingDependencies: delivery.DependencyNames{"stripe", "twilio"}},
+		{MilestoneNumber: 11, MilestoneTitle: "v1", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
+			State: delivery.RunStateRunning},
+	}
+	svc := withPlanPath(newSvc(fakeRepos{}, &fakeTagger{}), spy)
+
+	_, rawBody := listBuilds(t, svc, "shop")
+	builds := decodeBody[gen.BuildList](t, rawBody).Builds
+
+	parked := builds[0]
+	if parked.Status != "in_progress" {
+		t.Fatalf("parked status = %q, want in_progress — the version is still in flight", parked.Status)
+	}
+	if parked.WaitingReason != gen.BuildSummaryWaitingReasonExternalValues {
+		t.Errorf("parked waitingReason = %q, want %q — the row must say it waits on a person",
+			parked.WaitingReason, gen.BuildSummaryWaitingReasonExternalValues)
+	}
+	if running := builds[1]; running.WaitingReason != "" {
+		t.Errorf("running waitingReason = %q, want empty", running.WaitingReason)
+	}
+	// The NAMES stay off the ledger — the row has no space for them, and the
+	// build page has already made the run read that carries them.
+	if strings.Contains(rawBody, "blockingDependencies") {
+		t.Errorf("ledger body names the blocking dependencies: %s", rawBody)
+	}
+}
+
+// A reason left behind on a run that has moved on must not surface: it would
+// read as a hang that is not happening.
+func TestListBuilds_StaleWaitingReasonIsNotSurfaced(t *testing.T) {
+	spy := newPlanSpy()
+	spy.rows = []delivery.MilestoneRun{{
+		MilestoneNumber: 3, MilestoneTitle: "v1", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
+		State: delivery.RunStateSucceeded, WaitingReason: delivery.RunWaitingOnExternalValues,
+	}}
+	svc := withPlanPath(newSvc(fakeRepos{}, &fakeTagger{}), spy)
+
+	_, rawBody := listBuilds(t, svc, "shop")
+	got := decodeBody[gen.BuildList](t, rawBody).Builds[0]
+	if got.Status != "completed" || got.WaitingReason != "" {
+		t.Errorf("settled version = %+v, want completed with no waiting reason", got)
+	}
+}
+
 // No runs → an empty list serialized as [] (not null), whether the plan path is
 // wired or not.
 func TestListBuilds_EmptyList(t *testing.T) {

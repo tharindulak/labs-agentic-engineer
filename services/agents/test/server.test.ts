@@ -400,6 +400,83 @@ test("start turn: only .md references produce no file parts (byte-identical mess
   }
 });
 
+// --- Chat attachments (#428) -------------------------------------------------
+
+test("chat turn: an attachment rides the user message and the journal records its name", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(
+        wsBody({
+          turn: { kind: "chat", text: "add this form as well" },
+          journal: { text: "add this form as well", attachments: ["claim-form.pdf"] },
+          attachments: [
+            { name: "claim-form.pdf", mediaType: "application/pdf", data: Buffer.from("%PDF-1.7 x").toString("base64") },
+          ],
+        }),
+        { token, org: WS_ORG },
+      ),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+
+    const stored = await store.get(WS_CONV);
+    const firstUser = stored!.messages.find((m) => m.role === "user")!;
+    const parts = firstUser.content as unknown as Array<Record<string, unknown>>;
+    const filePart = parts.find((p) => p.type === "file");
+    assert.ok(filePart, "the attachment must reach the model as a file part");
+    assert.equal(filePart!.filename, "claim-form.pdf");
+    assert.equal(filePart!.mediaType, "application/pdf");
+    // And the chip's source of truth.
+    assert.deepEqual(stored!.turns[0]?.attachments, ["claim-form.pdf"]);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("chat turn: a name is journaled ONLY if its bytes actually reached the model", async () => {
+  // The failure this pins: the journal used to record whatever names the caller
+  // sent. When the shared encoded budget skips an attachment, that puts a chip on
+  // a file the model never received — the confusion chips exist to prevent,
+  // inverted. Names are derived from the surviving parts instead.
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { baseUrl, close, store } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    // One byte past the whole per-turn encoded budget, so it cannot be included.
+    const tooBig = "A".repeat(20 * 1024 * 1024 + 4);
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(
+        wsBody({
+          turn: { kind: "chat", text: "read this" },
+          journal: { text: "read this", attachments: ["huge.pdf"] },
+          attachments: [{ name: "huge.pdf", mediaType: "application/pdf", data: tooBig }],
+        }),
+        { token, org: WS_ORG },
+      ),
+    );
+    assert.equal(res.status, 200);
+    await res.text();
+
+    const stored = await store.get(WS_CONV);
+    const firstUser = stored!.messages.find((m) => m.role === "user")!;
+    assert.equal(typeof firstUser.content, "string", "nothing was attachable, so the message stays a plain string");
+    assert.equal(
+      stored!.turns[0]?.attachments,
+      undefined,
+      "and no chip is promised for a file the model never got",
+    );
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a malformed turn spec is a clean pre-stream 400, never a composed nonsense turn", async () => {
   const { baseUrl, close } = await boot(mockModel([{ kind: "text", text: "ok" }]));
   try {

@@ -437,6 +437,60 @@ export type TurnKind = (typeof TURN_KINDS)[number];
 export interface TurnJournal {
   text: string;
   author?: { id: string; displayName: string };
+  /**
+   * File NAMES attached to this message (#428) — never bytes. The display read
+   * replaces a user row's content with `text`, so without these a reload would
+   * show the agent discussing a document that appears nowhere in the thread.
+   * Names only: the journal is a DISPLAY record, and a chip is not a download.
+   */
+  attachments?: string[];
+}
+
+/**
+ * One chat attachment (#428): conversation-scoped model content the user
+ * attached to a single message.
+ *
+ * Carried INLINE on the turn request rather than by path, which is the whole
+ * difference from `TurnSpec.references`. A reference is stored and overlaid into
+ * the turn's snapshot, so it can be named by path; an attachment is never
+ * written to disk anywhere (console ADR-0019), so the bytes have to travel with
+ * the request that carries them. Once the turn runs they are durable as parts of
+ * the conversation's history, and nothing needs to keep a second copy.
+ */
+export interface TurnAttachment {
+  /**
+   * The original file name. Also the DEDUPE KEY: the turn loop drops an
+   * attachment whose name the conversation history already holds, so re-sending
+   * one costs nothing.
+   */
+  name: string;
+  /**
+   * The media type the model reads it as — `application/pdf`, one of the four
+   * image types, or `text/plain` for every text format. Those are the only
+   * document types the Anthropic provider maps, so a `.csv` arrives as
+   * `text/plain` rather than `text/csv`.
+   */
+  mediaType: string;
+  /** base64 of the raw bytes. */
+  data: string;
+}
+
+/** Runtime guard for one untrusted `TurnAttachment`. */
+export function isTurnAttachment(v: unknown): v is TurnAttachment {
+  if (v === null || typeof v !== "object") return false;
+  const a = v as Record<string, unknown>;
+  return (
+    typeof a.name === "string" &&
+    a.name.trim() !== "" &&
+    typeof a.mediaType === "string" &&
+    a.mediaType.trim() !== "" &&
+    typeof a.data === "string"
+  );
+}
+
+/** Runtime guard for an absent-or-valid `attachments` array. */
+export function isTurnAttachmentsOrAbsent(v: unknown): v is TurnAttachment[] | undefined {
+  return v === undefined || (Array.isArray(v) && v.every(isTurnAttachment));
 }
 
 /** The milestone a plan turn is scoped to, and which of its stories already have Tasks. */
@@ -523,6 +577,12 @@ export interface TurnRequest {
    * the tool map is byte-identical to a turn without it.
    */
   webSearch?: boolean;
+  /**
+   * Chat attachments for THIS turn (#428) — bytes inline, see `TurnAttachment`.
+   * Absent/empty → the turn's messages are byte-identical to one built before
+   * this field existed.
+   */
+  attachments?: TurnAttachment[];
   /**
    * Where the person reading this turn's prose is sitting (#580). The right
    * vocabulary belongs to the SURFACE, not to the skill: in a local run the

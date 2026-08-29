@@ -21,6 +21,7 @@ import type { components } from "../../../generated/aep-api";
 import {
   buildOutcome,
   buildSessionLabel,
+  externalValuesPark,
   gateDrive,
   isDeliveryRun,
   isTerminalRun,
@@ -144,6 +145,53 @@ describe("isDeliveryRun", () => {
         }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("externalValuesPark", () => {
+  // ADR-0023: the deploy gate parks the run in `waiting` and names what it is
+  // short of. The build page renders those names, so the helper must return
+  // them rather than a boolean.
+  it("names the dependencies a deploy-gate park is waiting on", () => {
+    expect(
+      externalValuesPark(
+        run({
+          state: "waiting",
+          waitingReason: "external-values",
+          blockingDependencies: ["stripe", "sendgrid"],
+        }),
+      ),
+    ).toEqual(["stripe", "sendgrid"]);
+  });
+
+  // An empty array is a real answer — parked, naming nothing — and must stay
+  // distinguishable from null, or the one run that most needs an explanation
+  // renders none.
+  it("still reports a park that names nothing", () => {
+    expect(
+      externalValuesPark(run({ state: "waiting", waitingReason: "external-values" })),
+    ).toEqual([]);
+  });
+
+  // A reasonless `waiting` is the ordinary between-cycles park. It is bounded
+  // and nobody has to do anything about it, so it must not borrow the gate's
+  // call to action.
+  it("ignores a wait with no reason on it", () => {
+    expect(externalValuesPark(run({ state: "waiting" }))).toBeNull();
+  });
+
+  it("ignores a run that is not waiting", () => {
+    expect(
+      externalValuesPark(
+        run({ state: "running", waitingReason: "external-values" }),
+      ),
+    ).toBeNull();
+  });
+
+  // The build page has no run at all until the runs read answers, and while it
+  // is in flight the page must not claim the version is parked.
+  it("is null when there is no run", () => {
+    expect(externalValuesPark(undefined)).toBeNull();
   });
 });
 

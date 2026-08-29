@@ -40,6 +40,8 @@ import { PageHeader } from "../../../components/PageHeader";
 import { StatusChip, type StatusTone } from "../../../components/StatusChip";
 import { StageRow } from "../../builds/components/StageRow";
 import { useDesignDependencies } from "../../spec/api/queries";
+import { useExternalResources } from "../../settings/api/queries";
+import { isRegisteredExternal } from "../../marketplace/kind";
 import { useValidationEvidence } from "../../validation/api/counts";
 import {
   verdictSentence,
@@ -339,14 +341,30 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
   // dev ("v1") and the validation verdict; the layout already runs this query.
   const status = useProjectStatus(projectName);
   const deploy = status.data?.deploy;
-  // The design's connections, for promotion readiness. Degrades to [] on
-  // error (the hook's own contract), so a failed read renders the story
-  // without a live-configuration line rather than blocking the page.
+  // The design's connections, for promotion readiness. A failed read surfaces
+  // as `isError` at the hook; this page degrades it here — `connectionRows`
+  // maps an absent payload to [], so the story renders without a
+  // live-configuration line rather than blocking the page.
   const dependencies = useDesignDependencies(projectName);
   const connections = useMemo(
     () => connectionRows(dependencies.data),
     [dependencies.data],
   );
+  // Org catalog: Registered Externals (non-empty envCells) already hold
+  // values on the org plane — Connections must not offer Configure / the
+  // project values dialog for those names. While the catalog query is
+  // pending or failed, registeredNames is empty, so hide Configure for
+  // every external until the query has settled successfully (a name that
+  // might be Registered must not open the dialog).
+  const externalCatalog = useExternalResources();
+  const catalogUnknown = externalCatalog.isPending || externalCatalog.isError;
+  const registeredNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const resource of externalCatalog.data ?? []) {
+      if (isRegisteredExternal(resource)) names.add(resource.name);
+    }
+    return names;
+  }, [externalCatalog.data]);
   // The rail's Validation stage (#395, decision 3): the Validation page's own
   // criteria/report join, keyed on the BUILD version (the newest run — what
   // deploy.validation describes). The VERDICT comes back with the counts because
@@ -422,7 +440,7 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
         {header}
         <EmptyState
           compact
-          description="Nothing to deploy yet — components appear here once the published design produces them, and agents deploy to dev on merge."
+          description="Nothing deployed yet. Your components run here once they are built — each environment shows what is live and where to reach it."
         />
       </>
     );
@@ -669,6 +687,23 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
               Component Open links live on the rail rows — this section owns
               what the rail doesn't say. */}
           <PanelOverline>Connections</PanelOverline>
+          {externalCatalog.isError ? (
+            <Alert
+              severity="error"
+              sx={{ mt: 1 }}
+              action={
+                <Button onClick={() => void externalCatalog.refetch()}>
+                  Retry
+                </Button>
+              }
+            >
+              Failed to load org catalog
+              {externalCatalog.error instanceof Error &&
+              externalCatalog.error.message
+                ? `: ${externalCatalog.error.message}`
+                : ""}
+            </Alert>
+          ) : null}
           <Stack spacing={1.25} sx={{ mt: 1 }}>
             {connections.length > 0 ? (
               connections.map((row) => (
@@ -677,11 +712,15 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
                   dotColor="success.main"
                   label={row.detail ? `${row.name} (${row.detail})` : row.name}
                   trailing={
-                    row.kind === "external" && row.config.length > 0 ? (
+                    row.kind === "external" &&
+                    row.config.length > 0 &&
+                    !catalogUnknown &&
+                    !registeredNames.has(row.name) ? (
                       // The console's tinted-pill recipe, in the app's accent —
                       // an ACTION among readouts must out-rank its neighbours'
                       // quiet captions, and this is the one shape for "a pill you
-                      // can press".
+                      // can press". Project External only — Registered names
+                      // skip Configure (org catalog owns the value plane).
                       <Button
                         size="small"
                         color="inherit"
@@ -720,6 +759,12 @@ export function DeploymentsPage({ projectName }: { projectName: string }) {
                       <Typography variant="caption" color="success.main">
                         provisioned
                       </Typography>
+                    ) : row.kind === "external" &&
+                      (catalogUnknown || registeredNames.has(row.name)) ? (
+                      // Catalog still loading or failed, or Registered: do
+                      // not open the project values dialog, and do not
+                      // mislabel as platform-managed.
+                      undefined
                     ) : (
                       // Config-carrying but not user-updatable here (a platform
                       // resource like an identity app): the platform owns its

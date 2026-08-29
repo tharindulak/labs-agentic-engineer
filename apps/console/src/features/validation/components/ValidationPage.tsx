@@ -180,7 +180,7 @@ export function ValidationPage({
   // NOT deploy.version, which names the newest SUCCEEDED run. Validation is the
   // last cycle before a run settles, so while it is in flight the run is still
   // `running` and deploy.version names either nothing (the first version) or the
-  // PREVIOUS one. Keyed on that, this page said "No validation has run yet" about
+  // PREVIOUS one. Keyed on that, this page said "Nothing validated yet" about
   // a validation that was running, and on any later build would have shown the
   // previous version's report under a chip reading "Validating".
   const version = status.data?.build.version ?? "";
@@ -516,7 +516,7 @@ export function ValidationPage({
         {headerWithCancelError}
         <EmptyState
           compact
-          description="No validation has run yet — it runs automatically once the project's components are deployed to dev and the version's work is done."
+          description="Nothing validated yet. After a build, your software is checked against the acceptance criteria in your spec; results appear here."
         />
       </>
     );

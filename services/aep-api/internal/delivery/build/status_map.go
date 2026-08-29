@@ -43,3 +43,15 @@ func statusFromRunState(state string) string {
 		return statusInProgress
 	}
 }
+
+// waitingReasonFor surfaces a park's reason on the ledger, and only while the
+// run is actually parked. The run row is already in hand (Service.List reads
+// it for every summary), so this adds no request per row — which is what let
+// the version ledger say "waiting on you" without the cost ADR-0021 §6
+// forbids.
+func waitingReasonFor(state, reason string) string {
+	if state != delivery.RunStateWaiting {
+		return ""
+	}
+	return reason
+}

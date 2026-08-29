@@ -113,6 +113,28 @@ export function isDeliveryRun(run: MilestoneRunView): boolean {
 }
 
 /**
+ * The external dependencies a run is parked on at the DEPLOY GATE (ADR-0023),
+ * or null when it is not parked there.
+ *
+ * A run that reaches the gate short of a value stops in `waiting` — the state
+ * that already means "something outside the platform is needed" — and only a
+ * person can end it. `waiting` on its own therefore reads as a hang, so the
+ * build page names the park and points at where the values go.
+ *
+ * An empty array is a REAL answer, not an absence: the run is parked and the
+ * row named nothing (an older row, or a lost write). Returning null for that
+ * would silence the notice on the one run that most needs it, which is why
+ * this is `string[] | null` rather than a possibly-empty list.
+ */
+export function externalValuesPark(
+  run: MilestoneRunView | undefined,
+): string[] | null {
+  if (!run || run.state !== "waiting") return null;
+  if (run.waitingReason !== "external-values") return null;
+  return run.blockingDependencies ?? [];
+}
+
+/**
  * Is this version still moving? Only the newest run can be live (a milestone
  * sees SEQUENTIAL runs across its life), so this is the whole page's poll
  * predicate and the gate on every GitHub-backed read.

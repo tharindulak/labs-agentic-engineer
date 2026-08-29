@@ -140,12 +140,21 @@ function asDate(value: unknown): Date {
 function rowToConversation(row: Record<string, unknown>): Conversation {
   const turns = ((row.turns ?? []) as Array<Record<string, unknown>>).map((t): TurnJournalEntry => {
     const author = t.author as { id?: unknown; displayName?: unknown } | undefined;
+    // Attachment names (#428). Rebuilt field-by-field like the rest of this
+    // entry — a defensive read of a jsonb column, not a spread — which is
+    // exactly why a new field has to be added HERE too: the names were written
+    // correctly and silently dropped on the way back out, so a chip showed while
+    // the turn was live and vanished the moment the thread rehydrated.
+    const attachments = Array.isArray(t.attachments)
+      ? (t.attachments as unknown[]).filter((n): n is string => typeof n === "string" && n !== "")
+      : [];
     return {
       turnId: String(t.turnId ?? ""),
       text: String(t.text ?? ""),
       ...(author && typeof author.id === "string" && typeof author.displayName === "string"
         ? { author: { id: author.id, displayName: author.displayName } }
         : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
       messageIndex: Number(t.messageIndex ?? -1),
       createdAt: asDate(t.createdAt),
     };

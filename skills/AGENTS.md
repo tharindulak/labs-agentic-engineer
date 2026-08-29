@@ -21,6 +21,16 @@ and writes the mirror itself (`local_skill_mirror.ts`), applying the same rule.
 The library is bind-mounted from the working tree in dev (`setup-k3d.sh` for the
 cluster, `pnpm play` for the playground), so **a skill edit needs no rebuild**.
 
+A **tool** a skill names by command is the exception — it is installed, not
+mounted, so a change to one is NOT live until it is. `evals/ballerina/AGENTS.md`
+has the per-mode table and the loop for measuring whether a change to the
+`ballerina` skill did anything.
+
+One result from that loop worth knowing before writing any skill: an instruction
+about *how a command is invoked in a shell* does not land — 19/19 lookups stayed
+piped across a skill edit saying otherwise, and no thinking block ever mentioned
+piping. An instruction about *which command to run* does.
+
 ## Kinds — `metadata.aep.kind` in frontmatter
 
 An absent kind means `org`, which is a real decision, not a default to lean on:
@@ -32,7 +42,8 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   narration policy, and the coding run's own workflow skills (`aep`,
   `aep-validation`, `playwright-cli`).
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
-  `api-management`, `thunder-authentication`). Editable and deletable by an org.
+  `astryx-design-system`, `api-management`, `thunder-authentication`). Editable
+  and deletable by an org.
 
 Kind decides console visibility and who may edit a skill, and nothing else. It is
 `audience` that decides who may *read* one, and the two are independent — a skill
@@ -67,6 +78,58 @@ never loaded to author specs/", and `ballerina`'s says "Apply when a component's
 "Conventions for writing Go applications" names no trigger and is a defect — that
 one was `go`'s, and it was invisible for as long as `go` was preloaded regardless.
 
+## Swapping the UI design system
+
+A web app's UI toolkit is an **organization** decision, and nothing in this
+library hardcodes one. Two edits change it, both in places an org may edit:
+
+1. Add the new design-system skill — author `skills/<name>/SKILL.md`, or import
+   it through Settings → Skills. Delete `astryx-design-system` if the org does
+   not want it available.
+2. Point the **UI design system** section of `organization` at its name.
+
+`architecture` reads the name out of that section rather than holding one of its
+own. It can, because the `organization` body rides the design agent's system
+prompt on **every** turn (`buildOrgDefaultsBlock` in the agents service, not a
+per-flow eager skill), so the name is always in context when a component's
+`design.json` is written. It then pins that skill on every `web-application`, so
+the pin follows the org's choice with **no platform-skill edit** —
+`architecture` is `kind: platform` and read-only in the console, which is exactly
+why the name cannot live there. An empty section means web-app builds carry only
+the stack skills. `astryx-design-system` is the shipped default, nothing more.
+
+A design-system skill must declare four things to work in that slot:
+
+- **`metadata.aep.kind: org` and `metadata.aep.audience: [coding]`.** A design
+  system is built against, not designed with; `[coding]` is what puts it in the
+  project mirror, and `org` is what lets an org edit or delete it.
+- **A `## Verify` section** naming the one command `react-webapp`'s verify
+  sequence should run for it, or nothing if it has none.
+- **Which of its own defaults the platform overrides.** Every vendor's
+  quickstart assumes a project it scaffolded itself; `react-webapp`'s deployment
+  facts (no `base`, the platform's own nginx assets, `window._env_`, one
+  `tsconfig.json`) win, and
+  the skill should say so wherever its own docs would mislead.
+- **Its ownership boundary.** The design system owns UI under `src/`; the data
+  layer (`openapi-fetch` + the committed `src/generated/` client) stays
+  `react-webapp`'s.
+
+Only `organization` and the design-system skill itself may name a design system.
+A vendor name anywhere else in this library is a defect — it is the thing that
+would make a swap need more than the two edits above. That includes
+`references/*.md`: a mirror copies a skill's whole directory, so a vendor name in
+a reference reaches a coding session exactly as a body would. Check it before
+changing a web-app skill:
+
+```bash
+grep -rniE 'astryx|@astryxdesign' skills/ --include='*.md'
+```
+
+Only `skills/organization/SKILL.md`, `skills/astryx-design-system/**` and this
+file should match. A hit anywhere else — especially in `architecture`, which is
+`kind: platform` and read-only in the console — means an org can no longer swap
+its design system without a platform change.
+
 ## Who owns what
 
 - **`aep` is the umbrella**, and it is split by reader. `SKILL.md` is the **run**
@@ -86,6 +149,14 @@ one was `go`'s, and it was invisible for as long as `go` was preloaded regardles
   outright while `go` required it for an unmanaged service). A cross-stack
   *practice* ("read config in one place at startup") is the contract's; **which
   file it lands in** is the stack skill's.
+- **A tool documents itself; a skill points at it.** Where a stack skill drives a
+  tool the platform ships, the verbs, flags and output rules belong in that tool's
+  `--help`, and the skill says to run it. Same argument as above and a sharper
+  version of it: the two ship on different clocks — a tool rides a runner
+  image, a skill rides the org's library — so a copy here goes stale with nothing
+  to catch it. `ballerina` is the worked example: `bal library --help` carries the
+  chain and how to read a document, the skill carries only what surrounds the tool
+  (`packages/bal-library-tool/design/decisions/ADR-0011-…`).
 - Inside `aep`, the tie-break: a rule naming `git`/`gh`/an issue/a PR belongs to
   `SKILL.md`; one naming a path, a file or an env var belongs to the component
   contract. The contract is stated as information rather than a build procedure,

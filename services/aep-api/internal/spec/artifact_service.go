@@ -172,6 +172,11 @@ type ArtifactService interface {
 	ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error)
 	GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
+	// GetDesignAtSpecTag reads the design bundle at a `v<N>` SPEC tag — the tag
+	// a build actually has. GetDesignAtTag above takes the legacy `v<N>-<M>`
+	// design-revision tag and REFUSES a spec tag outright, so a build-time
+	// consumer must use this one.
+	GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	// GetDesignAtCommit reads the design bundle at an exact commit — the publish
 	// flow's pinned-commit read (no ref resolution involved).
 	GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
@@ -179,6 +184,20 @@ type ArtifactService interface {
 	// StatusSnapshot is the status poll's fetch-free git view: local head +
 	// local tags, tree reads SHA-addressed (status_snapshot.go).
 	StatusSnapshot(ctx context.Context, orgID, projectID string) (*StatusSnapshot, error)
+
+	// RequirementsFingerprintAt reduces the requirements at one commit to a
+	// comparable value (#575) — the staleness check reads them as the last
+	// design run saw them. `at` is that run's recorded base commit; a commit
+	// the mirror cannot resolve is an error, never a silent "unchanged",
+	// because equal-by-accident is the failure that ships a stale design.
+	RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error)
+
+	// SetDesignBaselineResolver wires the build gate's staleness input (#575):
+	// the commit the newest successful design run read the project at. On the
+	// interface because the composition root has to reach it, and it cannot be
+	// a constructor argument — the turn store it reads from is built after this
+	// service. nil is a documented no-op: the gate keeps working without it.
+	SetDesignBaselineResolver(f func(ctx context.Context, orgID, projectID string) (string, error))
 	// ComponentCountAtTag counts the design components at a spec tag — the
 	// deploy stage's denominator. Local-only; unknown tag errors.
 	ComponentCountAtTag(ctx context.Context, orgID, projectID, tag string) (int, error)
@@ -187,6 +206,23 @@ type ArtifactService interface {
 type artifactService struct {
 	repo sourcecontrol.RepoRepository
 	git  GitGateway
+	// designBaseline resolves the commit the newest successful design run read
+	// the project at, or "" when it has never designed. The build gate needs it
+	// to refuse a design the requirements have moved past (#575).
+	//
+	// A function rather than a port because it is one fact, and optional
+	// because the gate must keep working without it: a service assembled with
+	// no baseline resolver simply does not run the staleness check, which is
+	// the pre-#575 behaviour rather than a build that can never start.
+	designBaseline func(ctx context.Context, orgID, projectID string) (string, error)
+}
+
+// SetDesignBaselineResolver wires the staleness check's input (#575). Wired at
+// the composition root from the agent-turn store; nil is a documented no-op.
+func (s *artifactService) SetDesignBaselineResolver(
+	f func(ctx context.Context, orgID, projectID string) (string, error),
+) {
+	s.designBaseline = f
 }
 
 // NewArtifactService builds the workspace-backed ArtifactService. `git` is the
@@ -268,6 +304,24 @@ func (s *artifactService) GetDesignAtCommit(ctx context.Context, orgID, projectI
 func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
 	if _, _, ok := parseDesignTag(tag); !ok {
 		return nil, fmt.Errorf("%w: %q is not a v<N>-<M> tag", ErrInvalidVersionTag, tag)
+	}
+	_, ref, err := s.readyRef(ctx, orgID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.readBundleAtTag(ctx, ref, tag, designPrefix, designBundleFilter)
+}
+
+// GetDesignAtSpecTag reads the design bundle at a `v<N>` spec tag.
+//
+// It exists because GetDesignAtTag next door parses its argument as a
+// design-REVISION tag (`v<N>-<M>`, the legacy per-design sequence) and rejects
+// anything else. A build only ever knows the spec tag, so wiring a build-time
+// consumer to the other method fails on every real build with "not a v<N>-<M>
+// tag" — which is exactly what happened to the roles ensure.
+func (s *artifactService) GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
+	if _, ok := parseRequirementsTag(tag); !ok {
+		return nil, fmt.Errorf("%w: %q is not a v<N> spec tag", ErrInvalidVersionTag, tag)
 	}
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {

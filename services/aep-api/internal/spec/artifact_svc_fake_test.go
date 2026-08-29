@@ -128,6 +128,15 @@ func (f *fakeArtifactSvc) GetDesignAtTag(ctx context.Context, orgID, projectID, 
 	return f.GetDesignAtTagFunc(ctx, orgID, projectID, tag)
 }
 
+// GetDesignAtSpecTag reads the design at a `v<N>` SPEC tag; the fake shares the
+// one hook, since nothing in these tests distinguishes the two tag shapes.
+func (f *fakeArtifactSvc) GetDesignAtSpecTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
+	if f.GetDesignAtTagFunc == nil {
+		panic("spec test: GetDesignAtSpecTag called but GetDesignAtTagFunc is not set")
+	}
+	return f.GetDesignAtTagFunc(ctx, orgID, projectID, tag)
+}
+
 func (f *fakeArtifactSvc) GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error) {
 	if f.GetDesignAtCommitFunc == nil {
 		panic("spec test: GetDesignAtCommit called but GetDesignAtCommitFunc is not set")
@@ -142,9 +151,17 @@ func (f *fakeArtifactSvc) StatusSnapshot(ctx context.Context, orgID, projectID s
 	return f.StatusSnapshotFunc(ctx, orgID, projectID)
 }
 
+func (f *fakeArtifactSvc) RequirementsFingerprintAt(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
 func (f *fakeArtifactSvc) ComponentCountAtTag(ctx context.Context, orgID, projectID, tag string) (int, error) {
 	if f.ComponentCountAtTagFunc == nil {
 		panic("spec test: ComponentCountAtTag called but ComponentCountAtTagFunc is not set")
 	}
 	return f.ComponentCountAtTagFunc(ctx, orgID, projectID, tag)
+}
+
+// SetDesignBaselineResolver is wiring, not behaviour — the fakes ignore it.
+func (f *fakeArtifactSvc) SetDesignBaselineResolver(func(ctx context.Context, orgID, projectID string) (string, error)) {
 }

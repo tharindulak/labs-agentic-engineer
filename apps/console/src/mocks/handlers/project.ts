@@ -11,11 +11,13 @@ import {
   uploadReferencesError,
   componentDeployments,
   componentOpenApi,
+  buildRunsForTag,
   projectBuildRuns,
   projectCycleBuilds,
   projectBuilds,
   projectComponents,
   projectDependencies,
+  projectDependencyReadiness,
   projectSectionError,
   projectSpecFiles,
   projectStatuses,
@@ -124,6 +126,13 @@ export const projectHandlers = [
   http.get("*/api/v1/projects/:projectName/design/dependencies", () =>
     respond((s) => projectDependencies(s)),
   ),
+  // Whether the platform holds real values for each external dependency in an
+  // environment — the Builds page's External resources section (ADR-0023).
+  // Environment-scoped on the wire; the mock ignores it, since the console only
+  // ever asks about development.
+  http.get("*/api/v1/projects/:projectName/dependencies/readiness", () =>
+    respond((s) => projectDependencyReadiness(s)),
+  ),
   // Re-collect an external connection's values (#395 follow-up). Values are
   // write-only on the real platform (secrets go to the secret manager and
   // never echo), so the mock just acknowledges.
@@ -170,8 +179,12 @@ export const projectHandlers = [
       // The verdict lives on the RUN, and its cycles are what the page reads the
       // report at — so an override has to replace the whole story, not patch a
       // field onto the project scenario's.
-      const runs = v ? validationRuns(v, validationAttempt()) : projectBuildRuns[s];
-      return { ...runs, tag: String(params.tag) };
+      const tag = String(params.tag);
+      // Keyed BY TAG: a run story stamped with another version's identity is a
+      // fixture that contradicts its own envelope.
+      return v
+        ? { ...validationRuns(v, validationAttempt()), tag }
+        : buildRunsForTag(s, tag);
     }),
   ),
   // A build session's fan-out. Derived from the cluster on the real server, so

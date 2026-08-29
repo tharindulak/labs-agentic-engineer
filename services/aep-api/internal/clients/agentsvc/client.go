@@ -168,6 +168,11 @@ type TurnRequest struct {
 	// rows on the get-conversation read — the composed model prompt never
 	// reaches a browser. Wire shape pinned by @aep/agent-stream's TurnRequest.
 	Journal *JournalBlock `json:"journal,omitempty"`
+	// Attachments are this turn's chat attachments (#428): conversation-scoped
+	// model content, bytes inline. Omitted when none, which keeps a turn
+	// without attachments byte-identical to one from before this channel
+	// existed.
+	Attachments []TurnAttachment `json:"attachments,omitempty"`
 	// WebSearch, when true, has the agents service register Anthropic's
 	// provider-executed web_search tool for this turn (external-dependency-
 	// discovery #252) — it lets the model verify a candidate external API/SDK
@@ -220,6 +225,30 @@ type MCPBlock struct {
 type JournalBlock struct {
 	Text   string         `json:"text"`
 	Author *JournalAuthor `json:"author,omitempty"`
+	// Attachments are the file NAMES that rode this message (#428) — never
+	// bytes. The display read replaces a user row's content with Text, so
+	// without these a reload would show the agent discussing a document that
+	// appears nowhere in the thread.
+	Attachments []string `json:"attachments,omitempty"`
+}
+
+// TurnAttachment is one chat attachment (console #428), carried INLINE.
+//
+// Inline rather than by path, which is the whole difference from
+// TurnSpec.References: a reference is stored and overlaid into the turn's
+// snapshot so it can be named by path, while an attachment is never written to
+// disk anywhere (ADR-0019) — so the bytes travel with the request. Wire shape
+// pinned by @aep/agent-stream's TurnAttachment.
+type TurnAttachment struct {
+	// Name is the original file name, and the DEDUPE KEY: the agents service
+	// drops an attachment whose name the conversation history already holds.
+	Name string `json:"name"`
+	// MediaType is what the MODEL reads it as — application/pdf, one of the
+	// four image types, or text/plain for every text format (those are the only
+	// document types the Anthropic provider maps).
+	MediaType string `json:"mediaType"`
+	// Data is base64 of the raw bytes.
+	Data string `json:"data"`
 }
 
 // JournalAuthor is the acting user in the console's author shape.

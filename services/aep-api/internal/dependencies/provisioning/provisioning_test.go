@@ -18,6 +18,7 @@ package provisioning
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -202,6 +203,41 @@ func (f *fakeRTCatalog) List(_ context.Context, _ string) ([]openchoreo.External
 		return nil, f.listErr
 	}
 	return f.defs, nil
+}
+
+func (f *fakeRTCatalog) Ensure(_ context.Context, _ string, rt *openchoreo.ResourceType) error {
+	if rt == nil {
+		return nil
+	}
+	def, ok := openchoreo.ExternalDefinitionFromRT(rt)
+	if !ok {
+		return nil
+	}
+	for i, existing := range f.defs {
+		if strings.EqualFold(existing.Name, def.Name) {
+			f.defs[i] = def
+			return nil
+		}
+	}
+	f.defs = append(f.defs, def)
+	return nil
+}
+
+func (f *fakeRTCatalog) Update(_ context.Context, _ string, rt *openchoreo.ResourceType) error {
+	if rt == nil {
+		return fmt.Errorf("fakeRTCatalog.Update: nil ResourceType")
+	}
+	def, ok := openchoreo.ExternalDefinitionFromRT(rt)
+	if !ok {
+		return fmt.Errorf("fakeRTCatalog.Update: not an external ResourceType")
+	}
+	for i, existing := range f.defs {
+		if strings.EqualFold(existing.Name, def.Name) {
+			f.defs[i] = def
+			return nil
+		}
+	}
+	return fmt.Errorf("fakeRTCatalog.Update: %s not found", def.Name)
 }
 
 func (f *fakeRTCatalog) Delete(_ context.Context, _, name string) error {
@@ -871,6 +907,73 @@ func TestDeprovisionProject_TearsDownResources(t *testing.T) {
 	}
 	if len(plat.deprovisioned) != 1 || plat.deprovisioned[0] != "orders-db" {
 		t.Fatalf("platform-resource dep must be deprovisioned, got %v", plat.deprovisioned)
+	}
+}
+
+// recordingValuesSaved captures the deploy-gate wake-up (ADR-0023).
+type recordingValuesSaved struct {
+	calls []string
+	err   error
+}
+
+func (r *recordingValuesSaved) ValuesSaved(_ context.Context, orgID, projectID string) error {
+	r.calls = append(r.calls, orgID+"/"+projectID)
+	return r.err
+}
+
+// TestSaveValues_WakesARunParkedOnTheDeployGate. A value save produces no
+// webhook, so this notification is the only prompt wake a parked run gets —
+// without it the run sits out its whole wait-poll interval after the developer
+// has already done the thing it was waiting for.
+func TestSaveValues_WakesARunParkedOnTheDeployGate(t *testing.T) {
+	notifier := &recordingValuesSaved{}
+	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, fakeDesign{comps: designWithDeps()},
+		&fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
+	svc.SetValuesSavedNotifier(notifier)
+
+	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
+		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err != nil {
+		t.Fatalf("SaveValues: %v", err)
+	}
+	if len(notifier.calls) != 1 || notifier.calls[0] != "org/proj" {
+		t.Fatalf("wake-ups = %v, want one for org/proj", notifier.calls)
+	}
+}
+
+// TestSaveValues_AFailedWakeUpDoesNotFailTheSave. The values are already
+// durable when the notification goes out, so reporting the wake-up's failure
+// would have the caller retry a write that already landed. The parked run's
+// wait-poll re-derives readiness on its own; the signal only makes it prompt.
+func TestSaveValues_AFailedWakeUpDoesNotFailTheSave(t *testing.T) {
+	notifier := &recordingValuesSaved{err: errors.New("temporal unreachable")}
+	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, fakeDesign{comps: designWithDeps()},
+		&fakeExtProv{}, &fakePlatProv{}, &fakeBindings{})
+	svc.SetValuesSavedNotifier(notifier)
+
+	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
+		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err != nil {
+		t.Fatalf("SaveValues must succeed despite a failed wake-up, got %v", err)
+	}
+}
+
+// TestSaveValues_DoesNotWakeARunWhenProvisioningFails. The wake-up asserts
+// "values landed", so it must not be sent for values that did not: a run woken
+// by a failed save re-reads readiness, finds the dependency still unset, and
+// parks straight back — burning a signal to learn nothing. The ordering is the
+// whole guarantee, and moving the notify above the provision check would still
+// pass the two tests either side of this one.
+func TestSaveValues_DoesNotWakeARunWhenProvisioningFails(t *testing.T) {
+	notifier := &recordingValuesSaved{}
+	svc := newTestService(newFakeIssues(nil), &fakeExecStore{}, fakeDesign{comps: designWithDeps()},
+		&fakeExtProv{err: errors.New("openchoreo unreachable")}, &fakePlatProv{}, &fakeBindings{})
+	svc.SetValuesSavedNotifier(notifier)
+
+	if err := svc.SaveValues(context.Background(), "org", "org", "proj", "stripe",
+		map[string]map[string]string{"development": {"api_key": "sk", "region": "us"}}); err == nil {
+		t.Fatal("SaveValues must fail when the provision fails")
+	}
+	if len(notifier.calls) != 0 {
+		t.Fatalf("wake-ups = %v, want none — the values never landed", notifier.calls)
 	}
 }
 

@@ -61,7 +61,7 @@ export function ComponentsList({
         bordered
         icon={<Boxes size={28} />}
         title="No components yet"
-        description="The published plan produces them — they appear here as agents build."
+        description="Components are the services and apps your design is made of — they appear as agents build them."
       />
     );
   }

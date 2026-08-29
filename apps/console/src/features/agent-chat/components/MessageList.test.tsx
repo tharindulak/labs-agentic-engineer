@@ -44,6 +44,47 @@ function renderFeed(messages: ChatMessage[], showWorkingTail = false) {
 
 afterEach(cleanup);
 
+// The transcript's opening line (#562/#528): the platform fired the kickoff, so
+// the user never typed this — the line's job is to show the agent working from
+// their own words rather than from a bare command.
+describe("MessageList — the kickoff line", () => {
+  it("shows the command and the idea beside it", () => {
+    renderFeed([
+      {
+        id: "u1",
+        role: "user",
+        content: "/start employees submit expense claims",
+        status: "completed",
+      },
+    ]);
+
+    expect(screen.getByText("/start")).toBeInTheDocument();
+    expect(
+      screen.getByText(/employees submit expense claims/),
+    ).toBeInTheDocument();
+  });
+
+  // Cropping is CSS, so the full text stays on the element for selection, copy
+  // and screen readers — and on `title` for a pointer.
+  it("keeps the whole idea reachable when it is cropped", () => {
+    const idea = "employees submit expense claims, ".repeat(20).trim();
+    renderFeed([
+      { id: "u1", role: "user", content: `/start ${idea}`, status: "completed" },
+    ]);
+
+    expect(screen.getByTitle(idea)).toBeInTheDocument();
+  });
+
+  it("leaves an ordinary message as plain text", () => {
+    renderFeed([
+      { id: "u1", role: "user", content: "tidy the requirements", status: "completed" },
+    ]);
+
+    expect(screen.queryByText("/start")).not.toBeInTheDocument();
+    expect(screen.getByText("tidy the requirements")).toBeInTheDocument();
+  });
+});
+
 describe("MessageList", () => {
   it("labels the current user's message 'You' and a teammate by name", () => {
     renderFeed([
@@ -77,5 +118,41 @@ describe("MessageList", () => {
       true,
     );
     expect(screen.getByTestId("working")).toBeInTheDocument();
+  });
+
+  // --- Chat attachments (#428) ---------------------------------------------
+
+  it("shows a chip per attachment on the sent message", () => {
+    renderFeed([
+      {
+        id: "m1",
+        role: "user",
+        content: "what is wrong here?",
+        status: "completed",
+        attachments: ["error.png", "rows.csv"],
+      },
+    ]);
+    const chips = screen.getByTestId("user-message-attachments");
+    expect(chips).toHaveTextContent("error.png");
+    expect(chips).toHaveTextContent("rows.csv");
+  });
+
+  it("renders no attachment row for a message without any", () => {
+    renderFeed([{ id: "m1", role: "user", content: "hello", status: "completed" }]);
+    expect(screen.queryByTestId("user-message-attachments")).not.toBeInTheDocument();
+  });
+
+  it("keeps the chips on a failed message, dimmed with its text", () => {
+    // The user still needs to see what they tried to send.
+    renderFeed([
+      {
+        id: "m1",
+        role: "user",
+        content: "look at this",
+        status: "failed",
+        attachments: ["error.png"],
+      },
+    ]);
+    expect(screen.getByTestId("user-message-attachments")).toHaveTextContent("error.png");
   });
 });
