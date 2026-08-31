@@ -58,6 +58,75 @@ export function buildCycles(cycles: RunCycleView[]): RunCycleView[] {
   );
 }
 
+/**
+ * Has any of this VERSION's work actually merged?
+ *
+ * `mergeSha` is the platform's single record of a merge — the contract is
+ * explicit that there is no "merged" verdict because *"a merge is recorded by
+ * the merge SHA, so a second spelling of it could disagree with the first"*.
+ *
+ * The tempting substitute is the task list: count the tasks whose
+ * `derivedStatus` is `merged`. It is wrong, and a deployed build proved it. That
+ * field is a TWO-VALUE vocabulary — the issue is open, or it is closed — so a
+ * cancelled run whose issues were closed without a pull request ever opening
+ * (`prNumber` 0, `mergeSha` empty) reads as fully "merged" while nothing
+ * whatsoever landed in the repo.
+ *
+ * Every run of the version, not just the newest, and deploying proved that
+ * too: a version whose coding cycle merged pull request #15 was later reworked
+ * by a `task` run that opened no cycle at all. A merge is a permanent fact
+ * about the repository — a later run cannot un-merge it — so asking only the
+ * newest run made merged code look unmerged.
+ *
+ * Validation cycles are excluded by `buildCycles`: a validation cycle's
+ * `mergeSha` is the commit it JUDGED, not one it produced.
+ */
+export function hasMergedWork(runs: MilestoneRunView[] | undefined): boolean {
+  return mergedCycle(runs) !== undefined;
+}
+
+/**
+ * The newest build session whose pull request MERGED, across the version's runs.
+ *
+ * This is the cycle that built something: `list-cycle-builds` answers empty for
+ * any cycle whose `mergeSha` is empty ("a cycle whose pull request has not
+ * merged has nothing to have built"), and the platform matches component builds
+ * by that SHA. Handing it the newest cycle instead — which is routinely a
+ * validation cycle, or a later coding cycle that never merged — asked the
+ * cluster about a commit that produced nothing, so the Build logs section sat
+ * on "No component builds were produced for this version" forever.
+ *
+ * Runs arrive newest-first and cycles oldest-first, so both are walked
+ * backwards to find the newest merge.
+ */
+export function mergedCycle(
+  runs: MilestoneRunView[] | undefined,
+): RunCycleView | undefined {
+  for (const run of runs ?? []) {
+    const merged = buildCycles(run.cycles ?? [])
+      .reverse()
+      .find((c) => Boolean(c.mergeSha));
+    if (merged) return merged;
+  }
+  return undefined;
+}
+
+/**
+ * Is a build session open right now — is there anything for the agent log to
+ * stream?
+ *
+ * NOT the build's status, which is what the "streaming" chip used to read. A
+ * run stays `in_progress` through everything that happens after its agent
+ * stops: the merge, the component builds, the deployment. The chip therefore
+ * kept claiming a live stream long after the coding agent had finished, which
+ * is exactly when there is nothing left to stream.
+ */
+export function isAgentStreaming(runs: MilestoneRunView[] | undefined): boolean {
+  const newest = (runs ?? [])[0];
+  if (!newest || isTerminalRun(newest.state)) return false;
+  return buildCycles(newest.cycles ?? []).some((c) => !c.endedAt);
+}
+
 export function isTerminalRun(state: string): boolean {
   return TERMINAL_RUN_STATES.has(state);
 }

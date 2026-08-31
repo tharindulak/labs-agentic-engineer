@@ -21,6 +21,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ListTodo,
   X as XIcon,
 } from "@wso2/oxygen-ui-icons-react";
 import type { ReactNode } from "react";
@@ -147,6 +148,38 @@ function StepLine({ msg, showFile }: { msg: ToolMessage; showFile: boolean }) {
           {msg.errorText}
         </Typography>
       )}
+    </Stack>
+  );
+}
+
+/**
+ * A declare_plan row (#576, ADR-0025): the agent said what it is ABOUT to
+ * write. One plain rail row — the plan's real rendering is the spec rail's
+ * checklist; this row only keeps the chat's activity record complete, the way
+ * every other tool call leaves a step.
+ */
+export function PlanStep({ added, grew }: { added: number; grew: boolean }) {
+  return (
+    <Stack
+      data-testid="plan-step"
+      direction="row"
+      spacing={1}
+      sx={{ alignItems: "flex-start", py: 0.25, minWidth: 0 }}
+    >
+      <GlyphCell>
+        <ListTodo size={14} />
+      </GlyphCell>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ alignItems: "center", minWidth: 0, minHeight: STEP_ROW_HEIGHT }}
+      >
+        <Typography variant="caption" color="text.secondary">
+          {grew
+            ? `Planned ${added} more ${added === 1 ? "document" : "documents"}`
+            : `Planned ${added} ${added === 1 ? "document" : "documents"}`}
+        </Typography>
+      </Stack>
     </Stack>
   );
 }

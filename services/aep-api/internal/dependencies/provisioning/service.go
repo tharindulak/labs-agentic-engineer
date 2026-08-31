@@ -79,6 +79,13 @@ type Service struct {
 	// wants — the alternative is failing every build for a feature it cannot
 	// use.
 	roles RolesEnsurer
+
+	// markers is the CRT marker catalog the end-user-auth overlay keys on.
+	// Nil skips overlay.
+	markers ResourceMarkerCatalog
+	// securityJSON reads security.json at HEAD (empty tag) or a spec tag.
+	// Nil skips overlay.
+	securityJSON SecurityJSONReader
 }
 
 // OrgPublishMarker persists a provider component's deliberate publish decision.
@@ -121,6 +128,12 @@ type Deps struct {
 	OrgResourceDocs   OrgResourceDocs
 	// Roles is the build-time roles ensure. Nil skips the roles gate.
 	Roles RolesEnsurer
+	// Markers is the CRT marker catalog the end-user-auth overlay keys on.
+	// Nil skips overlay.
+	Markers ResourceMarkerCatalog
+	// SecurityJSON reads security.json at HEAD (empty tag) or a spec tag.
+	// Nil skips overlay.
+	SecurityJSON SecurityJSONReader
 }
 
 // NewService wires the provisioning service from its collaborator set.
@@ -143,6 +156,8 @@ func NewService(d Deps) *Service {
 		roles:             d.Roles,
 		orgSecrets:        d.OrgSecrets,
 		orgResourceDocs:   d.OrgResourceDocs,
+		markers:           d.Markers,
+		securityJSON:      d.SecurityJSON,
 	}
 }
 

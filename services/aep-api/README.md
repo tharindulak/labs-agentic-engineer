@@ -60,7 +60,7 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
 | **projects** | OpenChoreo `Project`/`Component` write-authority + the whole-pipeline Stage aggregate read | flat-root | [→](internal/projects/README.md) |
 | **sourcecontrol** | repos / issues / webhooks over a provider-neutral `Host`, + the bare-mirror workspace | flat-root | [→](internal/sourcecontrol/README.md) |
 | **ops** | incident RCA reports, correlated live against Task executions | flat-root | [→](internal/ops/README.md) |
-| **identity** | the SHARED identity-provider Roles and Test users a build provisions from `roles.json` | flat-root | [→](internal/identity/README.md) |
+| **identity** | the SHARED identity-provider Roles and Test users a build provisions from `security.json` | flat-root | [→](internal/identity/README.md) |
 
 ## The kernel, the edge, and the rest
 
@@ -72,7 +72,8 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
   wires every domain together, mounts the HTTP surfaces, and runs the deny-by-default
   **tenant gate**. It is the only place domains meet.
 - **`clients/`** — outbound adapters to external systems (`openchoreo`, `thundersvc`,
-  `secretmanagersvc`, `oauth`, `oidc`, `observability`).
+  `thunderapp`, `secretmanagersvc`, `oauth`, `oidc`, `observability`).
+  `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
 - **supporting:** `app` (public composition **seam** — `Run(Options)`), `config`,
   `migrate` (ordered schema steps), `gen`/`igen` (generated contract types),
   `arch` (the executable rules), `seed`.

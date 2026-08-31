@@ -121,6 +121,31 @@ func TestRolesGate_MintsOpenThenClosesWithTheOutcome(t *testing.T) {
 	}
 }
 
+// A refusal closing comment names the live security document so a human can
+// rename the colliding username where they authored it.
+func TestRolesGate_RefusalClosingCommentNamesSecurityJSON(t *testing.T) {
+	roles := &fakeRolesEnsurer{
+		declared: true,
+		outcome: RolesEnsureOutcome{
+			Summary:  "- Test users refused: jsmith",
+			Refusals: true,
+		},
+	}
+	issues := newFakeIssues(nil)
+
+	if f := newRolesGateService(roles, issues).ensureRolesGate(
+		context.Background(), "acme", "workouts", "v1", 7); f != nil {
+		t.Fatalf("unexpected failure: %+v", f)
+	}
+	var closing string
+	for _, c := range issues.closed {
+		closing = c
+	}
+	if !strings.Contains(closing, "specs/design/security.json") {
+		t.Fatalf("refusal copy should name security.json: %q", closing)
+	}
+}
+
 // A build with no milestone must fail rather than file the ticket outside one:
 // the agent's lookup is label-within-milestone, so an unmilestoned gate is
 // invisible to it, and an unfiltered query answers with another version's
@@ -201,6 +226,9 @@ func TestRolesGate_PublishesEveryLoginInItsOwnComment(t *testing.T) {
 	// list of real people's logins.
 	if !strings.Contains(comment, "disposable test accounts") {
 		t.Errorf("credentials were published with no warning:\n%s", comment)
+	}
+	if !strings.Contains(comment, "specs/design/security.json") {
+		t.Errorf("published copy should name security.json:\n%s", comment)
 	}
 	// Published BEFORE the close, and the close itself carries no password.
 	if len(issues.closed) != 1 {

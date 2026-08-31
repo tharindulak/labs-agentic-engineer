@@ -59,9 +59,13 @@ function writeStoredLayout(layoutKey: string | undefined, layout: CustomLayout |
 export default function CellDiagramInner({
   source,
   layoutKey,
+  compact,
+  readOnly,
 }: {
   source: string;
   layoutKey?: string | undefined;
+  compact?: boolean | undefined;
+  readOnly?: boolean | undefined;
 }) {
   // Follow the app's active color scheme so the diagram flips with the
   // ColorSchemeToggle. `useColorScheme` tracks the toggle (including its
@@ -102,6 +106,8 @@ export default function CellDiagramInner({
       theme={theme}
       customLayout={activeLayout}
       onCustomLayoutChange={handleLayoutChange}
+      {...(compact === undefined ? {} : { compact })}
+      {...(readOnly === undefined ? {} : { readOnly })}
       style={{ width: "100%", height: "100%" }}
     />
   );

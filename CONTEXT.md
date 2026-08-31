@@ -222,23 +222,14 @@ _Avoid_: reviving `callerIdentity` as a design.json key — it no longer parses.
 
 ## Security & access (`services/aep-api`)
 
-**Security architecture**:
-The prose half of a project's security design (`specs/design/security.md`) — how
-a caller's role is resolved from a token, and the policy narrative behind the
-access rules. It names no Role and declares no Test user: the Roles document
-owns both, so the two documents cannot contradict each other.
-_Avoid_: security spec, auth doc; and never restate a fact `design.json` already
-holds (the Thunder application's dependency name, its scopes, and which
-components sit on each side of sign-in are all read from there).
-
-**Roles document**:
-The structured half of a project's security design (`specs/design/roles.json`) —
-which Roles this project uses, what each may do **within this project**, and its
-Test users. A design artifact like any other: authored during design, versioned
-into the project's `v<N>` tag, read at build time by the platform alone. It
-DECLARES Roles rather than owning them; only the permissions it grants them are
-this project's.
-_Avoid_: security.json, access model, permissions file, RBAC config (it is not
+**`security.json`**:
+A project's security design (`specs/design/security.json`) — which Roles this
+project uses, what each may do **within this project**, its Test users, and the
+Thunder application client the platform registers for sign-in. Authored during
+design, versioned into the project's `v<N>` tag. It DECLARES Roles rather than
+owning them; only the permissions it grants them are this project's.
+_Avoid_: Roles document, roles.json, Security document, Security architecture,
+security.md, access model, permissions file, RBAC config (it is not
 enforcement — it is the declaration the platform provisions from and the coding
 agent wires to).
 
@@ -247,7 +238,7 @@ A named group of people on the Platform IdP, reaching an app as a `groups` claim
 A Role is **shared, not project-scoped**: its scope is whatever the IdP's scope
 is — cluster-wide while one IdP serves the cluster, narrower once the IdP is.
 Two projects naming the same Role mean the same Role, and a person who holds it
-holds it everywhere. What a Role may DO is per-project (the Roles document); the
+holds it everywhere. What a Role may DO is per-project (`security.json`); the
 Role itself is not — so a Role OUTLIVES the projects that declare it: dropping it
 from a design, or deleting the project, leaves the Role standing.
 _Avoid_: group (the IdP's word for what a Role is; use Role in the domain),

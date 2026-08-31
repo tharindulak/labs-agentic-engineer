@@ -208,7 +208,7 @@ func mcpTools() []mcpTool {
 				"`name`, its `description`, `platformCreated` (true when this platform created it — " +
 				"only those can be given test users) and `memberCount`. Read-only: you never author " +
 				"these, and nothing you do creates one. The platform creates the roles your " +
-				"`specs/design/roles.json` declares when the user clicks Build.",
+				"`specs/design/security.json` declares when the user clicks Build.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{

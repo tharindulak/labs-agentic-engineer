@@ -35,6 +35,8 @@ function input(over: Partial<RailInput> = {}): RailInput {
     designOutdated: false,
     assumptions: 0,
     openQuestions: 0,
+    planEntries: [],
+    planWreckage: false,
     ...over,
   };
 }
@@ -348,5 +350,92 @@ describe("reasonCount", () => {
 
   it("is nothing for a settled section", () => {
     expect(reasonCount(of(railSections(input()), "requirements").reasons)).toBe(0);
+  });
+});
+
+// The declared plan (#576): the rail's checklist state — the count, the
+// sharper active attribution, and the wreckage a dead turn leaves.
+describe("the declared plan", () => {
+  const entry = (
+    path: string,
+    status: "planned" | "writing" | "done" | "error",
+    section: RailSection["id"] | null = "design",
+  ) => ({ path, status, section });
+
+  it("counts per section — done of total, only where the plan holds entries", () => {
+    const sections = railSections(
+      input({
+        agentWorking: true,
+        planEntries: [
+          entry("specs/design/design.cell", "done"),
+          entry("specs/design/design.md", "writing"),
+          entry("specs/design/components/a/design.json", "planned"),
+          entry("specs/validation/validation-criteria.json", "planned", "validation"),
+        ],
+      }),
+    );
+    expect(of(sections, "design").progress).toEqual({ done: 1, total: 3 });
+    expect(of(sections, "validation").progress).toEqual({ done: 0, total: 1 });
+    expect(of(sections, "requirements").progress).toBeUndefined();
+  });
+
+  it("the writing entry names the active section, outranking the flow token", () => {
+    const sections = railSections(
+      input({
+        agentWorking: true,
+        agentFlow: "design",
+        planEntries: [
+          entry("specs/validation/validation-criteria.json", "writing", "validation"),
+        ],
+      }),
+    );
+    expect(of(sections, "validation").state).toBe("active");
+    expect(of(sections, "design").state).toBe("ready");
+  });
+
+  it("wreckage is an attention reason pointing at the re-run", () => {
+    const sections = railSections(
+      input({
+        planWreckage: true,
+        planEntries: [
+          entry("specs/design/design.cell", "done"),
+          entry("specs/design/design.md", "error"),
+          entry("specs/design/components/a/design.json", "planned"),
+        ],
+      }),
+    );
+    const design = of(sections, "design");
+    expect(design.state).toBe("attention");
+    expect(design.reasons[0]).toMatchObject({
+      key: "plan-unfinished",
+      count: 2,
+      action: "update-design",
+    });
+  });
+
+  it("wreckage stands even on a section with nothing committed — the ghosts ARE the subject", () => {
+    const sections = railSections(
+      input({
+        hasValidation: false,
+        planWreckage: true,
+        planEntries: [
+          entry("specs/validation/validation-criteria.json", "planned", "validation"),
+        ],
+      }),
+    );
+    expect(of(sections, "validation").state).toBe("attention");
+    expect(of(sections, "validation").reasons).toHaveLength(1);
+  });
+
+  it("a plan whose entries all landed adds a full count and no reason", () => {
+    const sections = railSections(
+      input({
+        agentWorking: true,
+        agentFlow: "design",
+        planEntries: [entry("specs/design/design.cell", "done")],
+      }),
+    );
+    expect(of(sections, "design").progress).toEqual({ done: 1, total: 1 });
+    expect(of(sections, "design").reasons).toHaveLength(0);
   });
 });

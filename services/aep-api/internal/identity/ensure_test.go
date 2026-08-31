@@ -31,7 +31,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/platform/rolesspec"
+	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
 const (
@@ -45,7 +45,7 @@ const (
 // userFixture is one authored `testUsers[]` entry.
 type userFixture struct{ username, role string }
 
-// rolesJSON renders a minimal roles.json that the real rolesspec schema
+// rolesJSON renders a minimal security.json that the real securityspec schema
 // accepts. Building it rather than pasting literals keeps every case one line
 // of intent, and keeps the fixtures honest: a schema change breaks these tests
 // instead of letting them ensure a document the platform would reject.
@@ -69,6 +69,7 @@ func rolesJSON(t *testing.T, coldStartRole string, roles []string, users ...user
 		"publicComponents": []string{},
 		"roles":            roleEntries,
 		"testUsers":        userEntries,
+		"thunder":          map[string]any{"name": "Expense Tracker", "type": "browser"},
 	}
 	if coldStartRole != "" {
 		doc["coldStartRole"] = coldStartRole
@@ -80,8 +81,8 @@ func rolesJSON(t *testing.T, coldStartRole string, roles []string, users ...user
 	// A fixture the platform's own parser rejects would make every assertion
 	// below vacuous, so it is checked here rather than discovered as a passing
 	// "declared but errored" case.
-	if _, err := rolesspec.Parse(raw); err != nil {
-		t.Fatalf("fixture is not a valid roles.json: %v", err)
+	if _, err := securityspec.Parse(raw); err != nil {
+		t.Fatalf("fixture is not a valid security.json: %v", err)
 	}
 	return string(raw)
 }
@@ -97,7 +98,7 @@ type harness struct {
 func newHarness(doc string) *harness {
 	h := &harness{dir: newFakeDirectory(), store: newFakeStore(), design: &fakeDesign{bundle: map[string]string{}}}
 	if doc != "" {
-		h.design.bundle[rolesspec.BundleKey] = doc
+		h.design.bundle[securityspec.BundleKey] = doc
 	}
 	h.svc = NewEnsureService(h.dir, h.store, h.design)
 	return h
@@ -117,7 +118,7 @@ func (h *harness) run(t *testing.T) Result {
 }
 
 // setDoc swaps in the next version of the design, for the rebuild cases.
-func (h *harness) setDoc(doc string) { h.design.bundle[rolesspec.BundleKey] = doc }
+func (h *harness) setDoc(doc string) { h.design.bundle[securityspec.BundleKey] = doc }
 
 func contains(names []string, want string) bool {
 	for _, n := range names {
@@ -136,8 +137,8 @@ func contains(names []string, want string) bool {
 func TestEnsureForTagIsNotDeclaredWhenTheDesignCarriesNoRolesDocument(t *testing.T) {
 	cases := map[string]map[string]string{
 		"key absent":     {"design.md": "# design"},
-		"key empty":      {rolesspec.BundleKey: ""},
-		"key whitespace": {rolesspec.BundleKey: "  \n\t "},
+		"key empty":      {securityspec.BundleKey: ""},
+		"key whitespace": {securityspec.BundleKey: "  \n\t "},
 	}
 	for name, bundle := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -164,7 +165,7 @@ func TestEnsureForTagIsNotDeclaredWhenTheDesignCarriesNoRolesDocument(t *testing
 	}
 }
 
-// A roles.json that is present but broken is declared AND an error. The split
+// A security.json that is present but broken is declared AND an error. The split
 // is load-bearing: the caller holds dispatch behind a gate only when the design
 // declares roles, so folding these together would let a broken document ship.
 func TestEnsureForTagReportsDeclaredWhenTheRolesDocumentDoesNotParse(t *testing.T) {
@@ -173,7 +174,8 @@ func TestEnsureForTagReportsDeclaredWhenTheRolesDocumentDoesNotParse(t *testing.
 		"schema violation": `{"version": 2, "coldStartRole": null, "publicComponents": [], "roles": [], "testUsers": []}`,
 		"undeclared coldStart": rolesJSONRaw(`{"version":1,"coldStartRole":"Nobody","publicComponents":[],` +
 			`"roles":[{"name":"Viewer","description":"d","stories":[1],"grantedBy":"g",` +
-			`"permissions":[{"component":"api","actions":["read"]}]}],"testUsers":[]}`),
+			`"permissions":[{"component":"api","actions":["read"]}]}],"testUsers":[],` +
+			`"thunder":{"name":"Expense Tracker","type":"browser"}}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(doc)
@@ -183,10 +185,10 @@ func TestEnsureForTagReportsDeclaredWhenTheRolesDocumentDoesNotParse(t *testing.
 				t.Fatalf("err = nil, want a parse refusal")
 			}
 			if !declared {
-				t.Fatalf("declared = false — the caller would then NOT hold the build for a broken roles.json")
+				t.Fatalf("declared = false — the caller would then NOT hold the build for a broken security.json")
 			}
-			if !strings.Contains(err.Error(), rolesspec.Path) {
-				t.Fatalf("error %q does not name %s", err, rolesspec.Path)
+			if !strings.Contains(err.Error(), securityspec.Path) {
+				t.Fatalf("error %q does not name %s", err, securityspec.Path)
 			}
 			if len(h.dir.writes()) != 0 {
 				t.Fatalf("directory writes = %v, want none for a document that never parsed", h.dir.writes())

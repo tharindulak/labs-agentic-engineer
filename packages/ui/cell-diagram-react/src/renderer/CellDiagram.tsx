@@ -45,6 +45,13 @@ export interface CellDiagramProps {
    */
   customLayout?: CustomLayout | null;
   onCustomLayoutChange?: (layout: CustomLayout) => void;
+  /**
+   * Fit the graph for an embed that hides the floating chrome (a summary
+   * panel), rather than reserving room for controls that are not shown.
+   */
+  compact?: boolean;
+  /** A diagram to look at, not to operate — see `DiagramCanvasProps.readOnly`. */
+  readOnly?: boolean;
 }
 
 export function CellDiagram({
@@ -56,7 +63,9 @@ export function CellDiagram({
   theme = "light",
   tolerant,
   customLayout,
-  onCustomLayoutChange
+  onCustomLayoutChange,
+  compact,
+  readOnly
 }: CellDiagramProps) {
   const compiled = useMemo(
     () => (source !== undefined ? compileProject(source, { tolerant }) : null),
@@ -79,6 +88,8 @@ export function CellDiagram({
         source={source ?? ""}
         customLayout={customLayout}
         onCustomLayoutChange={onCustomLayoutChange}
+        compact={compact}
+        readOnly={readOnly}
       />
     </div>
   );

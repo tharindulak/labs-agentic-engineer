@@ -17,7 +17,7 @@
  */
 
 export { ValidationView } from "./ValidationView.js";
-export type { ValidationViewProps } from "./ValidationView.js";
+export type { LiveStatuses, ValidationViewProps } from "./ValidationView.js";
 export { parseValidationCriteria } from "./parse.js";
 export type {
   Criterion,
@@ -37,7 +37,15 @@ export type {
 export {
   countOf,
   CRITERION_STATE_LABEL,
+  METHOD_COLOR,
+  METHOD_FALLBACK_COLOR,
+  METHOD_LABEL,
+  tallyCriterionMethods,
   tallyCriterionStates,
   uncoveredCount,
 } from "./counts.js";
-export type { CriterionStateCount, CriterionTally } from "./counts.js";
+export type {
+  CriterionMethodCount,
+  CriterionStateCount,
+  CriterionTally,
+} from "./counts.js";

@@ -23,7 +23,7 @@
 // (docs/design/agents-generation-migration.md §8): the agent's author-time write
 // gate and the BFF's save gate read the SAME bytes. This package exists so a
 // second gated artifact does not mean a second copy of the interpreter; each
-// consuming package (designspec, rolesspec) vendors its own schema and calls in
+// consuming package (designspec, securityspec) vendors its own schema and calls in
 // here.
 //
 // It supports exactly the keywords those artifacts use, and no more — an
@@ -53,6 +53,7 @@ type Schema struct {
 	// against the decoded JSON value.
 	Const     json.RawMessage `json:"const"`
 	MinLength *int            `json:"minLength"`
+	MaxLength *int            `json:"maxLength"`
 	MinItems  *int            `json:"minItems"`
 	Items     *Schema         `json:"items"`
 	// AnyOf is how a nullable or union-typed field renders (z.string().nullable()
@@ -75,6 +76,7 @@ var SupportedKeywords = map[string]bool{
 	"enum":                 true,
 	"const":                true,
 	"minLength":            true,
+	"maxLength":            true,
 	"minItems":             true,
 	"items":                true,
 	"anyOf":                true,
@@ -221,6 +223,9 @@ func validateString(value any, s *Schema, path string) []string {
 	}
 	if s.MinLength != nil && len(str) < *s.MinLength {
 		return []string{at(path) + fmt.Sprintf("must be at least %d characters", *s.MinLength)}
+	}
+	if s.MaxLength != nil && len(str) > *s.MaxLength {
+		return []string{at(path) + fmt.Sprintf("must be at most %d characters", *s.MaxLength)}
 	}
 	if len(s.Enum) > 0 && !enumContains(s.Enum, str) {
 		return []string{at(path) + fmt.Sprintf("%q is not an allowed value", str)}

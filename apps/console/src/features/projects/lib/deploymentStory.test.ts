@@ -85,6 +85,18 @@ describe("validationStage", () => {
     expect(s.note).toContain("no validation criteria");
   });
 
+  it("treats cancelled as settled, with a note that does not blame missing criteria", () => {
+    const s = validationStage("cancelled");
+    // Settled, not pending: `active` would pulse on the rail forever for a run
+    // nothing is going to finish.
+    expect(s.state).toBe("done");
+    expect(s.fact).toBe("validation cancelled");
+    expect(s.note).toContain("cancelled");
+    // It shares `skipped`'s neutral tone, so the tone-derived sentence would claim
+    // the version had no criteria. It had them; nobody ran them.
+    expect(s.note).not.toContain("no validation criteria");
+  });
+
   it("carries the verdict label as the stage fact", () => {
     expect(validationStage("passed").fact).toBe("validated");
     expect(validationStage("none").fact).toBeUndefined();
@@ -118,5 +130,20 @@ describe("productionStage", () => {
   it("waits while validation is still failing or running", () => {
     const s = productionStage([], deploy({ validation: "running" }), 3);
     expect(s.state).toBe("waiting");
+  });
+
+  it("waits while a verdict is still EXPECTED, not only while one is failing", () => {
+    // `none` is pending. This stage said "Ready to promote" through the window
+    // between the dev deployment going green and the validation cycle starting —
+    // directly contradicting the validation stage above it, which read "waiting".
+    const s = productionStage([], deploy({ validation: "none" }), 3);
+    expect(s.state).toBe("waiting");
+    expect(s.note).not.toContain("Ready to promote");
+  });
+
+  it("opens once a person has cancelled the judging — their call to make", () => {
+    const s = productionStage([], deploy({ validation: "cancelled" }), 3);
+    expect(s.state).toBe("attention");
+    expect(s.note).toContain("Ready to promote");
   });
 });

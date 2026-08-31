@@ -41,7 +41,7 @@ import { buildFileTools } from "../src/agents/main/tools/files.js";
 
 const FILES: ReadonlyArray<readonly [string, string]> = [
   ["specs/design/design.md", "# Design\n"],
-  ["specs/design/security.md", "# Security\n"],
+  ["specs/design/notes.md", "# Notes\n"],
   ["specs/design/components/web/wireframes.dsl", "screen Home\n"],
 ];
 

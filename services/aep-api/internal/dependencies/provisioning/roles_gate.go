@@ -42,7 +42,7 @@ package provisioning
 // provisioning.
 //
 // **What failure does.** Nothing a coding agent does depends on these existing:
-// it writes role-matching code from `roles.json`, not from live directory state.
+// it writes role-matching code from `security.json`, not from live directory state.
 // The gate earns its keep when the ensure FAILS — if the IdP is down and the
 // roles never appear, a full coding → build → deploy → validate cycle would end
 // in a meaningless verdict, because validation cannot sign in.
@@ -246,7 +246,7 @@ func rolesGateClosingComment(outcome RolesEnsureOutcome) string {
 		b.WriteString("\n\nA refusal is not a failure — the build continues — but it needs a " +
 			"human. The platform modifies only accounts it created, so a username that " +
 			"already belongs to somebody else is left untouched rather than adopted and " +
-			"password-reset. Rename it in `specs/design/roles.json`, or let the platform " +
+			"password-reset. Rename it in `specs/design/security.json`, or let the platform " +
 			"supply the name.")
 	}
 	return b.String()
@@ -306,7 +306,7 @@ func redactPasswords(msg string, creds []RolesCredential) string {
 // the marker, then a table whose columns and cold-start values SKILL.md
 // mirrors, then prose saying what these accounts are.
 //
-// No escaping: a username is `[a-z0-9][a-z0-9._-]*` (rolesspec) and a generated
+// No escaping: a username is `[a-z0-9][a-z0-9._-]*` (securityspec) and a generated
 // password is drawn from an alphabet that excludes the backtick and the pipe, so
 // neither can break out of its cell. The identity domain's
 // TestGeneratedPasswordCarriesNoMarkdownDelimiter pins the password half.
@@ -336,7 +336,7 @@ func renderTestUserLogins(creds []RolesCredential) string {
 		"The validation agent signs in as one to judge a role-gated acceptance criterion, and it " +
 		"reads these credentials from this comment. They hold nothing but this project's own " +
 		"application roles. Never put a real person's username in " +
-		"`specs/design/roles.json` — the platform refuses to touch an account it did not create, " +
+		"`specs/design/security.json` — the platform refuses to touch an account it did not create, " +
 		"so that produces a role with no working login rather than a password reset.\n\n" +
 		"The **cold start** account is the one a caller holds before anyone grants them a role; " +
 		"it answers a request that names no role.")

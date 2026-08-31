@@ -21,7 +21,7 @@ package app
 // Three seams, each in one direction:
 //
 //	thundersvc.Client      → identity.Directory   (the IdP admin surface)
-//	spec.ArtifactService   → identity.DesignReader (roles.json at a tag)
+//	spec.ArtifactService   → identity.DesignReader (security.json at a tag)
 //	identity.EnsureService → provisioning.RolesEnsurer (the build gate's driver)
 //	identity.CatalogService → mcpdiscovery.RoleCatalogLister (the design-time
 //	                                                          `list_roles` tool)
@@ -125,7 +125,7 @@ func (d thunderDirectory) DeleteUser(ctx context.Context, userID string) error {
 // -- the design read ----------------------------------------------------------
 
 // identityDesignReader gives the ensure the design bundle at a spec tag, which
-// is where it finds `roles.json`. Reading at the TAG rather than at HEAD is the
+// is where it finds `security.json`. Reading at the TAG rather than at HEAD is the
 // point: the build provisions what the version it is building declares, not
 // what somebody has edited since.
 //

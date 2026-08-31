@@ -56,6 +56,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | `Deployer` · `DeploymentReader` | offers | `delivery/run` — promote a cycle's built components and read back whether they are serving. The supervisor owns the ORDER and the verdict; this domain owns the OpenChoreo writes, which is what keeps a cluster client out of the run loop |
 | `BindingConverger` (`Converge`) | offers | the config slice — an env-var edit pushes onto the live binding through the deploy path rather than patching a field of it, so the two can never write different desired states onto one object |
 | `ComponentEnvVarReader` · `RuntimeFileProvider` | needs | the config slice and `dependencies/runtimeconfig` — the two projections whose values ride the binding's workload overrides. Both are declared consumer-side and both distinguish "no values" from "cannot compute yet": an unready projection leaves its field UNMANAGED rather than writing an empty one over the user's values |
+| CRT catalog · binding patcher · `ThunderApplicationReader` | needs | after OC Ready, a web-app whose platform-resource CRT carries `ConsumerURLEnvConfig` stays pending until the ThunderApplication CR has the SPA callback. Wired via `SetResourceCatalog` / `SetResourceClient` / `SetThunderApplicationReader`. Any nil (or a nil store) skips the wait, so OC-only `DeploymentState` tests stay green. Service components never enter it. This domain consumes `ThunderApplicationView`; it does not GET Kubernetes |
 | `OrgPublisher` | needs | `organization` — per-org Thunder publisher provisioning + the IDP profile a protected API's JWT validation is pinned to. Best-effort: a failure composes an unpinned trait rather than failing a version's deploy |
 | `ProjectLister` | needs | `sourcecontrol`, at the root — every project the platform tracks, for the converge sweep. The git-repository index rather than the executions table, because the run loop mints no execution rows and a sweep reading those saw nothing on that rail |
 | `Service` · `ComponentService` · `ConfigService` | offers | the edge (the 14 public ops) |
@@ -93,6 +94,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   `internal` or the gateway is not admitted by the component's NetworkPolicy (it authenticates, then 503s).
   The address rides the binding's env field and is overlaid ONLY when that field is already managed —
   merging into an unmanaged (nil) one would replace the user's whole config with the platform's variable.
+- **OpenChoreo Ready is not deployed for a Thunder SPA.** A web-application with a platform-resource whose CRT carries `ConsumerURLEnvConfig` stays pending until `ThunderApplication.spec.redirectUris` equals the SPA callback and that generation is ready (`status.ready` and `observedGeneration >= generation`). Failed and Undeploy skip the wait; a patch or CR GET error is returned for activity retry, not invented as Failed. `FilesForComponent` is a different seam — this wait does not grade the callback onto env-config.js.
 - **Deploy is DRIVEN, never inferred.** Components carry `autoDeploy: false`, so nothing promotes a release
   except a call to `Deploy`. That is what lets the run supervisor place validation after a version is
   genuinely serving — see [ADR-0017](../../../../docs/decisions/ADR-0017-the-platform-owns-deploy.md).
@@ -147,6 +149,16 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   exactly one failure class, so no tally or recency heuristic is needed. Every other terminal reason keeps
   the Build card as the catch-all. `deploy.validation` itself is the run row's VERDICT column; the report
   and the per-cycle detail behind it live on the version's run story (list-build-runs).
+- **`deploy.validation = none` means a verdict is EXPECTED; `cancelled` means one is not.** `none` is
+  PENDING — a run is live, or a dev run filed the version's validation task and the reconcile sweep has
+  not started judging it yet — so a consumer must not read it as "there is nothing to wait for". That is
+  what `skipped` and `inconclusive` say, and reading `none` that way is what offered production a version
+  nothing had checked. The one no-verdict state that IS settled is `cancelled`: somebody stopped the
+  judging, so nothing answers until they re-ask. Every other route to no verdict — a failed increment, an
+  agent that died — stays `none`, because refusing an unjudged version is the safe answer when nobody
+  chose otherwise. The derivation is gated on the run's KIND (`delivery.RunValidates`), never its state
+  alone: the selector feeding it falls back to the DEV run, and a cancelled dev run is an ABANDONED
+  INCREMENT, so the ungated form would report an abandoned version as having nothing left to wait for.
 - **A project delete takes its run SUPERVISORS down before its run ROWS.** Purging the rows does not stop
   the workflows that write them: nothing else ends a run workflow, its milestone poll retries unbounded
   against a repository the same delete removes, and its id is keyed on (org, project, milestone) alone —

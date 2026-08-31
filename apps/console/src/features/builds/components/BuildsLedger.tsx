@@ -39,9 +39,11 @@ import { StatusChip } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { useProjectStatus } from "../../projects/api/queries";
 import { useBuilds } from "../api/queries";
+import { useTicker } from "../hooks/useTicker";
 import { runStamp } from "../lib/format";
 import {
   isAwaitingValues,
+  isDurationOpen,
   ledgerDuration,
   ledgerStatus,
   milestoneLabel,
@@ -129,6 +131,10 @@ export function BuildsLedger({ projectName }: { projectName: string }) {
   // page, one click away, where the read is scoped to begin with.
   const status = useProjectStatus(projectName);
   const deploy: DeployStage | undefined = status.data?.deploy;
+
+  // A running row's Duration counts against `Date.now()`; without a clock of
+  // its own the column would freeze at whatever it read on first paint.
+  useTicker((builds.data ?? []).some(isDurationOpen));
 
   const rows = useMemo(
     () => (builds.data ?? []).filter((b) => matchesFilter(b, filter, deploy)),

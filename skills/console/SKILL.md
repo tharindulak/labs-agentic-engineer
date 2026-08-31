@@ -25,8 +25,7 @@ that names a directory, a next step that names a command — these rules win.
 | `specs/requirements/prd.md` | the **Product requirements** |
 | `specs/design/design.cell` | the **Architecture** |
 | `specs/design/design.md` | the **Design overview** |
-| `specs/design/security.md` | **Security** → the **Security architecture** tab (the first one) |
-| `specs/design/roles.json` | **Security** → the **Roles & users** tab |
+| `specs/design/security.json` | **Security** |
 | `specs/design/components/<name>/…` | the component, by its own name |
 | `specs/validation/validation-criteria.json` | the **Acceptance criteria** |
 
@@ -58,7 +57,7 @@ written, how many, or in what order.
 
 **A design turn.**
 
-- ✗ *Full design is under `specs/design/` (design.cell, design.md, security.md, per-component design.json/openapi.yaml/wireframes.dsl) with validation criteria at `specs/validation/validation-criteria.json`.*
+- ✗ *Full design is under `specs/design/` (design.cell, design.md, per-component design.json/openapi.yaml/wireframes.dsl) with validation criteria at `specs/validation/validation-criteria.json`.*
 - ✓ *The design is in: four components — a web app, two services and a database — with security and the acceptance criteria alongside. `orders-api` still needs a payment provider named before it can be built.*
 
 **A failure.** The case where a path is most tempting and least useful: the user

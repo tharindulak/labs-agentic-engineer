@@ -39,9 +39,11 @@ import {
   FileBundle,
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
+  DECLARE_PLAN_TOOL,
   type AddFileInput,
   type AskQuestionInput,
   type AskQuestionsInput,
+  type DeclarePlanInput,
   type EditFileInput,
   type Equal,
   type RemoveFileInput,
@@ -57,7 +59,7 @@ export const REMOVE_FILE = "removeFile" as const;
 // (@aep/agent-stream) so the producer (this service) and the renderers
 // (console, playground) can never split on a rename. Re-exported so the call
 // site's `hasToolCall` stop conditions read one definition.
-export { ASK_QUESTION_TOOL, ASK_QUESTIONS_TOOL } from "@aep/agent-stream";
+export { ASK_QUESTION_TOOL, ASK_QUESTIONS_TOOL, DECLARE_PLAN_TOOL } from "@aep/agent-stream";
 
 // Re-export the shared skill-loader names so existing importers keep one entry point.
 export { LOAD_SKILL, LOAD_SKILL_REFERENCE } from "./skill-tools.js";
@@ -146,6 +148,23 @@ export const askQuestionsInputSchema = z.object({
     .describe("1–8 questions rendered together as one form; each answered independently."),
 });
 
+// --- declare_plan (fire-and-forget UI, console ADR-0022 / #576) -------------
+//
+// The agent says which bundle paths it is ABOUT to write, so the console's spec
+// rail can show a checklist and an honest count instead of only a log of what
+// already happened. Unlike the question tools above this does NOT end the turn:
+// `execute` resolves immediately and the agent keeps working, so the call site
+// pairs it with no `hasToolCall` stop condition.
+
+export const declarePlanInputSchema = z.object({
+  paths: z
+    .array(z.string())
+    .describe(
+      "The bundle paths you are about to write, in the order you intend to write them — full repo-relative " +
+      'paths ("specs/design/design.md"). Names are the console\'s to choose; send paths only.',
+    ),
+});
+
 // --- Drift guard: Zod schema ⇄ sse-events wire type -------------------------
 // Compile-time only. If a schema's inferred input diverges from its wire type,
 // the corresponding `true` is no longer assignable and this fails to compile,
@@ -156,7 +175,8 @@ const _drift: [
   Equal<z.infer<typeof removeFileInputSchema>, RemoveFileInput>,
   Equal<z.infer<typeof askQuestionInputSchema>, AskQuestionInput>,
   Equal<z.infer<typeof askQuestionsInputSchema>, AskQuestionsInput>,
-] = [true, true, true, true, true];
+  Equal<z.infer<typeof declarePlanInputSchema>, DeclarePlanInput>,
+] = [true, true, true, true, true, true];
 void _drift;
 
 /** Ask ONE structured question (a single card); ends the turn (HITL). */
@@ -178,6 +198,23 @@ export const askQuestionsTool: Tool = tool({
     "question (1–5 options, optional recommended, optional multiSelect). Ends your turn; the answers arrive as the next message.",
   inputSchema: askQuestionsInputSchema,
   execute: async (input) => ({ status: "awaiting_user_response" as const, ...input }),
+});
+
+/**
+ * Declare the artifacts this turn is about to write. Fire-and-forget: the
+ * tool-call input IS the payload, `execute` only acknowledges, and the turn
+ * continues (ADR-0022). Declaring again ADDS to the plan — the console takes
+ * the union, so a restated path is ignored rather than duplicated.
+ */
+export const declarePlanTool: Tool = tool({
+  description:
+    "Declare the files you are about to write, BEFORE you write them, so the user can see the whole shape of " +
+    "the work and how much is left instead of watching files appear one at a time. Call it as soon as you know " +
+    "part of the plan, and call it AGAIN whenever the plan grows — declaring the cell first and the " +
+    "per-component files once the component set exists is the expected pattern, not a mistake. Restating a path " +
+    "already declared is harmless. Does NOT end your turn: declare, then get on with the writing.",
+  inputSchema: declarePlanInputSchema,
+  execute: async (input) => ({ status: "ok" as const, ...input }),
 });
 
 /**
@@ -219,6 +256,10 @@ export function buildFileTools(bundle: FileBundle, skills?: SkillSource): Record
     // condition so the turn ends awaiting the user's answer.
     [ASK_QUESTION_TOOL]: askQuestionTool,
     [ASK_QUESTIONS_TOOL]: askQuestionsTool,
+
+    // Fire-and-forget UI (#576): deliberately NOT paired with a stop condition
+    // at the call site — the agent declares and keeps working.
+    [DECLARE_PLAN_TOOL]: declarePlanTool,
   };
 
   return { ...tools, ...buildSkillTools(skills) };

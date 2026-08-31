@@ -51,7 +51,7 @@ var targetDomains = map[string]bool{
 	"sourcecontrol": true,
 	"ops":           true,
 	// The SHARED identity-provider Roles and Test users a build provisions from
-	// specs/design/roles.json. A domain rather than kernel infrastructure: it
+	// specs/design/security.json. A domain rather than kernel infrastructure: it
 	// owns entities, a repository and a lifecycle of its own, and three other
 	// domains reach it only through ports.
 	"identity": true,

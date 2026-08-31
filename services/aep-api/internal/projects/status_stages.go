@@ -62,6 +62,14 @@ const (
 	// is what is being fixed — rendering the bare `failed` verdict here would read
 	// as terminal while the platform is actively resolving it.
 	validationAwaitingFix = "awaiting-fix"
+	// validationCancelled is a person STOPPING the judging: a validation run
+	// settled cancelled before it recorded a verdict, so nothing will answer for
+	// this version unless somebody re-asks. It is the one no-verdict state that
+	// does NOT hold promotion, and the distinction is the whole reason it exists:
+	// every other way to reach no verdict is an accident — a failed increment, an
+	// agent that died — where refusing to promote an unjudged version is the safe
+	// answer, and this one is a decision somebody already made.
+	validationCancelled = "cancelled"
 )
 
 // milestoneRunRows is the narrow port over the milestone_runs index: the status
@@ -375,12 +383,12 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	//
 	// Scoped to that MILESTONE rather than to the dev run, because a version
 	// can be judged more than once: a revalidation is a later run on the same
-	// milestone and its verdict is the version'"'"'s current answer. Scoped to the
+	// milestone and its verdict is the version's current answer. Scoped to the
 	// milestone rather than to the whole project for the reason above — a run on an
 	// older version must not answer for this one.
 	//
-	// The report itself, and the per-cycle detail behind it, live on the version'"'"'s
-	// run story (list-build-runs), which is where the console'"'"'s validation surface
+	// The report itself, and the per-cycle detail behind it, live on the version's
+	// run story (list-build-runs), which is where the console's validation surface
 	// reads them; validationUrl/validationIssue are therefore no longer served here.
 	state, err := s.validationStage(ctx, orgName, newestValidatingOnMilestone(runs, latest))
 	if err != nil {
@@ -394,11 +402,11 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 // cycle ONLY when the verdict alone cannot answer.
 //
 // That conditional read is the whole point of the split: a verdict that is final is
-// the answer, and a settled run without one never reached validation — both decided
-// from the row already in hand. The extra query happens for the two cases the row
-// cannot settle: a live run with no verdict yet (the case the old code got wrong by
-// calling every such run "validating"), and a live run holding a REPAIRABLE verdict,
-// which is mid-loop rather than finished.
+// the answer, and a settled run without one either had its judging cancelled or never
+// reached validation — all decided from the row already in hand. The extra query
+// happens for the two cases the row cannot settle: a live run with no verdict yet (the
+// case the old code got wrong by calling every such run "validating"), and a live run
+// holding a REPAIRABLE verdict, which is mid-loop rather than finished.
 func (s *Service) validationStage(ctx context.Context, orgID string, run *delivery.MilestoneRun) (string, error) {
 	state, decided := validationStageFromRun(run)
 	if decided {
@@ -471,6 +479,11 @@ func newestValidatingOnMilestone(rows []delivery.MilestoneRun, ref *delivery.Mil
 // folding it into a coarser word is how "completed" came to mean "passed" without
 // saying so — it would discard partial, inconclusive and unreported entirely.
 //
+// A TERMINAL run with no verdict splits in two, and the split is the difference
+// between a state that resolves and one that never will: judging that was CANCELLED
+// is settled (`cancelled`), and everything else is a run that simply never got there
+// (`none`, which promises a verdict is still coming).
+//
 // A verdict is final on a TERMINAL run, and on a live run when it is not one the
 // loop repairs. A live run holding a repairable verdict is undecided: the verdict is
 // mid-loop, so rendering it would tell a reader the version failed validation while
@@ -489,6 +502,23 @@ func validationStageFromRun(run *delivery.MilestoneRun) (state string, decided b
 	if delivery.IsTerminalRunState(run.State) {
 		if run.ValidationVerdict != "" {
 			return run.ValidationVerdict, true
+		}
+		// A cancelled VALIDATION run: somebody stopped the judging, so no verdict is
+		// coming for this version and `none` — which promises one — would be a lie
+		// that never resolves.
+		//
+		// The KIND guard is load-bearing rather than defensive. This function is
+		// handed whatever newestValidatingOnMilestone returns, which is a
+		// validation-kind run OR a fall-back to the dev run, so testing the state
+		// alone would also catch a cancelled DEV run. That is an ABANDONED INCREMENT
+		// — the reconcile sweep suppresses its whole milestone for exactly that
+		// reason — and reporting it as "nothing left to wait for" would offer the
+		// version for promotion, which is worse than the confusion this state exists
+		// to remove. RunValidates is delivery's own answer to which kinds ask the
+		// question, and the selector above already keys on it, so the two cannot
+		// drift onto different ideas of what validates.
+		if run.State == delivery.RunStateCancelled && delivery.RunValidates(run.Kind) {
+			return validationCancelled, true
 		}
 		// Settled without ever recording a verdict: the run never reached validation.
 		return validationNone, true

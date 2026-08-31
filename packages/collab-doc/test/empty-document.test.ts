@@ -34,7 +34,7 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 import { fragmentToMarkdown, markdownToFragment } from "../src/index.js";
 
-const PATH = "specs/design/security.md";
+const PATH = "specs/design/notes.md";
 
 /** What a second client actually receives, rather than what the writer holds. */
 function replicated(build: (doc: Y.Doc) => void): Y.Doc {

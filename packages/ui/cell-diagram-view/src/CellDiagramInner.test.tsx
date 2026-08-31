@@ -36,12 +36,16 @@ vi.mock("@aep/ui-cell-diagram-react", () => ({
     tolerant,
     customLayout,
     onCustomLayoutChange,
+    compact,
+    readOnly,
   }: {
     source: string;
     theme?: string;
     tolerant?: boolean;
     customLayout?: CustomLayout | null;
     onCustomLayoutChange?: (layout: CustomLayout) => void;
+    compact?: boolean;
+    readOnly?: boolean;
   }) => {
     lastLayoutChange = onCustomLayoutChange;
     return (
@@ -51,6 +55,8 @@ vi.mock("@aep/ui-cell-diagram-react", () => ({
         data-theme={theme}
         data-tolerant={String(tolerant)}
         data-layout={customLayout ? JSON.stringify(customLayout.nodes) : "none"}
+        data-compact={String(compact)}
+        data-readonly={String(readOnly)}
       />
     );
   },
@@ -145,5 +151,24 @@ describe("CellDiagramInner dragged-layout persistence", () => {
 
     expect(screen.getByTestId("cell-diagram").dataset.layout).toContain("api");
     expect(window.localStorage.length).toBe(0);
+  });
+});
+
+// The embed flags reach the renderer, and are ABSENT by default — the spec
+// workspace is the interactive, chrome-carrying case and must not inherit an
+// embed's settings.
+describe("embed flags", () => {
+  it("passes compact and readOnly through", () => {
+    render(<CellDiagramInner source="title X" compact readOnly />);
+    const el = screen.getByTestId("cell-diagram");
+    expect(el.getAttribute("data-compact")).toBe("true");
+    expect(el.getAttribute("data-readonly")).toBe("true");
+  });
+
+  it("sends neither when the host asks for neither", () => {
+    render(<CellDiagramInner source="title X" />);
+    const el = screen.getByTestId("cell-diagram");
+    expect(el.getAttribute("data-compact")).toBe("undefined");
+    expect(el.getAttribute("data-readonly")).toBe("undefined");
   });
 });

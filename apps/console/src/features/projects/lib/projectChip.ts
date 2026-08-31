@@ -25,6 +25,13 @@ type ProjectStatus = components["schemas"]["ProjectStatus"];
 export interface ProjectChip {
   label: string;
   tone: StatusTone;
+  /**
+   * The platform is still working and this state will change on its own — as
+   * opposed to a settled state that only changes when somebody acts. The
+   * toolbar badge pulses on it. Every `info` case happens to be one today, but
+   * the caller should not have to know that a tone doubles as a liveness flag.
+   */
+  busy: boolean;
 }
 
 // The header chip beside a project's name: one line for "where is this project
@@ -44,11 +51,11 @@ export function projectChip(status: ProjectStatus): ProjectChip {
   // before it ever looks at them.
   switch (status.phase) {
     case "no-repo":
-      return { label: "No repository", tone: "warning" };
+      return { label: "No repository", tone: "warning", busy: false };
     case "repo-cloning":
-      return { label: "Preparing repository", tone: "info" };
+      return { label: "Preparing repository", tone: "info", busy: true };
     case "repo-error":
-      return { label: "Repository error", tone: "error" };
+      return { label: "Repository error", tone: "error", busy: false };
   }
   return deliveryChip(status) ?? specChip(status);
 }
@@ -59,18 +66,27 @@ export function projectChip(status: ProjectStatus): ProjectChip {
 // null when nothing has been delivered yet, which hands the chip to specChip.
 function deliveryChip(status: ProjectStatus): ProjectChip | null {
   const { build, deploy } = status;
-  if (build.status === "failed") return { label: "Build failed", tone: "error" };
-  if (build.status === "running") return { label: "Building", tone: "info" };
-  if (deploy.status === "failed") return { label: "Deploy failed", tone: "error" };
-  if (deploy.status === "deploying") return { label: "Deploying", tone: "info" };
+  if (build.status === "failed") return { label: "Build failed", tone: "error", busy: false };
+  if (build.status === "running") return { label: "Building", tone: "info", busy: true };
+  if (deploy.status === "failed") return { label: "Deploy failed", tone: "error", busy: false };
+  if (deploy.status === "deploying") return { label: "Deploying", tone: "info", busy: true };
+  // Validating outranks Active for the same reason Deploying does: the platform
+  // is working, and it is working on THIS version. "Active" is true of the
+  // components but says the project has settled, which is the one thing it has
+  // not done — a reader watching the toolbar would see a run finish that the
+  // toolbar never admitted had started. `awaiting-fix` is a coding cycle
+  // repairing what validation found, so it belongs to the same phase.
+  if (deploy.validation === "running" || deploy.validation === "awaiting-fix") {
+    return { label: "Validating", tone: "info", busy: true };
+  }
   // Validation only runs once the components are live, so a validation state
   // means the project IS live even when the binding read lags or comes back
   // empty — the same allowance deployStageView makes for the deploy line.
   if (deploy.status === "deployed" || validationView(deploy.validation)) {
-    return { label: "Active", tone: "success" };
+    return { label: "Active", tone: "success", busy: false };
   }
   // Built but nothing live: the build settled and the deploy has not started.
-  if (build.status === "succeeded") return { label: "Built", tone: "success" };
+  if (build.status === "succeeded") return { label: "Built", tone: "success", busy: false };
   return null;
 }
 
@@ -79,7 +95,7 @@ function deliveryChip(status: ProjectStatus): ProjectChip | null {
 // spec reads as in-progress: the published version has been edited since.
 function specChip(status: ProjectStatus): ProjectChip {
   const { exists, version, dirty } = status.spec;
-  if (!exists) return { label: "Starting", tone: "info" };
-  if (!version || dirty) return { label: "Spec in progress", tone: "info" };
-  return { label: "Spec published", tone: "success" };
+  if (!exists) return { label: "Starting", tone: "info", busy: true };
+  if (!version || dirty) return { label: "Spec in progress", tone: "info", busy: true };
+  return { label: "Spec published", tone: "success", busy: false };
 }

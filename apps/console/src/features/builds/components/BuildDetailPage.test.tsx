@@ -18,12 +18,15 @@
 
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
+type RunCycleView = components["schemas"]["RunCycleView"];
+type TaskView = components["schemas"]["TaskView"];
+type DeployStage = components["schemas"]["DeployStage"];
 
 // Router stubbed to plain anchors — no RouterProvider needed.
 vi.mock("@tanstack/react-router", () => ({
@@ -63,9 +66,10 @@ vi.mock("./RunFeed", () => ({
   RunFeed: () => <div>run feed</div>,
 }));
 
+let mockTasks: TaskView[] = [];
 vi.mock("../../tasks/api/queries", () => ({
   useAllTasks: () => ({
-    data: [],
+    data: mockTasks,
     isPending: false,
     isError: false,
     error: null,
@@ -79,9 +83,13 @@ vi.mock("../../tasks/api/queries", () => ({
 let mockReadiness:
   | components["schemas"]["ProjectDependencyReadiness"]
   | undefined;
+let mockDeploy: DeployStage | undefined;
 vi.mock("../../projects/api/queries", () => ({
   useProjectStatus: () => ({
-    data: { repoUrl: "https://github.com/acme/demo.git" },
+    data: {
+      repoUrl: "https://github.com/acme/demo.git",
+      ...(mockDeploy ? { deploy: mockDeploy } : {}),
+    },
   }),
   useProjectDependencyReadiness: () => ({
     data: mockReadiness,
@@ -114,6 +122,8 @@ vi.mock("../../spec/api/queries", () => ({
 
 let mockBuilds: BuildSummary[] = [];
 let mockRuns: MilestoneRunView[] = [];
+// Which cycle the Build logs section asked the cluster about, in order.
+const cycleBuildsCalls: Array<{ cycleId: string; enabled: boolean }> = [];
 vi.mock("../api/queries", () => ({
   useBuilds: () => ({
     data: mockBuilds,
@@ -123,13 +133,16 @@ vi.mock("../api/queries", () => ({
     refetch: vi.fn(),
   }),
   useBuildRuns: () => ({ data: { runs: mockRuns } }),
-  useCycleBuilds: () => ({
-    data: [],
-    isPending: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-  }),
+  useCycleBuilds: (_p: string, _t: string, cycleId: string, enabled: boolean) => {
+    cycleBuildsCalls.push({ cycleId, enabled });
+    return {
+      data: [],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    };
+  },
   useCancelRun: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -170,8 +183,34 @@ const run = (over: Partial<MilestoneRunView> = {}): MilestoneRunView =>
     ...over,
   }) as MilestoneRunView;
 
+const cycle = (over: Partial<RunCycleView> = {}): RunCycleView => ({
+  id: "cycle-1",
+  kind: "coding",
+  attempts: 1,
+  createdAt: "2026-08-14T16:21:00Z",
+  ...over,
+});
+
+const task = (issueNumber: number, over: Partial<TaskView> = {}): TaskView => ({
+  issueNumber,
+  title: `Task ${issueNumber}`,
+  issueUrl: `https://github.com/acme-dev/demo-shop/issues/${issueNumber}`,
+  executorClass: "coding",
+  dependsOn: [],
+  lineage: { specTag: "v2" },
+  derivedStatus: "pending",
+  hold: false,
+  attention: [],
+  executions: {},
+  ...over,
+});
+
+const merged = (issueNumber: number) => task(issueNumber, { derivedStatus: "merged" });
+
 const renderPage = () =>
   render(<BuildDetailPage projectName="demo-shop" tag="v2" />);
+
+const deploymentsLink = () => screen.queryByText("Go to Deployments");
 
 const withOneExternal = () => {
   mockDesignDeps = [
@@ -193,9 +232,13 @@ const withOneExternal = () => {
 afterEach(() => {
   mockBuilds = [];
   mockRuns = [];
+  mockTasks = [];
+  mockDeploy = undefined;
   mockDesignDeps = [];
   mockReadiness = undefined;
+  cycleBuildsCalls.length = 0;
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 // ADR-0023 moved the collection of external values off the Build button and
@@ -312,5 +355,284 @@ describe("BuildDetailPage — the deploy gate's park", () => {
 
     expect(screen.queryByText(/Waiting for/)).not.toBeInTheDocument();
     expect(screen.getByText("Running · Coding agent")).toBeInTheDocument();
+  });
+});
+
+describe("BuildDetailPage — the Deployments link", () => {
+  it("stays away until a pull request has merged", () => {
+    // The reported bug: the card offered a board that had nothing to show for
+    // this version, beside a note saying it deploys as its tasks merge.
+    mockBuilds = [build()];
+    mockTasks = [task(1), task(2)];
+    mockRuns = [run({ cycles: [cycle({ prNumber: 4, mergeSha: "" })] })];
+    renderPage();
+    expect(deploymentsLink()).toBeNull();
+    // The note stays: the card must still say what has to happen.
+    expect(screen.getByText("v2 deploys as its tasks merge.")).toBeInTheDocument();
+  });
+
+  it("is not fooled by closed issues that no pull request ever produced", () => {
+    // The live case that corrected this gate: a cancelled run whose two tasks
+    // both read `derivedStatus: "merged"` — the field only says the issue is
+    // closed — while its one cycle had `prNumber` 0 and no merge SHA.
+    mockBuilds = [build()];
+    mockTasks = [merged(1), merged(2)];
+    mockRuns = [
+      run({ state: "cancelled", cycles: [cycle({ prNumber: 0, mergeSha: "" })] }),
+    ];
+    renderPage();
+    expect(deploymentsLink()).toBeNull();
+  });
+
+  it("appears once a cycle records a merge", () => {
+    mockBuilds = [build()];
+    mockTasks = [merged(1), merged(2)];
+    mockRuns = [run({ cycles: [cycle({ prNumber: 4, mergeSha: "abc1234" })] })];
+    renderPage();
+    expect(deploymentsLink()).toBeInTheDocument();
+  });
+
+  it("asks every run of the version, not just the newest", () => {
+    // A version whose coding cycle merged pull request #15, later reworked by a
+    // `task` run that opened no cycle at all. Reading only the newest run made
+    // merged code look unmerged.
+    mockBuilds = [build()];
+    mockTasks = [merged(1)];
+    mockRuns = [
+      run({ id: "newer", kind: "task", state: "cancelled", cycles: [] }),
+      run({ id: "older", cycles: [cycle({ prNumber: 15, mergeSha: "c185b23" })] }),
+    ];
+    renderPage();
+    expect(deploymentsLink()).toBeInTheDocument();
+  });
+
+  it("appears for a version the platform has already deployed", () => {
+    mockBuilds = [build()];
+    mockTasks = [merged(1), task(2)];
+    mockRuns = [run({ cycles: [cycle({ prNumber: 0 })] })];
+    mockDeploy = {
+      version: "v2",
+      status: "deployed",
+      components: { total: 3, ready: 3 },
+      validation: "passed",
+    };
+    renderPage();
+    expect(deploymentsLink()).toBeInTheDocument();
+    expect(screen.getByText("v2 is live in development.")).toBeInTheDocument();
+  });
+
+  it("stays away when there is no run to have merged anything", () => {
+    mockBuilds = [build()];
+    mockRuns = [];
+    renderPage();
+    expect(deploymentsLink()).toBeNull();
+  });
+});
+
+describe("BuildDetailPage — the Duration cell", () => {
+  it("counts up second by second while the build has not ended", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-14T16:40:00Z"));
+    mockBuilds = [build({ completedAt: null })];
+    mockRuns = [run()];
+    renderPage();
+
+    expect(screen.getByText("20m 00s")).toBeInTheDocument();
+    expect(screen.getByText(/and counting/)).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(4000);
+    });
+    // No refetch, no new data — the card re-rendered on its own clock. Before
+    // this, react-query's structural sharing meant the number never moved.
+    expect(screen.getByText("20m 04s")).toBeInTheDocument();
+  });
+
+  it("freezes a finished build, and drops 'and counting' with it", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-14T16:40:00Z"));
+    mockBuilds = [
+      build({ status: "completed", completedAt: "2026-08-14T16:38:04Z" }),
+    ];
+    mockRuns = [run({ state: "succeeded" })];
+    renderPage();
+
+    expect(screen.getByText("18m 04s")).toBeInTheDocument();
+    expect(screen.queryByText(/and counting/)).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.getByText("18m 04s")).toBeInTheDocument();
+  });
+
+  it("keeps counting a build whose status has settled but whose end is unrecorded", () => {
+    // `and counting` used to key on `isLedgerLive`, so a build that had left
+    // in_progress without an end stamp showed a frozen number with no hint
+    // that it was still open.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-14T16:40:00Z"));
+    mockBuilds = [build({ status: "completed", completedAt: null })];
+    mockRuns = [run({ state: "succeeded" })];
+    renderPage();
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.getByText("20m 02s")).toBeInTheDocument();
+  });
+});
+
+describe("BuildDetailPage — the coding agent log's 'streaming' chip", () => {
+  it("says streaming while a build session is open", () => {
+    mockBuilds = [build()];
+    mockRuns = [run({ cycles: [cycle({ endedAt: null })] })];
+    renderPage();
+    expect(screen.getByText("streaming")).toBeInTheDocument();
+  });
+
+  it("stops the moment the agent finishes, though the run is still in progress", () => {
+    // The bug: the chip read the BUILD's status, and a run stays in_progress
+    // through the merge, the component builds and the deployment.
+    mockBuilds = [build({ status: "in_progress", completedAt: null })];
+    mockRuns = [
+      run({ cycles: [cycle({ endedAt: "2026-08-14T16:38:00Z", mergeSha: "abc1234" })] }),
+    ];
+    renderPage();
+    expect(screen.queryByText("streaming")).not.toBeInTheDocument();
+  });
+
+  it("stays quiet while the run is PARKED, even with a cycle still open", () => {
+    // The two clauses answer different questions, and this is the case that
+    // needs both: a park is a run-level fact, so no cycle has to close for it.
+    mockBuilds = [build()];
+    mockRuns = [
+      run({
+        state: "waiting",
+        waitingReason: "external-values",
+        blockingDependencies: ["stripe"],
+        cycles: [cycle({ endedAt: null })],
+      }),
+    ];
+    renderPage();
+    expect(screen.queryByText("streaming")).not.toBeInTheDocument();
+  });
+});
+
+describe("BuildDetailPage — which cycle the build logs ask about", () => {
+  it("asks about the cycle that MERGED, not the newest one", () => {
+    // The reported bug: Build logs never showed anything. The section was handed
+    // `cycles.at(-1)`, and the cluster read answers empty for a cycle with no
+    // merge SHA — so it asked about a commit that had built nothing.
+    mockBuilds = [build()];
+    mockRuns = [
+      run({
+        cycles: [
+          cycle({ id: "merged-cycle", prNumber: 9, mergeSha: "118c794" }),
+          cycle({ id: "validation-cycle", kind: "validation" }),
+          cycle({ id: "retry-cycle", prNumber: 0 }),
+        ],
+      }),
+    ];
+    renderPage();
+    expect(cycleBuildsCalls.at(-1)).toEqual({ cycleId: "merged-cycle", enabled: true });
+  });
+
+  it("finds the merge in an EARLIER run when the newest one never merged", () => {
+    // based-portal-insurance v2 on the live stack: the merged coding cycle is in
+    // a succeeded run, and the newest run failed with an unmerged cycle.
+    mockBuilds = [build()];
+    mockRuns = [
+      run({ id: "newest", state: "failed", cycles: [cycle({ id: "failed-cycle", prNumber: 0 })] }),
+      run({ id: "older", cycles: [cycle({ id: "the-merge", prNumber: 9, mergeSha: "118c794" })] }),
+    ];
+    renderPage();
+    expect(cycleBuildsCalls.at(-1)?.cycleId).toBe("the-merge");
+  });
+
+  it("asks nothing at all when nothing has merged", () => {
+    mockBuilds = [build()];
+    mockRuns = [run({ cycles: [cycle({ prNumber: 0 })] })];
+    renderPage();
+    expect(cycleBuildsCalls.at(-1)).toEqual({ cycleId: "", enabled: false });
+    expect(
+      screen.getByText(/Build logs appear once a build session's pull request has merged/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("BuildDetailPage — a task row's state", () => {
+  it("says the same thing about every issue the one pull request claims", () => {
+    mockBuilds = [build()];
+    mockTasks = [task(7), task(8)];
+    mockRuns = [run({ cycles: [cycle({ resolves: [7, 8], prNumber: 9 })] })];
+    renderPage();
+    expect(screen.getAllByText("PR sent")).toHaveLength(2);
+  });
+
+  it("reads Merged from the recorded SHA, before GitHub closes the issue", () => {
+    mockBuilds = [build()];
+    mockTasks = [task(7)];
+    mockRuns = [
+      run({
+        cycles: [
+          cycle({ resolves: [7], prNumber: 9, mergeSha: "abc", endedAt: "2026-08-14T16:38:00Z" }),
+        ],
+      }),
+    ];
+    renderPage();
+    expect(screen.getByText("Merged")).toBeInTheDocument();
+  });
+
+  it("keeps PR sent after the session ends — it used to fall back to Pending", () => {
+    mockBuilds = [build()];
+    mockTasks = [task(7)];
+    mockRuns = [
+      run({ cycles: [cycle({ resolves: [7], prNumber: 9, endedAt: "2026-08-14T16:38:00Z" })] }),
+    ];
+    renderPage();
+    expect(screen.getByText("PR sent")).toBeInTheDocument();
+    expect(screen.queryByText("Pending")).not.toBeInTheDocument();
+  });
+});
+
+describe("BuildDetailPage — the task list's order and its links", () => {
+  it("reads ascending by issue number, the order the milestone was planned in", () => {
+    // `list-tasks` promises no order, and GitHub's newest-first default was
+    // showing through: the gates the platform files first sat at the BOTTOM.
+    mockBuilds = [build()];
+    mockTasks = [task(4), task(3), task(2), task(1)];
+    mockRuns = [run()];
+    renderPage();
+
+    const titles = screen.getAllByTitle(/^Task \d+$/).map((el) => el.textContent);
+    expect(titles).toEqual(["Task 1", "Task 2", "Task 3", "Task 4"]);
+  });
+
+  it("does not sort the array the counts are derived from", () => {
+    // The same array backs the tally and the header pulse; sorting in place
+    // would reorder them behind their own backs.
+    const given = [task(4), task(3)];
+    mockBuilds = [build()];
+    mockTasks = given;
+    mockRuns = [run()];
+    renderPage();
+    expect(given.map((t) => t.issueNumber)).toEqual([4, 3]);
+  });
+
+  it("does not link a task title anywhere — that detail view is not used", () => {
+    mockBuilds = [build()];
+    mockTasks = [task(1)];
+    mockRuns = [run()];
+    renderPage();
+
+    // The title is text. The issue chip is still the way out, and it goes to
+    // GitHub rather than to a console page.
+    expect(screen.queryByRole("link", { name: "Task 1" })).toBeNull();
+    expect(document.querySelectorAll('a[href*="/tasks/"]')).toHaveLength(0);
+    expect(screen.getByRole("link", { name: "#1" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme-dev/demo-shop/issues/1",
+    );
   });
 });

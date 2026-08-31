@@ -252,11 +252,11 @@ operations its contract actually exposes:
   the spec implies users sign in, declare it on BOTH the SPA and each protected
   service under the SAME dependency `name` — that shared name is what ties
   sign-in to token-carrying API calls. With no such dependency the SPA deploys
-  unable to sign in. For `thunder-app` only, proposing the `scopes` parameter is
-  allowed (default `openid profile email`); every other resource type keeps the
-  no-invented-parameters rule, and `redirectUris` are platform-managed — never
-  propose them. `thunder-authentication` owns the full rule, and
-  `security-design` owns which roles sign in through it.
+  unable to sign in. `thunder-app` takes no `parameters`: `security-design`
+  authors the Thunder client on `security.json`, and the platform registers the
+  callback URI (`redirectUris` — platform-managed, never proposed here).
+  `thunder-authentication` owns the coding-time rule, and `security-design`
+  owns which roles sign in through it.
 
 ### Resolving an `external` dependency
 

@@ -16,142 +16,14 @@
  * under the License.
  */
 
-import type { components } from "../../../generated/aep-api";
-
-type ProjectStatus = components["schemas"]["ProjectStatus"];
-
-// One rendered stage of the overview pipeline (#183). Views are pure
-// derivations of the ProjectStatus stage aggregates — the spec stage in
-// particular has no stored status: exists/version/dirty describe the committed
-// artifact, and `agent` (#562) describes whoever is currently changing it.
-export type StageTone = "ghost" | "neutral" | "info" | "warning" | "success" | "error";
-
-// StageTone → Oxygen/MUI Chip colour. Lives beside the tone union so every
-// consumer maps it identically; "ghost"/"neutral" are ours, "default" is theirs.
-export const CHIP_COLOR: Record<
-  StageTone,
-  "default" | "info" | "warning" | "success" | "error"
-> = {
-  ghost: "default",
-  neutral: "default",
-  info: "info",
-  warning: "warning",
-  success: "success",
-  error: "error",
-};
-
-export interface StageView {
-  /** Version chip text ("v1", "v1+"); "" renders an em-dash. */
-  version: string;
-  /** One-line state under the chip. */
-  line: string;
-  tone: StageTone;
-}
-
-// The spec card's line — the only part of it that moves.
+// Validation vocabulary, shared by every surface that reports a verdict — the
+// deploy leg of the overview track, the deployments board, the validation page.
 //
-// It always says something, and the CTA above it never changes (#562 retest):
-// the card used to walk three captions and blank its line with no input from
-// the user at all, because a turn that ends ON a question has written no PRD,
-// so `exists` is still false and `agent` is back to "" — and the card fell
-// through to its cold-start branch. A caption that rewrites itself while the
-// user reads it teaches nothing; one line that always answers "what is
-// happening, and what can I do" teaches the pattern once.
-const WRITING_REQUIREMENTS = "The agent is writing your requirements.";
-const WORKING_ON_SPEC = "The agent is working on your spec.";
-const QUESTIONS_WAITING = "The agent has questions for you.";
-const COULD_NOT_START = "The agent couldn't start — open the spec to try again.";
-const NOTHING_WRITTEN = "Nothing written yet.";
-
-/** The spec's own settled status: what git says, independent of who is working. */
-function settledSpecView(exists: boolean, version: string, dirty: boolean): StageView {
-  if (!exists) return { version: "", line: NOTHING_WRITTEN, tone: "neutral" };
-  if (!version) return { version: "", line: "draft · not published", tone: "info" };
-  if (dirty) return { version: `${version}+`, line: "draft changes", tone: "warning" };
-  return { version, line: "published", tone: "success" };
-}
-
-/**
- * The spec stage. `engaged` is the local chat log's answer to "is the agent
- * waiting on this user" — the server cannot supply it: `spec.agent` folds a
- * completed turn to "", and the BFF never sees the question tool at all, so a
- * turn that ended on a question is indistinguishable server-side from one that
- * ended having done nothing.
- *
- * A live state overrides the LINE only. The version chip is a separate fact and
- * survives underneath, so an amendment interview on v2 still reads as v2.
- */
-export function specStageView(status: ProjectStatus, engaged: boolean): StageView {
-  const { exists, version, dirty, agent } = status.spec;
-  const settled = settledSpecView(exists, version, dirty);
-  // Naming the work requires knowing what it is. With no requirements file in
-  // the project there is nothing an agent could be writing but them; once one
-  // exists the same turn could be design, validation or an amendment, so the
-  // line says that something is happening without inventing which.
-  if (agent === "working") {
-    return { ...settled, line: exists ? WORKING_ON_SPEC : WRITING_REQUIREMENTS, tone: "info" };
-  }
-  if (engaged) return { ...settled, line: QUESTIONS_WAITING, tone: "info" };
-  // Only when nothing was written: a failed design turn over a published spec
-  // is not a spec that failed to start, and the spec view banners that case.
-  if (agent === "failed" && !exists) {
-    return { ...settled, line: COULD_NOT_START, tone: "error" };
-  }
-  return settled;
-}
-
-// The build stage is COUNT-FREE. A per-version task tally can only come from
-// the version's milestone on GitHub, and this aggregate is polled at 5s, so the
-// status read does not carry one — the Builds page renders counts from the
-// issue list it already pays for. What the overview says instead is what the
-// version's run is doing, which is a run row and costs nothing.
-export function buildStageView(status: ProjectStatus): StageView {
-  const { version, status: state } = status.build;
-  switch (state) {
-    case "running":
-      return { version, line: "building", tone: "info" };
-    case "failed":
-      return { version, line: "build failed", tone: "error" };
-    case "succeeded":
-      return { version, line: "built", tone: "success" };
-    default:
-      return { version: "", line: "waiting on spec", tone: "ghost" };
-  }
-}
-
-export function deployStageView(status: ProjectStatus): StageView {
-  const { version, status: state, components: comps } = status.deploy;
-  switch (state) {
-    case "deploying":
-      return {
-        version,
-        line: `deploying · ${comps.ready}/${comps.total} components`,
-        tone: "info",
-      };
-    case "deployed": {
-      // Validation runs after the components deploy, so its state is appended to
-      // the live-in-dev line (deployed stays the deploy tone; validation is
-      // informational text here — the deployments board carries the loud chip).
-      const v = validationView(status.deploy.validation);
-      return {
-        version,
-        line: v ? `live in dev · ${v.label}` : "live in dev",
-        tone: "success",
-      };
-    }
-    case "failed":
-      return { version, line: "deploy failed", tone: "error" };
-    default: {
-      // No live deploy status — but validation only runs after the app
-      // deploys, so a non-none validation state means it IS live in dev.
-      // Surface it even when the binding read lags or returns nothing (a
-      // transient/degraded deploy-status read must not hide validation).
-      const v = validationView(status.deploy.validation);
-      if (v) return { version, line: `live in dev · ${v.label}`, tone: v.tone };
-      return { version: "", line: "nothing deployed", tone: "ghost" };
-    }
-  }
-}
+// The three stage-view builders that used to live here went with the overview's
+// stage cards: the track derives its own lines (`track.ts`), because the card
+// grammar they were written for no longer exists. What stayed is the part that
+// was never about the cards.
+export type StageTone = "ghost" | "neutral" | "info" | "warning" | "success" | "error";
 
 // The verdicts the loop repeats — delivery.ValidationVerdictFailsRun in the
 // console's terms. Every other verdict is final until something re-asks it, so
@@ -208,7 +80,7 @@ export function validationState(deployValidation: string, verdict: string): stri
 // either mark, so both would collapse onto a neighbouring state's name ("Validated",
 // "Validation") and the distinction the vocabulary exists for would be sighted-only.
 // It is absent everywhere else, so the default stays "the name is the visible label"
-// and a caller that ignores the field is still correct for seven of the nine states.
+// and a caller that ignores the field is still correct for eight of the ten states.
 //
 // It is never the VISIBLE string. A caller with room says the hedge in its own prose
 // (the verdict tile's sentence, the deployments banner's); a caller without room
@@ -279,6 +151,14 @@ export function validationView(
       // Distinct from `none`, which is the run not having got here yet: this one is
       // settled, and its emptiness is a choice the project can revisit.
       return { label: "validation skipped", tone: "neutral" };
+    case "cancelled":
+      // A person stopped the judging before it produced a verdict. SETTLED, like
+      // `skipped` and for the same reason — nothing is coming unless somebody
+      // re-asks — which is why it is `neutral` rather than `info`: an `info` tone
+      // maps to the rail's pulsing `active` dot, and this state would pulse there
+      // forever. Nothing failed either, so an error tone would be a verdict the
+      // run never reached.
+      return { label: "validation cancelled", tone: "neutral" };
 
     default: // "none" | "" | unknown
       return null;

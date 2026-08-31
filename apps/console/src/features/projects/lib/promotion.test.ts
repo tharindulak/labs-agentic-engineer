@@ -115,11 +115,28 @@ describe("canPromote", () => {
     expect(canPromote({ status: "deployed", validation: "passed" })).toBe(true);
   });
 
-  it("blocks on an unearned or failing verdict, not on the absence of one", () => {
-    for (const blocked of ["running", "awaiting-fix", "failed", "unreported"]) {
+  it("blocks on a verdict that is unearned, still expected, or failing", () => {
+    for (const blocked of [
+      "running",
+      "awaiting-fix",
+      "failed",
+      "unreported",
+      // `none` is PENDING, not "no verdict to wait for". Leaving it promotable is
+      // what enabled this button in the window between the dev deployment going
+      // green and the validation cycle starting, and through every coding cycle of
+      // a run whose earlier components were already serving.
+      "none",
+    ]) {
       expect(canPromote({ status: "deployed", validation: blocked })).toBe(false);
     }
-    for (const open of ["none", "skipped", "passed", "partial", "inconclusive"]) {
+    // `cancelled` promotes because it is the one no-verdict state somebody CHOSE.
+    for (const open of [
+      "cancelled",
+      "skipped",
+      "passed",
+      "partial",
+      "inconclusive",
+    ]) {
       expect(canPromote({ status: "deployed", validation: open })).toBe(true);
     }
   });

@@ -52,11 +52,14 @@ vi.mock("../auth/SessionContext", () => ({
   }),
 }));
 
-// The switchers and the bell each open their own queries; neither is what this
-// file is about.
+// The switchers, the status badge and the bell each open their own queries;
+// none of them is what this file is about.
 vi.mock("./HeaderSwitchers", () => ({
   OrgSwitcher: () => null,
   ProjectSwitcher: () => null,
+}));
+vi.mock("./ProjectStatusBadge", () => ({
+  ProjectStatusBadge: () => null,
 }));
 vi.mock("./NotificationBell", () => ({
   AlertsNotificationPanel: () => null,

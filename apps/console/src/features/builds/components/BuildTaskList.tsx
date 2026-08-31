@@ -16,12 +16,11 @@
  * under the License.
  */
 
+import { useMemo } from "react";
 import {
   Box,
   Button,
   Chip,
-  LinearProgress,
-  Link as MuiLink,
   Stack,
   Typography,
   alpha,
@@ -29,11 +28,11 @@ import {
 import {
   ArrowUpRight,
   Box as BoxIcon,
-  ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
   GitHub,
+  GitPullRequest,
   LoaderCircle,
   Plug,
 } from "@wso2/oxygen-ui-icons-react";
@@ -47,6 +46,7 @@ import {
   taskRowNote,
   taskRowState,
   taskSettledAt,
+  type RunClaims,
   type TaskRowState,
 } from "../lib/taskRow";
 
@@ -54,7 +54,6 @@ type TaskView = components["schemas"]["TaskView"];
 
 // MUI polymorphism does not carry the router's typed `to`/`params`;
 // createLink is the console's established adapter.
-const RouterLink = createLink(MuiLink);
 const LinkButton = createLink(Button);
 
 /**
@@ -69,10 +68,12 @@ const STATE_ICON: Record<
   TaskRowState,
   { Icon: typeof CircleCheck; palette: "success" | "info" | "warning" | "grey" }
 > = {
-  done: { Icon: CircleCheck, palette: "success" },
+  merged: { Icon: CircleCheck, palette: "success" },
   in_progress: { Icon: LoaderCircle, palette: "info" },
   blocked: { Icon: CircleAlert, palette: "warning" },
-  in_review: { Icon: CircleAlert, palette: "warning" },
+  // A pull request that is sent and not merged is waiting on a human, which is
+  // the same call to action a hold makes — hence the same tone.
+  pr_sent: { Icon: GitPullRequest, palette: "warning" },
   pending: { Icon: CircleDashed, palette: "grey" },
 };
 
@@ -98,6 +99,12 @@ function StateTile({ state }: { state: TaskRowState }) {
         ...(state === "in_progress" && {
           "@keyframes taskSpin": { to: { transform: "rotate(360deg)" } },
           "& svg": { animation: "taskSpin 1s linear infinite" },
+          // Same guard the rest of the console's motion carries. The icon is
+          // a state tile first and an animation second, so holding it still
+          // costs the reader nothing.
+          "@media (prefers-reduced-motion: reduce)": {
+            "& svg": { animation: "none" },
+          },
         }),
       }}
     >
@@ -122,22 +129,24 @@ function ComponentChip({ task }: { task: TaskView }) {
 }
 
 export function BuildTaskRow({
-  projectName,
   task,
+  claims,
 }: {
-  projectName: string;
   task: TaskView;
+  /** What the RUN says about this version's work — the only source of agent
+   *  progress, since `TaskView.executions` is empty for agent work. */
+  claims?: RunClaims | undefined;
 }) {
-  const state = taskRowState(task);
+  const state = taskRowState(task, claims);
   const chip = taskRowChip(state);
   const note = taskRowNote(task);
-  const elapsedFrom = taskElapsedFrom(task);
+  const elapsedFrom = taskElapsedFrom(task, claims);
   const settledAt = taskSettledAt(task);
 
   const tint =
     state === "in_progress"
       ? "info"
-      : state === "blocked" || state === "in_review"
+      : state === "blocked" || state === "pr_sent"
         ? "warning"
         : null;
 
@@ -161,13 +170,14 @@ export function BuildTaskRow({
 
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", minWidth: 0 }}>
-            {/* The title links to the task's own page — the row's destination,
-                and the one the chevron on the right stands for. */}
-            <RouterLink
-              to="/projects/$projectName/tasks/$issueNumber"
-              params={{ projectName, issueNumber: task.issueNumber }}
-              underline="hover"
-              color="text.primary"
+            {/* Plain text, NOT a link. The title used to open the per-task
+                detail page, which this surface no longer sends anyone to: the
+                row already carries what that page led with — state, the agent's
+                latest note, elapsed time — and the issue itself is one chip
+                away. A link to a view nobody uses is a dead end that looks
+                like a destination. */}
+            <Typography
+              component="span"
               sx={{
                 fontSize: "0.90625rem",
                 fontWeight: 500,
@@ -178,7 +188,7 @@ export function BuildTaskRow({
               title={task.title}
             >
               {task.title}
-            </RouterLink>
+            </Typography>
             {/* Straight to GitHub, deliberately NOT to the task page: ADR-0013
                 §5's one surviving idea is that an issue chip means the issue. */}
             <Chip
@@ -215,7 +225,7 @@ export function BuildTaskRow({
                   color:
                     state === "in_progress"
                       ? "info.main"
-                      : state === "blocked" || state === "in_review"
+                      : state === "blocked" || state === "pr_sent"
                         ? "warning.main"
                         : "text.secondary",
                   display: "-webkit-box",
@@ -259,33 +269,46 @@ export function BuildTaskRow({
               {settledAt ? runStamp(settledAt) : chip.label}
             </Typography>
           )}
-          {state !== "blocked" && (
-            <ChevronRight size={15} aria-hidden style={{ opacity: 0.5 }} />
-          )}
+          {/* No chevron: it promised the whole ROW navigates, and only the
+              title does. An affordance that does nothing is worse than none —
+              the title is the link, and it looks like one. */}
         </Stack>
       </Stack>
 
-      {/* The running row's own progress bar. Indeterminate on purpose — the
-          platform reports no percentage for a task, and a determinate bar would
-          be inventing one. */}
-      {state === "in_progress" && (
-        <LinearProgress color="info" sx={{ height: 2 }} />
-      )}
+      {/* No progress bar. It was indeterminate — the platform reports no
+          percentage for a task — so it animated without ever measuring
+          anything. The spinner on the row's status tile already says the agent
+          is on this one. */}
     </Box>
   );
 }
 
 export function BuildTaskList({
-  projectName,
   tasks,
+  claims,
 }: {
-  projectName: string;
   tasks: TaskView[];
+  claims?: RunClaims | undefined;
 }) {
+  // ASCENDING by issue number — the order the milestone was planned in, which
+  // for a task list is its reading order: the gates the platform files first
+  // come first, and the work that depends on them follows. `list-tasks` makes
+  // no ordering promise, so GitHub's newest-first default showed through and
+  // the list read backwards. Copied, never sorted in place: this same array is
+  // what the counts and the header pulse are derived from.
+  const ordered = useMemo(
+    () => [...tasks].sort((a, b) => a.issueNumber - b.issueNumber),
+    [tasks],
+  );
+
   return (
     <Box>
-      {tasks.map((task) => (
-        <BuildTaskRow key={task.issueNumber} projectName={projectName} task={task} />
+      {ordered.map((task) => (
+        <BuildTaskRow
+          key={task.issueNumber}
+          task={task}
+          {...(claims ? { claims } : {})}
+        />
       ))}
     </Box>
   );

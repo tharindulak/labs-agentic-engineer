@@ -52,7 +52,8 @@ import {
   useSpecFileContent,
   useSpecFiles,
 } from "../api/queries";
-import { PRD_PATH, toSpecEntry } from "../api/mapping";
+import { PRD_PATH, specGroupOf, toSpecEntry } from "../api/mapping";
+import { fileLabel } from "../api/labels";
 import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { SpecQuestionForm } from "./SpecQuestionForm";
@@ -70,6 +71,7 @@ import { prdUnsettled } from "../lib/prdUnsettled";
 import { useYFragmentVersion } from "../collab/useYFragmentVersion";
 import {
   railSections as buildRailSections,
+  type RailPlanEntry,
   type SectionReason,
 } from "../lib/railSections";
 import {
@@ -84,7 +86,7 @@ import { ProblemsDialog } from "./ProblemsDialog";
 import { CommittedFileView } from "./CommittedFileView";
 import { useResolveDependencyViaChat } from "../../agent-chat/useResolveDependencyViaChat";
 import type { DependencyResolutionIntent } from "../../projects/lib/dependencyResolutionMessage.js";
-import { useDesignCellChangeCount } from "../collab/useDesignCellChange";
+import { usePlan } from "../../agent-chat/usePlan";
 import { approvalInputsFor } from "../lib/buildInputs";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
 import { SpecFileList } from "./SpecFileList";
@@ -94,8 +96,8 @@ import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
 import { ValidationView } from "@aep/ui-validation-view";
-import { SECURITY_MD_PATH, type SpecSelection } from "../api/designTree";
-import { DESIGN_CELL_PATH, componentOf } from "../api/designTree";
+import { type SpecSelection } from "../api/designTree";
+import { DESIGN_CELL_PATH, componentOf, followSelection } from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
@@ -236,6 +238,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   // wants to be, so we auto-select it.
   const search = useSearch({ strict: false }) as {
     generate?: "design";
+    view?: "architecture";
   };
   const generate = search.generate;
   const agentInRoom = collab.peers.some((p) => p.kind === "agent");
@@ -248,19 +251,40 @@ export function SpecView({ projectName }: { projectName: string }) {
     if (generate === "design") setSelection({ kind: "cell-diagram" });
   }, [generate]);
 
-  // An architectural chat change updates design.cell (targeted editFile
-  // patches, or a removeFile + streamed addFile for a restructure). Navigate
-  // to the Architecture tab once per change burst — even over a manual
-  // selection — so the user watches the change land; they can still click
-  // away mid-turn without being yanked back.
-  const designCellLive = useYTextString(collab.getFileText(DESIGN_CELL_PATH));
-  const cellChangeCount = useDesignCellChangeCount(
-    designCellLive,
-    agentInRoom && collab.status === "connected",
-  );
+  // `?view=architecture` — arriving from the overview's architecture panel,
+  // which links here precisely because it is drawing a diagram. Runs once on
+  // the param, so a rail click afterwards is never undone.
   useEffect(() => {
-    if (cellChangeCount > 0) setSelection({ kind: "cell-diagram" });
-  }, [cellChangeCount]);
+    if (search.view === "architecture") setSelection({ kind: "cell-diagram" });
+  }, [search.view]);
+
+  // Follow the write (#576, ADR-0026): while a turn runs, the editor selects
+  // each artifact as its write starts, so the passive watcher — the default
+  // posture at turn start — sees the work land in whatever renderer that
+  // artifact already has. The FIRST manual selection is a declaration of
+  // reading intent and ends the following for the rest of the turn; the rail's
+  // pulse on the writing entry stays the one-click way back in. A new turn
+  // resets to following. Supersedes the cell's burst navigation, which yanked
+  // back even over a manual selection.
+  const plan = usePlan(orgHandle ?? "default", projectName);
+  const followingRef = useRef(true);
+  const planTurnId = plan?.turnActive ? plan.turnId : null;
+  useEffect(() => {
+    if (planTurnId) followingRef.current = true;
+  }, [planTurnId]);
+  const writingPath = plan?.turnActive ? plan.writingPath : null;
+  // Keyed on the TURN as well as the path: a delta pass re-writes the same
+  // artifact the failed turn died on, so its first write can carry the exact
+  // path the previous turn left in `writingPath` — same value, new turn, and
+  // the follow must still fire.
+  useEffect(() => {
+    if (!writingPath || !followingRef.current) return;
+    setSelection(followSelection(writingPath));
+  }, [planTurnId, writingPath]);
+  const selectManually = (sel: SpecSelection) => {
+    followingRef.current = false;
+    setSelection(sel);
+  };
 
   // Default selection: while a design turn is actively producing design.cell,
   // default to Architecture (covers a reload mid-turn); otherwise the first
@@ -572,6 +596,37 @@ export function SpecView({ projectName }: { projectName: string }) {
     () => prdUnsettled(livePrd ?? prdContent.data?.content),
     [livePrd, prdContent.data],
   );
+  // The plan's entries sorted into rail sections (#576). `specGroupOf` is the
+  // same folder rule the committed files go through, so a planned path and the
+  // file it becomes can never disagree about where they belong.
+  const planEntries = useMemo<RailPlanEntry[]>(
+    () =>
+      (plan?.entries ?? []).map((e) => {
+        const group = specGroupOf(e.path);
+        return {
+          path: e.path,
+          status: e.status,
+          section: group === "designs" ? "design" : group,
+        };
+      }),
+    [plan],
+  );
+  // The selected path when the plan says a document is coming but the room has
+  // not delivered it yet. Any status EXCEPT a failed one counts while the turn
+  // runs: a body only reaches the doc when its write executes (and some bodies
+  // stream in earlier than others), so `done` can lead the room by a beat. Once
+  // the turn ends, a still-missing file is a real absence and the honest
+  // "Select a file" below takes over.
+  const pendingPlanPath =
+    plan?.turnActive &&
+    effectiveSelection.kind === "file" &&
+    !files.some((f) => f.path === effectiveSelection.path) &&
+    plan.entries.some(
+      (e) => e.path === effectiveSelection.path && e.status !== "error",
+    )
+      ? effectiveSelection.path
+      : null;
+
   const railSections = useMemo(
     () =>
       buildRailSections({
@@ -583,6 +638,8 @@ export function SpecView({ projectName }: { projectName: string }) {
         designOutdated: status.data?.spec.designOutdated ?? false,
         assumptions: unsettled.assumptions,
         openQuestions: unsettled.openQuestions,
+        planEntries,
+        planWreckage: plan?.wreckage ?? false,
       }),
     [
       files,
@@ -592,6 +649,8 @@ export function SpecView({ projectName }: { projectName: string }) {
       status.data?.spec.agentFlow,
       status.data?.spec.designOutdated,
       unsettled,
+      planEntries,
+      plan?.wreckage,
     ],
   );
   // The rail's own answer to "is an agent writing the requirements", reused so
@@ -619,7 +678,7 @@ export function SpecView({ projectName }: { projectName: string }) {
       generateDesign();
       return;
     }
-    setSelection({ kind: "file", path: PRD_PATH });
+    selectManually({ kind: "file", path: PRD_PATH });
   };
 
   const seedChat = (message: string) =>
@@ -1014,8 +1073,13 @@ export function SpecView({ projectName }: { projectName: string }) {
                 >
                   {/* span so the tooltip works while the button is disabled */}
                   <span>
+                    {/* Default size, matching "Generate design" beside it.
+                        `size="small"` made it 30px against its neighbour's 36,
+                        so two buttons on one row sat at two different weights
+                        with nothing meaning the difference — this is a
+                        secondary action, and `variant="outlined"` is what
+                        already says so. */}
                     <Button
-                      size="small"
                       variant="outlined"
                       disabled={agentBusy}
                       onClick={() => seedChat("/feature")}
@@ -1250,10 +1314,11 @@ export function SpecView({ projectName }: { projectName: string }) {
               <SpecFileList
                 files={files}
                 selection={effectiveSelection}
-                onSelect={setSelection}
+                onSelect={selectManually}
                 onRegenerateDesign={generateDesign}
                 regenerateDisabled={agentBusy}
                 sections={railSections}
+                plan={planEntries}
                 onReason={onRailReason}
               />
             </Box>
@@ -1280,33 +1345,10 @@ export function SpecView({ projectName }: { projectName: string }) {
                 />
               ) : effectiveSelection.kind === "security" ? (
                 <SecurityPanel
-                  rolesJson={security.rolesJson}
-                  onRolesChange={security.onRolesChange}
+                  securityJson={security.securityJson}
                   live={security.live}
-                  actions={security.actions}
-                  prose={
-                    security.proseFragment && collab.provider ? (
-                      <SpecMdEditor
-                        key={`${SECURITY_MD_PATH}:md`}
-                        fragment={security.proseFragment}
-                        provider={collab.provider}
-                        self={collab.self}
-                        agentStreaming={agentBusy}
-                        links={{
-                          path: SECURITY_MD_PATH,
-                          knownPaths: specPaths,
-                          open: (path) => setSelection({ kind: "file", path }),
-                        }}
-                      />
-                    ) : (
-                      <Box sx={{ p: 3 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          The access rules are edited live, and the
-                          collaboration service is not reachable right now.
-                        </Typography>
-                      </Box>
-                    )
-                  }
+                  isPending={security.isPending}
+                  isError={security.isError}
                 />
               ) : effectiveSelection.kind === "wireframe" ? (
                 <WireframePanel
@@ -1415,7 +1457,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                     links={{
                       path: selectedFile.path,
                       knownPaths: specPaths,
-                      open: (path) => setSelection({ kind: "file", path }),
+                      open: (path) => selectManually({ kind: "file", path }),
                     }}
                   />
                 ) : ytext ? (
@@ -1505,6 +1547,27 @@ export function SpecView({ projectName }: { projectName: string }) {
                     </Typography>
                   </Box>
                 )
+              ) : pendingPlanPath ? (
+                /* Following the write reached this document before the room
+                   did (#576, ADR-0026). A write is announced when its tool
+                   input resolves a path, but only SOME bodies stream into the
+                   doc as they are typed — a component `design.json` arrives
+                   whole, when the call executes. In that window the file is not
+                   in `files` yet, so the pane fell through to "Select a file",
+                   a dead end at the exact moment this feature exists to serve:
+                   watching a new document land. */
+                <Box
+                  sx={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Typography variant="body2" color="text.secondary">
+                    Waiting for the agent to write {fileLabel(pendingPlanPath)}…
+                  </Typography>
+                </Box>
               ) : (
                 /* Files exist but the selection names none of them — a stale
                    manual pick whose file has since gone. The default selection

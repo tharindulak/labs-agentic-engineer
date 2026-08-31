@@ -22,6 +22,7 @@ import (
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -42,7 +43,7 @@ func (s *Service) Provision(ctx context.Context, orgID, projectID, depName strin
 	if err != nil {
 		return err
 	}
-	return s.provisionResource(ctx, orgID, projectID, depName, issueNumber, params, envs)
+	return s.provisionResource(ctx, orgID, projectID, depName, issueNumber, params, envs, "")
 }
 
 // provisionResource is the platform-resource provisioning core: it authors the OC
@@ -52,7 +53,8 @@ func (s *Service) Provision(ctx context.Context, orgID, projectID, depName strin
 // just-minted number past GitHub's eventually-consistent issue list (issue #164);
 // the public Provision resolves it via findProvisionIssue for its HTTP callers. A
 // gateNumber of 0 authors the resource with no run admitted (a safe no-op gate).
-func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depName string, gateNumber int, params map[string]any, envs []string) error {
+// tag is the spec tag the build is provisioning; empty means HEAD (HTTP drawer).
+func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depName string, gateNumber int, params map[string]any, envs []string, tag string) error {
 	dep, err := s.findDepInProject(ctx, orgID, projectID, depName, spec.DependencyKindPlatformResource)
 	if err != nil {
 		return err
@@ -66,6 +68,10 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 	}
 	for k, v := range params {
 		merged[k] = v
+	}
+	merged, err = s.overlayThunderParams(ctx, orgID, projectID, tag, dep.ResourceType, merged)
+	if err != nil {
+		return err
 	}
 	envs = envList(envs)
 
@@ -107,4 +113,43 @@ func (s *Service) provisionResource(ctx context.Context, orgID, projectID, depNa
 		}
 	}
 	return nil
+}
+
+// overlayThunderParams copies authored thunder onto CRT parameters when the
+// resource type carries the end-user-auth marker. It never keys on a type name.
+//
+// Before overlay it deletes `scopes` so design.json / request parameters.scopes
+// cannot reach the provisioner. displayName is always set from thunder.name;
+// scopes is set only when thunder.scopes is non-empty. thunder.type is not a
+// CRT parameter and is never copied. Nil catalog or reader, a type that is
+// not end-user-auth, or an absent security.json: no overlay (and no invented
+// defaults). A present-but-unparseable file fails provision.
+func (s *Service) overlayThunderParams(ctx context.Context, orgID, projectID, tag, resourceType string, merged map[string]any) (map[string]any, error) {
+	if s.markers == nil || s.securityJSON == nil {
+		return merged, nil
+	}
+	byName, err := s.markers.MarkersByName(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("provisioning: resource markers: %w", err)
+	}
+	if !byName[resourceType].EndUserAuth {
+		return merged, nil
+	}
+	delete(merged, "scopes")
+	raw, err := s.securityJSON.ReadSecurityJSON(ctx, orgID, projectID, tag)
+	if err != nil {
+		return nil, fmt.Errorf("provisioning: read security.json: %w", err)
+	}
+	if len(raw) == 0 {
+		return merged, nil
+	}
+	doc, err := securityspec.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("provisioning: parse security.json: %w", err)
+	}
+	merged["displayName"] = doc.Thunder.Name
+	if doc.Thunder.Scopes != "" {
+		merged["scopes"] = doc.Thunder.Scopes
+	}
+	return merged, nil
 }

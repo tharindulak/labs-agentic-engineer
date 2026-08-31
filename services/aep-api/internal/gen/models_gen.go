@@ -139,6 +139,7 @@ func (e BuildSummaryWaitingReason) Valid() bool {
 // Defines values for DeployStageValidation.
 const (
 	DeployStageValidationAwaitingFix  DeployStageValidation = "awaiting-fix"
+	DeployStageValidationCancelled    DeployStageValidation = "cancelled"
 	DeployStageValidationFailed       DeployStageValidation = "failed"
 	DeployStageValidationInconclusive DeployStageValidation = "inconclusive"
 	DeployStageValidationNone         DeployStageValidation = "none"
@@ -153,6 +154,8 @@ const (
 func (e DeployStageValidation) Valid() bool {
 	switch e {
 	case DeployStageValidationAwaitingFix:
+		return true
+	case DeployStageValidationCancelled:
 		return true
 	case DeployStageValidationFailed:
 		return true
@@ -892,7 +895,7 @@ type BuildProgressEvent struct {
 	// Cycle One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 	Cycle RunCycleView `json:"cycle,omitempty"`
 
-	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
 	Line RunProgressLine `json:"line,omitempty"`
 
 	// Reason Why the stream ended — present only on the `done` frame, and deliberately NOT a run state. `no_live_run` means no run on the version's milestone is currently live, so there is nothing further to report RIGHT NOW. It is not a verdict on the version: a later validation or task run may be admitted on the same milestone, and the console reopens the stream when its run-list poll shows one.
@@ -1192,7 +1195,7 @@ type DeployStage struct {
 	Status string `json:"status"`
 
 	// Validation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-	// Three LIFECYCLE values: none (the run has not reached validation), running (a validation CYCLE is in flight — not merely a live run with no verdict yet) and awaiting-fix (validation failed and the run is repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation). The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
 	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle).
 	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
 	// The report path and per-cycle detail live on the version's run story (list-build-runs).
@@ -1203,7 +1206,7 @@ type DeployStage struct {
 }
 
 // DeployStageValidation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-// Three LIFECYCLE values: none (the run has not reached validation), running (a validation CYCLE is in flight — not merely a live run with no verdict yet) and awaiting-fix (validation failed and the run is repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation). The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
 // passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no acceptance criteria, and incident runs, which get no validation cycle).
 // failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
 // The report path and per-cycle detail live on the version's run story (list-build-runs).
@@ -1550,10 +1553,13 @@ type ProgressEvent struct {
 	Error        string `json:"error,omitempty"`
 
 	// ExitCode `tool_result` only: the process status of a failed shell call, parsed from the SDK's own `Exit code N` first line. Absent when the tool was not a shell — those report a `<tool_use_error>` with no code — so read absence as "no code was reported", never as "exited 0".
-	ExitCode int64  `json:"exitCode,omitempty"`
-	Files    int64  `json:"files,omitempty"`
-	Kind     string `json:"kind"`
-	Level    string `json:"level,omitempty"`
+	ExitCode int64 `json:"exitCode,omitempty"`
+	Files    int64 `json:"files,omitempty"`
+
+	// ItemID `progress_item` only: WHICH named unit of work the line is about — the key a consumer folds on, since many lines describe the same item and a reader wants one row repainted rather than many rows printed. Validation binds items to acceptance criteria ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running | healing | pass | fail.
+	ItemID string `json:"itemId,omitempty"`
+	Kind   string `json:"kind"`
+	Level  string `json:"level,omitempty"`
 
 	// LinesAdded A fanned-out subagent's total lines added, off the SDK's own report on its fan-out call's result. Present only there; nothing in the feed can reconstruct it.
 	LinesAdded int64 `json:"linesAdded,omitempty"`
@@ -1921,7 +1927,7 @@ type RunProgressEvent struct {
 	// Cycle One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 	Cycle RunCycleView `json:"cycle,omitempty"`
 
-	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+	// Line One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
 	Line RunProgressLine `json:"line,omitempty"`
 
 	// State Terminal run state — present only on the `done` frame.
@@ -1932,7 +1938,7 @@ type RunProgressEvent struct {
 // RunProgressEventType defines model for RunProgressEvent.Type.
 type RunProgressEventType string
 
-// RunProgressLine One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
+// RunProgressLine One line of a cycle's agent log: the runner's progress envelope (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result) plus the attribution the console groups on — which cycle produced it, and whether the main agent or one of its Task subagents did.
 type RunProgressLine struct {
 	Branch  string `json:"branch,omitempty"`
 	Command string `json:"command,omitempty"`
@@ -1960,10 +1966,13 @@ type RunProgressLine struct {
 	Error        string `json:"error,omitempty"`
 
 	// ExitCode `tool_result` only: the process status of a failed shell call, parsed from the SDK's own `Exit code N` first line. Absent when the tool was not a shell — those report a `<tool_use_error>` with no code — so read absence as "no code was reported", never as "exited 0".
-	ExitCode int64  `json:"exitCode,omitempty"`
-	Files    int64  `json:"files,omitempty"`
-	Kind     string `json:"kind"`
-	Level    string `json:"level,omitempty"`
+	ExitCode int64 `json:"exitCode,omitempty"`
+	Files    int64 `json:"files,omitempty"`
+
+	// ItemID `progress_item` only: WHICH named unit of work the line is about — the key a consumer folds on, since many lines describe the same item and a reader wants one row repainted rather than many rows printed. Validation binds items to acceptance criteria ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running | healing | pass | fail.
+	ItemID string `json:"itemId,omitempty"`
+	Kind   string `json:"kind"`
+	Level  string `json:"level,omitempty"`
 
 	// LinesAdded A fanned-out subagent's total lines added, off the SDK's own report on its fan-out call's result. Present only there; nothing in the feed can reconstruct it.
 	LinesAdded int64 `json:"linesAdded,omitempty"`
@@ -2182,7 +2191,7 @@ type TaskStreamEvent struct {
 	DerivedStatus string        `json:"derivedStatus,omitempty"`
 	Execution     ExecutionView `json:"execution,omitempty"`
 
-	// Line A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
+	// Line A unified-timeline entry: today's ProgressEvent (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | build_step | log | progress_item | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
 	Line TimelineEvent       `json:"line,omitempty"`
 	Task TaskView            `json:"task,omitempty"`
 	Type TaskStreamEventType `json:"type"`
@@ -2236,7 +2245,7 @@ type TestUserPassword struct {
 	Username  string     `json:"username"`
 }
 
-// TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | git_commit | git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
+// TimelineEvent A unified-timeline entry: today's ProgressEvent (phase | tool_use | activity | tool_result | git_commit | git_push | gh_action | build_step | log | progress_item | result) plus its attribution — which execution attempt it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.
 type TimelineEvent struct {
 	Branch      string `json:"branch,omitempty"`
 	Command     string `json:"command,omitempty"`
@@ -2262,10 +2271,13 @@ type TimelineEvent struct {
 	ExecutionKind string `json:"executionKind"`
 
 	// ExitCode `tool_result` only: the process status of a failed shell call, parsed from the SDK's own `Exit code N` first line. Absent when the tool was not a shell — those report a `<tool_use_error>` with no code — so read absence as "no code was reported", never as "exited 0".
-	ExitCode int64  `json:"exitCode,omitempty"`
-	Files    int64  `json:"files,omitempty"`
-	Kind     string `json:"kind"`
-	Level    string `json:"level,omitempty"`
+	ExitCode int64 `json:"exitCode,omitempty"`
+	Files    int64 `json:"files,omitempty"`
+
+	// ItemID `progress_item` only: WHICH named unit of work the line is about — the key a consumer folds on, since many lines describe the same item and a reader wants one row repainted rather than many rows printed. Validation binds items to acceptance criteria ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running | healing | pass | fail.
+	ItemID string `json:"itemId,omitempty"`
+	Kind   string `json:"kind"`
+	Level  string `json:"level,omitempty"`
 
 	// LinesAdded A fanned-out subagent's total lines added, off the SDK's own report on its fan-out call's result. Present only there; nothing in the feed can reconstruct it.
 	LinesAdded int64 `json:"linesAdded,omitempty"`

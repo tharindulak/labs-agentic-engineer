@@ -39,7 +39,6 @@ import {
   Ellipsis,
   GitHub,
   RotateCcw,
-  Sparkles,
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import { createLink, Link } from "@tanstack/react-router";
@@ -55,18 +54,27 @@ import { runStamp } from "../lib/format";
 import {
   buildDuration,
   countTasks,
+  isDeployable,
+  isDurationOpen,
   isLedgerLive,
   ledgerStatus,
   milestoneLabel,
   taskBreakdown,
 } from "../lib/ledger";
-import { anyTaskRunning, taskTally } from "../lib/taskRow";
-import { externalValuesPark, isDeliveryRun } from "../lib/runView";
+import { anyTaskRunning, runClaims, taskTally, type RunClaims } from "../lib/taskRow";
+import {
+  externalValuesPark,
+  isAgentStreaming,
+  isDeliveryRun,
+  mergedCycle,
+} from "../lib/runView";
+import { AgentPulse } from "./AgentPulse";
 import { BuildTaskList } from "./BuildTaskList";
 import { CycleBuilds } from "./CycleBuilds";
 import { EXTERNAL_RESOURCES_ANCHOR, ExternalResources } from "./ExternalResources";
 import { RunFeed } from "./RunFeed";
 import { useCycleBuilds } from "../api/queries";
+import { useTicker } from "../hooks/useTicker";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
 
@@ -105,6 +113,10 @@ export function BuildDetailPage({
   // The deploy aggregate names which version reached an environment; the
   // project layout already polls it, so this is served from cache.
   const projectStatus = useProjectStatus(projectName);
+  // Agent progress lives on the RUN, not on the task: aep-api leaves
+  // `TaskView.executions` empty for agent work ("its pull request lives on the
+  // run's cycle record instead"). Without this every open task read `Pending`.
+  const claims = runClaims(runList);
 
   const backTo = {
     link: <Link to="/projects/$projectName/builds" params={{ projectName }} />,
@@ -192,6 +204,8 @@ export function BuildDetailPage({
           projectName={projectName}
           build={build}
           tasks={tasks}
+          claims={claims}
+          runs={runList}
           park={park}
           {...(projectStatus.data?.deploy ? { deploy: projectStatus.data.deploy } : {})}
         />
@@ -199,20 +213,7 @@ export function BuildDetailPage({
         <LogSection
           title="Tasks"
           disablePadding
-          meta={<TasksMeta tasks={tasks} loading={issues.isPending} />}
-          actions={
-            <LinkButton
-              size="small"
-              variant="outlined"
-              color="primary"
-              startIcon={<Sparkles size={14} />}
-              to="/projects/$projectName"
-              params={{ projectName }}
-              sx={{ borderRadius: 999, height: 30 }}
-            >
-              Resolve via chat
-            </LinkButton>
-          }
+          meta={<TasksMeta tasks={tasks} claims={claims} loading={issues.isPending} />}
         >
           {issues.isPending ? (
             <Box sx={{ p: 3, display: "flex", justifyContent: "center" }}>
@@ -235,7 +236,7 @@ export function BuildDetailPage({
               description="This build has no tasks yet — they appear as the milestone is planned."
             />
           ) : (
-            <BuildTaskList projectName={projectName} tasks={tasks} />
+            <BuildTaskList tasks={tasks} claims={claims} />
           )}
         </LogSection>
 
@@ -248,15 +249,24 @@ export function BuildDetailPage({
             request, so it reads before them. */}
         <ExternalResources projectName={projectName} />
 
-        {/* A parked run has no agent working, so the log is not streaming —
-            `live` comes off the ledger status, which cannot see the park. */}
+        {/* TWO ways the log can be claiming a stream that is not there, and
+            both clauses are load-bearing:
+              - the agent's cycle has ENDED. A run stays in flight through the
+                merge, the component builds and the deployment, long after its
+                agent stopped, so the build's own state cannot answer this.
+              - the run is PARKED at the deploy gate. `waiting` is not terminal
+                and the park is a run-level fact, so no cycle has to close for
+                it to be true. */}
         <AgentLogSection
           projectName={projectName}
           runId={current?.id}
-          live={live && park === null}
+          streaming={isAgentStreaming(runList) && park === null}
         />
 
-        <BuildLogsSection projectName={projectName} tag={tag} cycleId={current?.cycles?.at(-1)?.id} />
+        {/* The cycle that MERGED, not the newest one: the cluster read answers
+            empty for a cycle with no merge SHA, and the newest cycle is
+            routinely a validation cycle or a coding cycle that never merged. */}
+        <BuildLogsSection projectName={projectName} tag={tag} cycleId={mergedCycle(runList)?.id} />
       </Stack>
     </>
   );
@@ -264,13 +274,15 @@ export function BuildDetailPage({
 
 function TasksMeta({
   tasks,
+  claims,
   loading,
 }: {
   tasks: components["schemas"]["TaskView"][];
+  claims: RunClaims;
   loading: boolean;
 }) {
   if (loading) return null;
-  const tally = taskTally(tasks);
+  const tally = taskTally(tasks, claims);
   const parts = [`${tally.total} in this build`, `${tally.done} done`];
   if (tally.attention > 0) parts.push(`${tally.attention} need your attention`);
   return (
@@ -282,11 +294,9 @@ function TasksMeta({
       >
         {parts.join(" · ")}
       </Typography>
-      {/* The pulse is keyed on a task actually executing, NOT on the run being
-          open — a settled build must not look like it is still working. */}
-      {anyTaskRunning(tasks) && (
-        <StatusChip label="agent working" tone="info" appearance="soft" dot />
-      )}
+      {/* Keyed on a task actually executing, NOT on the run being open — a
+          settled build must not look like it is still working. */}
+      {anyTaskRunning(tasks, claims) && <AgentPulse />}
     </Stack>
   );
 }
@@ -295,22 +305,31 @@ function BuildSummaryCard({
   projectName,
   build,
   tasks,
+  claims,
+  runs,
   park,
   deploy,
 }: {
   projectName: string;
   build: BuildSummary;
   tasks: components["schemas"]["TaskView"][];
+  claims: RunClaims;
+  runs: components["schemas"]["MilestoneRunView"][];
   /** The external dependencies this version's run is parked on at the deploy
    *  gate, or null when it is not parked. Empty means parked, naming nothing. */
   park: string[] | null;
   deploy?: components["schemas"]["DeployStage"] | undefined;
 }) {
   const live = isLedgerLive(build);
+  // The duration counts against `Date.now()` until the build ends, so this card
+  // has to re-render every second for it to move at all.
+  const counting = isDurationOpen(build);
+  useTicker(counting);
   const duration = buildDuration(build.startedAt, build.completedAt);
   // Derived from the tasks this page already holds — the same TAG-SCOPED read
   // the Tasks section below renders.
-  const breakdown = taskBreakdown(countTasks(tasks));
+  const breakdown = taskBreakdown(countTasks(tasks, claims));
+  const deployable = isDeployable(build, runs, deploy);
 
   const cells: Array<{ label: string; value: React.ReactNode }> = [
     { label: "Milestone", value: milestoneLabel(build) },
@@ -322,7 +341,7 @@ function BuildSummaryCard({
           <Box component="span" sx={{ fontVariantNumeric: "tabular-nums" }}>
             {duration || "—"}
           </Box>
-          {live && (
+          {counting && (
             <Box component="span" sx={{ color: "text.secondary" }}>
               {" "}
               and counting
@@ -403,14 +422,19 @@ function BuildSummaryCard({
       <Divider sx={{ my: 2 }} />
 
       <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap" }}>
-        <RouterLink
-          to="/projects/$projectName/deployments"
-          params={{ projectName }}
-          underline="hover"
-          sx={{ fontSize: "0.8125rem", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 0.5 }}
-        >
-          Go to Deployments <ArrowRight size={14} />
-        </RouterLink>
+        {/* Only once the version's work has actually merged — see
+            `isDeployable`. Until then the note below says what has to happen,
+            and a link to a board with nothing on it would contradict it. */}
+        {deployable && (
+          <RouterLink
+            to="/projects/$projectName/deployments"
+            params={{ projectName }}
+            underline="hover"
+            sx={{ fontSize: "0.8125rem", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 0.5 }}
+          >
+            Go to Deployments <ArrowRight size={14} />
+          </RouterLink>
+        )}
         <Typography variant="caption" color="text.secondary">
           {park
             ? `${build.tag} is built and waiting for its external values.`
@@ -541,17 +565,17 @@ function BuildActions({
 function AgentLogSection({
   projectName,
   runId,
-  live,
+  streaming,
 }: {
   projectName: string;
   runId: string | undefined;
-  live: boolean;
+  streaming: boolean;
 }) {
   return (
     <LogSection
       title="Coding agent log"
       meta={
-        live ? (
+        streaming ? (
           <StatusChip label="streaming" tone="info" appearance="soft" dot />
         ) : undefined
       }
@@ -585,7 +609,7 @@ function BuildLogsSection({
       {!cycleId ? (
         <EmptyState
           compact
-          description="Build logs appear once a build session's work has merged and the components rebuild."
+          description="Build logs appear once a build session's pull request has merged and the components rebuild."
         />
       ) : builds.isPending ? (
         // Distinct from the note above: that one states a fact about the

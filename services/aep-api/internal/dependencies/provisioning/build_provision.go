@@ -118,7 +118,7 @@ func (s *Service) ProvisionForBuild(ctx context.Context, orgID, ocOrgID, project
 				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error()})
 			}
 		case buildKindPlatformResrc:
-			if err := s.provisionResource(ctx, orgID, projectID, in.Dependency, gate, in.Parameters, nil); err != nil {
+			if err := s.provisionResource(ctx, orgID, projectID, in.Dependency, gate, in.Parameters, nil, tag); err != nil {
 				failures = append(failures, ProvisionFailure{Component: in.Component, Dependency: in.Dependency, Reason: err.Error()})
 			}
 		case buildKindOrgService:

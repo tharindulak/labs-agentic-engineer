@@ -20,7 +20,7 @@ package identity
 // being built and makes every role and test user it declares real on the
 // Platform IdP.
 //
-// It runs with NO MODEL IN THE LOOP. A model authored roles.json and read the
+// It runs with NO MODEL IN THE LOOP. A model authored security.json and read the
 // role catalog; below the version tag everything is deterministic — which is
 // the single most important property of this design, because these calls mint
 // credentials.
@@ -69,7 +69,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/platform/rolesspec"
+	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
 // EnsureService makes a project's declared roles and test users real.
@@ -167,10 +167,10 @@ func (r Result) Summary() string {
 // the gate comment leads with it and the caller can decide to surface it.
 func (r Result) HasRefusals() bool { return len(r.UsersRefused) > 0 }
 
-// EnsureForTag reads roles.json at tag and makes its contents real.
+// EnsureForTag reads security.json at tag and makes its contents real.
 //
 // A project whose design declares no roles document is not an error: it has no
-// sign-in, and there is nothing to ensure. A roles.json that is present but
+// sign-in, and there is nothing to ensure. A security.json that is present but
 // malformed IS an error — it acquired a tag, so something upstream let a broken
 // document through, and provisioning credentials from a document nobody can
 // parse is the wrong kind of best effort.
@@ -184,11 +184,11 @@ func (s *EnsureService) EnsureForTag(ctx context.Context, orgID, projectID, tag 
 	if err != nil || !declared {
 		return Result{}, declared, err
 	}
-	doc, err := rolesspec.Parse([]byte(raw))
+	doc, err := securityspec.Parse([]byte(raw))
 	if err != nil {
-		return Result{}, true, fmt.Errorf("%s at %s: %w", rolesspec.Path, tag, err)
+		return Result{}, true, fmt.Errorf("%s at %s: %w", securityspec.Path, tag, err)
 	}
-	result, err = s.ensure(ctx, orgID, projectID, rolesspec.Plan(doc))
+	result, err = s.ensure(ctx, orgID, projectID, securityspec.Plan(doc))
 	return result, true, err
 }
 
@@ -213,7 +213,7 @@ func (s *EnsureService) readRolesAtTag(ctx context.Context, orgID, projectID, ta
 	if err != nil {
 		return "", false, fmt.Errorf("read design at %s: %w", tag, err)
 	}
-	raw, ok := bundle[rolesspec.BundleKey]
+	raw, ok := bundle[securityspec.BundleKey]
 	if !ok || strings.TrimSpace(raw) == "" {
 		return "", false, nil
 	}
@@ -222,7 +222,7 @@ func (s *EnsureService) readRolesAtTag(ctx context.Context, orgID, projectID, ta
 
 // roleTarget is one declared role after classification.
 type roleTarget struct {
-	role rolesspec.Role
+	role securityspec.Role
 	// group is the live directory group, zero when the role is absent from it.
 	group       DirectoryGroup
 	onDirectory bool
@@ -235,7 +235,7 @@ type roleTarget struct {
 }
 
 // ensure runs the three passes over a plan.
-func (s *EnsureService) ensure(ctx context.Context, orgID, projectID string, plan rolesspec.EnsurePlan) (Result, error) {
+func (s *EnsureService) ensure(ctx context.Context, orgID, projectID string, plan securityspec.EnsurePlan) (Result, error) {
 	var result Result
 
 	// ---- pass 0: classify, writing nothing --------------------------------
@@ -354,7 +354,7 @@ func (s *EnsureService) collectCredentials(ctx context.Context, orgID, projectID
 //     maintain.
 //   - absent from the directory → the platform is about to create it, whether or
 //     not a stale row survived somebody deleting the group; enrolable.
-func (s *EnsureService) classifyRole(ctx context.Context, role rolesspec.Role) (roleTarget, error) {
+func (s *EnsureService) classifyRole(ctx context.Context, role securityspec.Role) (roleTarget, error) {
 	recorded, err := s.store.GetRole(ctx, role.Name)
 	if err != nil {
 		return roleTarget{}, err
@@ -435,7 +435,7 @@ func (s *EnsureService) realiseRole(ctx context.Context, orgID, projectID string
 // own. It is left completely untouched — not adopted, not password-reset, not
 // enrolled — because the design naming `jsmith` must not hand out a real
 // person's login.
-func (s *EnsureService) ensureUser(ctx context.Context, planned rolesspec.PlannedUser, result *Result) (DirectoryAccount, bool, error) {
+func (s *EnsureService) ensureUser(ctx context.Context, planned securityspec.PlannedUser, result *Result) (DirectoryAccount, bool, error) {
 	recorded, err := s.store.GetTestUser(ctx, planned.Username)
 	if err != nil {
 		return DirectoryAccount{}, false, err

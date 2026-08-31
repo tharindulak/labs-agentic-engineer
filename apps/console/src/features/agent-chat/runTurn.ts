@@ -21,6 +21,7 @@
 // (text deltas), tool results (cards), errors, and the one aep-api terminal.
 
 import {
+  DECLARE_PLAN_TOOL,
   parseSseStream,
   toChange,
   opForTool,
@@ -32,9 +33,20 @@ import {
   addMessage,
   upsertToolMessage,
   upsertQuestionMessage,
+  upsertPlanMessage,
   setTurnStatus,
   notifyTurnEnd,
 } from "./chatStore.js";
+import {
+  parseDeclarePlan,
+  peekPlan,
+  planDeclared,
+  planFileWriting,
+  planFileStreamed,
+  planFileSettled,
+  planTurnEnded,
+  WRITE_TOOLS,
+} from "./planStore.js";
 import { extractStreamingQuestions, isQuestionTool, parseQuestionsInput } from "./questionCards.js";
 import { getTurn, isTurnStreamNotFound, openTurnStream } from "./api/turns.js";
 import {
@@ -90,15 +102,18 @@ function settleFromTurnStatus(
   turnId: string,
   status: { status?: string; message?: string } | null | undefined,
   onCommitted?: () => void,
+  askedQuestion = false,
 ): boolean {
   if (status?.status === "completed") {
     setTurnStatus(chatKey, turnId, "completed");
+    planTurnEnded(chatKey, turnId, "completed", askedQuestion);
     notifyTurnEnd(chatKey, "completed");
     onCommitted?.();
     return true;
   }
   if (status?.status === "failed") {
     setTurnStatus(chatKey, turnId, "failed");
+    planTurnEnded(chatKey, turnId, "failed");
     notifyTurnEnd(chatKey, "failed");
     addMessage(chatKey, {
       role: "error",
@@ -125,6 +140,10 @@ export async function attachAndFoldTurn(
   onCommitted?: () => void,
 ): Promise<void> {
   let sawTerminal = false;
+  // Did this turn put a question to the user? A turn that ends on a question
+  // has not finished its work — the answer's turn carries it on — so the plan
+  // is paused rather than dissolved (#576).
+  let askedQuestion = false;
   // Per tool call: accumulate its streamed input args so the path can be read as
   // soon as it closes (path is the first schema property), then show a "Creating
   // <file>" card BEFORE the tool finishes. Keyed by the input-stream id (== the
@@ -179,6 +198,29 @@ export async function attachAndFoldTurn(
     });
   };
 
+  /**
+   * Fold one declare_plan payload (#576, ADR-0025). Idempotent through the
+   * store's union, so the belt-and-braces double publish (input-end, then the
+   * complete tool-call — same pattern as the register draft) cannot double
+   * anything; the chat row appears only when the call genuinely added entries.
+   */
+  const publishPlan = (input: unknown, toolCallId: string | undefined): void => {
+    const paths = parseDeclarePlan(input);
+    if (!paths || paths.length === 0) return;
+    const existing = peekPlan(chatKey);
+    const grew = existing?.turnId === turnId && existing.entries.length > 0;
+    const added = planDeclared(chatKey, turnId, paths);
+    if (added > 0) {
+      upsertPlanMessage(chatKey, {
+        role: "plan",
+        turnId,
+        toolCallId: toolCallId ?? "",
+        added,
+        grew,
+      });
+    }
+  };
+
   const fold = (part: StreamPart): void => {
     switch (part.type) {
       case "text-delta":
@@ -190,7 +232,8 @@ export async function attachAndFoldTurn(
           part.id &&
           (FILE_TOOLS.has(part.toolName) ||
             isQuestionTool(part.toolName) ||
-            part.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL)
+            part.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL ||
+            part.toolName === DECLARE_PLAN_TOOL)
         ) {
           inputs.set(part.id, { toolName: part.toolName, buf: "", carded: false, shownQuestions: 0 });
         }
@@ -214,11 +257,16 @@ export async function attachAndFoldTurn(
           break;
         }
         if (st.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL) break;
+        if (st.toolName === DECLARE_PLAN_TOOL) break;
         if (st.carded) break;
         const path = readToolInputPath(st.buf);
         if (path) {
           st.carded = true;
           writeFileCard(part.id!, st, path, "streaming");
+          // A REMOVAL is not a write: following it would send the editor to a
+          // document about to vanish, and settling its entry below would tick
+          // a deleted file green.
+          if (WRITE_TOOLS.has(st.toolName)) planFileWriting(chatKey, turnId, path);
         }
         break;
       }
@@ -237,15 +285,25 @@ export async function attachAndFoldTurn(
           publishDraftFromInput(chatKey, st.buf);
           break;
         }
+        if (st?.toolName === DECLARE_PLAN_TOOL) {
+          publishPlan(st.buf, part.id);
+          break;
+        }
         if (!st || !st.carded) break; // no card was ever shown (path never resolved)
         const path = readToolInputPath(st.buf);
         if (!path) break;
         writeFileCard(part.id!, st, path, "done");
+        // The body is complete; the VERDICT settles the entry below.
+        if (WRITE_TOOLS.has(st.toolName)) planFileStreamed(chatKey, turnId, path);
         break;
       }
       case "tool-call": {
         if (part.toolName === DRAFT_EXTERNAL_RESOURCE_TOOL) {
           publishDraftFromInput(chatKey, part.input);
+          break;
+        }
+        if (part.toolName === DECLARE_PLAN_TOOL) {
+          publishPlan(part.input, part.toolCallId);
           break;
         }
         // ask_question / ask_questions (ADR-0012): the COMPLETE call is the
@@ -254,6 +312,7 @@ export async function attachAndFoldTurn(
         // (individually-validated questions) is finalized as the card; with no
         // prefix, no card (the agent's prose still carries it).
         if (!isQuestionTool(part.toolName)) break;
+        askedQuestion = true;
         const questions = parseQuestionsInput(part.toolName!, part.input);
         if (!questions) {
           finalizeStreamingQuestions();
@@ -276,6 +335,9 @@ export async function attachAndFoldTurn(
       case "tool-result": {
         if (!part.toolName || !FILE_TOOLS.has(part.toolName)) break;
         const change = toChange(part);
+        if (WRITE_TOOLS.has(part.toolName)) {
+          planFileSettled(chatKey, turnId, change.path, change.result?.ok !== false);
+        }
         upsertToolMessage(chatKey, {
           role: "tool",
           turnId,
@@ -299,6 +361,7 @@ export async function attachAndFoldTurn(
       case "turn-committed":
         sawTerminal = true;
         setTurnStatus(chatKey, turnId, "completed");
+        planTurnEnded(chatKey, turnId, "completed", askedQuestion);
         // Turn-end flush (#252 Task 5): the terminal frame is the signal the
         // chat panel's fallback + the spec view's deterministic room flush
         // both react to (see chatStore's turn-end bus + useTurnEndFlush).
@@ -308,6 +371,7 @@ export async function attachAndFoldTurn(
       case "turn-failed":
         sawTerminal = true;
         setTurnStatus(chatKey, turnId, "failed");
+        planTurnEnded(chatKey, turnId, "failed");
         notifyTurnEnd(chatKey, "failed");
         addMessage(chatKey, {
           role: "error",
@@ -337,7 +401,7 @@ export async function attachAndFoldTurn(
         }
         // Turn may already be terminal on another replica — settle via getTurn.
         const status = await getTurn(projectName, turnId);
-        if (settleFromTurnStatus(chatKey, turnId, status, onCommitted)) {
+        if (settleFromTurnStatus(chatKey, turnId, status, onCommitted, askedQuestion)) {
           return;
         }
         await sleep(attachBackoffMs(attempt), signal);
@@ -361,5 +425,5 @@ export async function attachAndFoldTurn(
   // (and is itself a "terminal frame arrived" for turn-end purposes: the
   // fallback poll IS how this turn's end is observed here).
   const status = await getTurn(projectName, turnId);
-  settleFromTurnStatus(chatKey, turnId, status, onCommitted);
+  settleFromTurnStatus(chatKey, turnId, status, onCommitted, askedQuestion);
 }

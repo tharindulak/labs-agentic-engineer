@@ -18,10 +18,92 @@
 
 import type { StatusTone } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
+import { buildCycles } from "./runView";
 
 type TaskView = components["schemas"]["TaskView"];
 type ExecutionView = components["schemas"]["ExecutionView"];
 type IssueComment = components["schemas"]["IssueComment"];
+type MilestoneRunView = components["schemas"]["MilestoneRunView"];
+
+/**
+ * What the RUN says about each of this version's tasks.
+ *
+ * `TaskView.executions` is empty for agent work — the platform records the
+ * agent's pull request on the run's cycle instead — so a task's progress is
+ * only knowable from here. One cycle dispatches ONE pull request that claims a
+ * SET of issues (`resolves`), so every issue in that set shares the pull
+ * request's fate: that is why one cycle's state lands on several rows.
+ */
+export interface RunClaims {
+  /** issue number → the newest cycle that claimed it. */
+  byIssue: ReadonlyMap<number, CycleClaim>;
+  /** A live session with no recorded claims yet — presume it works the open
+   *  issues. Never set once claims exist: a recorded set outranks a guess. */
+  presumeOpenWork: boolean;
+  /** When the open session started, for the row's elapsed time. */
+  openCycleStartedAt: string | undefined;
+}
+
+/** One cycle's pull request, as the rows it claims see it. */
+export interface CycleClaim {
+  /** Its pull request, once a webhook has taught the platform about one. */
+  prNumber: number | undefined;
+  /** The merge, recorded by SHA — the platform's only record of one. */
+  merged: boolean;
+  /** Is the session still open? */
+  open: boolean;
+  /** When the session started. */
+  startedAt: string;
+}
+
+/**
+ * Read every cycle of every run of this version.
+ *
+ * Deliberately NOT just the open cycle, and not just the newest run. A cycle
+ * ends the moment its pull request settles, so reading only the open one threw
+ * away the answer at exactly the moment it became final — a task whose work had
+ * merged fell back to `Pending` unless GitHub had also closed its issue. And a
+ * version is often worked by SEVERAL runs (a `task` run reworking what a `dev`
+ * run delivered), so the newest run alone does not hold its history.
+ *
+ * Runs arrive newest-first and cycles oldest-first, so this walks both
+ * backwards: a later claim on the same issue overwrites an earlier one.
+ */
+export function runClaims(runs: MilestoneRunView[] | undefined): RunClaims {
+  const byIssue = new Map<number, CycleClaim>();
+  let openCycleStartedAt: string | undefined;
+  let openClaimed = 0;
+
+  for (const run of [...(runs ?? [])].reverse()) {
+    for (const cycle of buildCycles(run.cycles ?? [])) {
+      const claim: CycleClaim = {
+        prNumber: cycle.prNumber || undefined,
+        merged: Boolean(cycle.mergeSha),
+        open: !cycle.endedAt,
+        startedAt: cycle.createdAt,
+      };
+      if (claim.open) {
+        openCycleStartedAt = cycle.createdAt;
+        openClaimed = cycle.resolves?.length ?? 0;
+      }
+      for (const issue of cycle.resolves ?? []) {
+        byIssue.set(issue, claim);
+      }
+    }
+  }
+
+  return {
+    byIssue,
+    presumeOpenWork: openCycleStartedAt !== undefined && openClaimed === 0,
+    openCycleStartedAt,
+  };
+}
+
+const NO_CLAIMS: RunClaims = {
+  byIssue: new Map<number, CycleClaim>(),
+  presumeOpenWork: false,
+  openCycleStartedAt: undefined,
+};
 
 /**
  * The state a task row renders in (design arrangement 2b, ADR-0021 §3).
@@ -35,10 +117,10 @@ type IssueComment = components["schemas"]["IssueComment"];
  * and mid-execution, and "blocked" is the one the reader must act on.
  */
 export type TaskRowState =
-  | "done"
+  | "merged"
   | "blocked"
   | "in_progress"
-  | "in_review"
+  | "pr_sent"
   | "pending";
 
 const RUNNING_EXECUTION = /^(running|in_progress|started|active)$/i;
@@ -54,27 +136,42 @@ export function latestExecution(task: TaskView): ExecutionView | undefined {
   );
 }
 
-export function taskRowState(task: TaskView): TaskRowState {
-  // Closed is closed: a merged pull request is what closes a task, so nothing
-  // below can override it.
-  if (task.derivedStatus === "merged") return "done";
+export function taskRowState(
+  task: TaskView,
+  claims: RunClaims = NO_CLAIMS,
+): TaskRowState {
+  const claim = claims.byIssue.get(task.issueNumber);
 
-  // A hold is what the reader has to act on, so it outranks whatever the agent
-  // was doing when it hit the dependency.
+  // Closed is closed, and so is a recorded merge. Either is final, so nothing
+  // below can override it — and the two are checked together because they can
+  // disagree in one direction: a pull request merges before GitHub's close
+  // event lands, and for that moment the issue is still open.
+  if (task.derivedStatus === "merged" || claim?.merged) return "merged";
+
+  // A hold is what the reader has to act on, so it outranks whatever was
+  // happening when the dependency was hit.
   if (task.hold || (task.blockedBy && task.blockedBy.length > 0)) {
     return "blocked";
   }
 
+  // A GATE keeps an execution row, and it is the honest source for one.
   const execution = latestExecution(task);
   if (execution && !execution.endedAt && RUNNING_EXECUTION.test(execution.status)) {
     return "in_progress";
   }
 
-  // The agent finished and the issue is still open — the pull request is up and
-  // waiting on a human. This is a derivation, not a platform state: there is no
-  // ready-for-review field on the contract, and "the work ended but nothing
-  // merged" is the only honest reading of that pair.
-  if (execution?.endedAt) return "in_review";
+  // AGENT WORK has no execution — the run's build sessions are what know. A
+  // recorded claim is a FACT; the presumption covers the stretch before the
+  // pull request exists (ADR-0015 §4, kept in force by ADR-0021 §3).
+  if (claim) {
+    // A pull request exists and nothing merged it. That is true whether its
+    // session is still open or has ended — an ended session with an unmerged
+    // pull request is precisely the case that used to fall back to `Pending`,
+    // throwing away the most useful thing the row could say.
+    if (claim.prNumber !== undefined) return "pr_sent";
+    return claim.open ? "in_progress" : "pending";
+  }
+  if (claims.presumeOpenWork) return "in_progress";
 
   return "pending";
 }
@@ -88,14 +185,14 @@ export interface TaskRowChip {
 
 export function taskRowChip(state: TaskRowState): TaskRowChip {
   switch (state) {
-    case "done":
-      return { label: "Done", tone: "success", live: false };
+    case "merged":
+      return { label: "Merged", tone: "success", live: false };
     case "blocked":
       return { label: "Blocked", tone: "warning", live: false };
     case "in_progress":
       return { label: "In progress", tone: "info", live: true };
-    case "in_review":
-      return { label: "Review", tone: "warning", live: false };
+    case "pr_sent":
+      return { label: "PR sent", tone: "warning", live: false };
     default:
       return { label: "Pending", tone: "neutral", live: false };
   }
@@ -123,7 +220,8 @@ export function latestComment(task: TaskView): IssueComment | undefined {
  *
  * A comment body is markdown over an unbounded textarea, and this is one line of
  * a dense row — so it is flattened to its first non-empty line and the row
- * clamps what is left. The full thread is one click away on the task page.
+ * clamps what is left. The full thread is on the issue, which the row's `#N`
+ * chip links to.
  */
 export function taskRowNote(task: TaskView): string | null {
   const comment = latestComment(task);
@@ -146,11 +244,22 @@ export function taskRowNote(task: TaskView): string | null {
  * a queued execution has no `endedAt` either, so testing only for that made a
  * row `taskRowState` calls `pending` render a counting-up elapsed time.
  */
-export function taskElapsedFrom(task: TaskView): string | null {
+export function taskElapsedFrom(
+  task: TaskView,
+  claims: RunClaims = NO_CLAIMS,
+): string | null {
   const execution = latestExecution(task);
-  if (!execution || execution.endedAt) return null;
-  if (!RUNNING_EXECUTION.test(execution.status)) return null;
-  return execution.startedAt ?? execution.createdAt;
+  if (execution && !execution.endedAt && RUNNING_EXECUTION.test(execution.status)) {
+    return execution.startedAt ?? execution.createdAt;
+  }
+  // Agent work counts from when its build session started — there is no
+  // per-task start to count from, and the session's is the honest stand-in.
+  if (execution) return null;
+  return taskRowState(task, claims) === "in_progress"
+    ? (claims.byIssue.get(task.issueNumber)?.startedAt ??
+      claims.openCycleStartedAt ??
+      null)
+    : null;
 }
 
 /** The stamp a settled row shows on its right — when it finished. */
@@ -170,18 +279,21 @@ export interface TaskTally {
  * attention". Attention is blocked plus in-review — both are waiting on the
  * reader, which is what makes them one number rather than two.
  */
-export function taskTally(tasks: TaskView[]): TaskTally {
+export function taskTally(tasks: TaskView[], claims: RunClaims = NO_CLAIMS): TaskTally {
   let done = 0;
   let attention = 0;
   for (const task of tasks) {
-    const state = taskRowState(task);
-    if (state === "done") done += 1;
-    if (state === "blocked" || state === "in_review") attention += 1;
+    const state = taskRowState(task, claims);
+    if (state === "merged") done += 1;
+    if (state === "blocked" || state === "pr_sent") attention += 1;
   }
   return { total: tasks.length, done, attention };
 }
 
 /** Is any task in this build being worked right now? Drives the header pulse. */
-export function anyTaskRunning(tasks: TaskView[]): boolean {
-  return tasks.some((t) => taskRowState(t) === "in_progress");
+export function anyTaskRunning(
+  tasks: TaskView[],
+  claims: RunClaims = NO_CLAIMS,
+): boolean {
+  return tasks.some((t) => taskRowState(t, claims) === "in_progress");
 }

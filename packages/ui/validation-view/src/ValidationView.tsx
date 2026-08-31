@@ -16,8 +16,8 @@
  * under the License.
  */
 
-import { useMemo } from "react";
-import { Alert, alpha, Box, Chip, Typography } from "@wso2/oxygen-ui";
+import { forwardRef, useMemo, type ComponentPropsWithoutRef } from "react";
+import { Alert, alpha, Box, Chip, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { Check } from "@wso2/oxygen-ui-icons-react";
 import {
   parseValidationCriteria,
@@ -30,22 +30,27 @@ import {
   type CriterionReport,
   type ValidationReport,
 } from "./report.js";
-import { CRITERION_STATE_LABEL } from "./counts.js";
+import {
+  CRITERION_STATE_LABEL,
+  METHOD_COLOR,
+  METHOD_FALLBACK_COLOR,
+  METHOD_LABEL,
+  tallyCriterionMethods,
+} from "./counts.js";
 
-// Solid background per verification method. Text color is computed for contrast
-// (getContrastText), so labels stay readable in both themes — the same approach
-// as the DesignView type badges and the OpenAPI viewer's method badges.
-const METHOD_COLOR: Record<string, string> = {
-  e2e: "#1976d2",
-  scenario: "#ed6c02",
-  manual: "#7b1fa2",
+// The method colours are solid behind a badge here. Text color is computed for
+// contrast (getContrastText), so labels stay readable in both themes — the same
+// approach as the DesignView type badges and the OpenAPI viewer's method badges.
+// One line saying who does the checking, shown on hover. Only the two methods a
+// design turn can author carry one; anything else gets a bare badge rather than
+// an invented explanation.
+const METHOD_TOOLTIP: Record<string, string> = {
+  e2e: "Validated automatically by the agent.",
+  manual: "Requires manual validation.",
 };
-// Fixed display order for the summary tally; unknown methods sort after these.
-const METHOD_ORDER = ["e2e", "scenario", "manual"];
 // Requirement ids are structural, so a muted slate keeps them from competing
 // with the colored method badges.
 const REQ_COLOR = "#546e7a";
-const FALLBACK = "#616161";
 
 const mono = { fontFamily: "monospace", fontSize: "0.875rem" } as const;
 
@@ -72,10 +77,23 @@ const STATE_COLOR: Record<string, ChipColor> = {
   manual: "default",
 };
 
-function SolidBadge({ label, color }: { label: string; color: string }) {
+type SolidBadgeProps = { label: string; color: string } & ComponentPropsWithoutRef<"span">;
+
+// Forwards its ref and any remaining props onto the Box, because Tooltip hands
+// its child both a ref and the hover/focus handlers that open it. The console
+// wraps un-forwarding components in an inline-flex Box instead (see the kind chip
+// in SkillsSection), which works here too — but that comment calls itself out as
+// standing in for a ref the child could not hold, and this badge is local enough
+// to just hold one.
+const SolidBadge = forwardRef<HTMLSpanElement, SolidBadgeProps>(function SolidBadge(
+  { label, color, ...rest },
+  ref,
+) {
   return (
     <Box
       component="span"
+      ref={ref}
+      {...rest}
       sx={(theme) => ({
         display: "inline-flex",
         alignItems: "center",
@@ -96,10 +114,22 @@ function SolidBadge({ label, color }: { label: string; color: string }) {
       {label}
     </Box>
   );
-}
+});
 
-function MethodBadge({ method }: { method: string }) {
-  return <SolidBadge label={method} color={METHOD_COLOR[method] ?? FALLBACK} />;
+// Says who checks a criterion, with a tooltip carrying what the word means —
+// the badge alone cannot, and it is the reader's first encounter with the
+// distinction. `count` is passed only by the summary tally, which shows the same
+// badge with its total appended, so both surfaces stay in step by construction.
+function MethodBadge({ method, count }: { method: string; count?: number }) {
+  const label = METHOD_LABEL[method] ?? method;
+  const badge = (
+    <SolidBadge
+      label={count === undefined ? label : `${label} ${count}`}
+      color={METHOD_COLOR[method] ?? METHOD_FALLBACK_COLOR}
+    />
+  );
+  const tooltip = METHOD_TOOLTIP[method];
+  return tooltip ? <Tooltip title={tooltip}>{badge}</Tooltip> : badge;
 }
 
 // The per-criterion run-state chip (only rendered when a report is joined in).
@@ -116,15 +146,81 @@ function StateChip({ status }: { status: string }) {
   );
 }
 
+/**
+ * What the RUN is doing to a criterion right now, keyed by criterion id.
+ *
+ * Carried as a plain map rather than folded here, because this package renders
+ * and the consumer streams: the console builds it from the run's progress feed
+ * (`progress_item` events), and the Spec view — which shows the same oracle with
+ * no run attached — simply passes nothing.
+ */
+export type LiveStatuses = Readonly<Record<string, string>>;
+
+// The in-flight vocabulary, LOCAL for the same reason "Pending" below is: these
+// words describe work happening, and report.json can only describe work in the
+// past tense, so none of them belongs in CRITERION_STATE_LABEL. Its two terminal
+// words (`pass`/`fail`) DO arrive on the live feed, and deliberately fall through
+// to StateChip — a criterion that has passed reads the same whether the news came
+// from the feed or from the report, because it is the same fact.
+const LIVE_LABEL: Record<string, string> = {
+  planned: "Planned",
+  exploring: "Exploring…",
+  authoring: "Authoring…",
+  running: "Running…",
+  healing: "Healing…",
+};
+
+// Only `healing` is coloured. It is the run saying a criterion that WORKED has
+// stopped working — the one live status that changes what a reader thinks is
+// happening. Colouring ordinary progress would spend attention on the common case
+// and leave nothing to spend on this one.
+const LIVE_COLOR: Record<string, ChipColor> = { healing: "warning" };
+
+// The per-criterion chip while the run is still working on it.
+function LiveChip({ status }: { status: string }) {
+  return (
+    <Chip
+      size="small"
+      variant="outlined"
+      color={LIVE_COLOR[status] ?? "info"}
+      label={LIVE_LABEL[status] ?? status}
+      sx={{ flexShrink: 0 }}
+    />
+  );
+}
+
+// What a criterion shows while an attempt is IN FLIGHT and no report exists yet.
+//
+// A `manual` criterion gets its final word rather than "Pending": the run will
+// never answer it — that is what the method means — so a chip promising a result
+// would be a claim the eventual report contradicts. Everything else is genuinely
+// waiting on the run, including the legacy `scenario` method and any method this
+// view does not recognise.
+//
+// "Pending" is local rather than a sixth CRITERION_STATE_LABEL entry: that map is
+// report.json's vocabulary, and a criterion with no report has no status to name.
+function AwaitingChip({ method }: { method: string }) {
+  return method === "manual" ? (
+    <StateChip status="manual" />
+  ) : (
+    <Chip size="small" variant="outlined" label="Pending" sx={{ flexShrink: 0 }} />
+  );
+}
+
 // One acceptance criterion: method badge, its id, the atomic assertion, and —
 // when a run report is joined in — its run-state chip plus healed/flaky markers
-// and (for a failure) the spec path and failure message beneath.
+// and (for a failure) the spec path and failure message beneath. With no report
+// and `awaiting` set, the state chip says what is going to happen to it instead.
 function CriterionRow({
   criterion,
   report,
+  live,
+  awaiting,
 }: {
   criterion: Criterion;
   report: CriterionReport | undefined;
+  live: string | undefined;
+  awaiting: boolean;
 }) {
   const failed = report?.status === "fail";
   return (
@@ -148,7 +244,24 @@ function CriterionRow({
         {report?.healed && (
           <Chip size="small" variant="outlined" label="healed" sx={{ flexShrink: 0 }} />
         )}
-        {report && <StateChip status={report.status} />}
+        {/* Live FIRST, and the ordering is the whole point. A repeat attempt
+            carries the PREVIOUS attempt's report, so ranking the report higher
+            would freeze a criterion on the last run's verdict for the entire
+            two hours the current run spends re-working it. The report wins
+            again the moment the cycle settles, because the consumer stops
+            supplying live statuses once nothing is in flight. */}
+        {live ? (
+          LIVE_LABEL[live] ? (
+            <LiveChip status={live} />
+          ) : (
+            // pass/fail off the feed: report.json's own words, so the same chip.
+            <StateChip status={live} />
+          )
+        ) : report ? (
+          <StateChip status={report.status} />
+        ) : awaiting ? (
+          <AwaitingChip method={criterion.method} />
+        ) : null}
       </Box>
       {/* Failure detail sits full-width beneath the row (indented past the
           method badge) so a long trace never crowds the assertion. */}
@@ -202,9 +315,13 @@ function CriterionRow({
 function RequirementCard({
   requirement,
   statuses,
+  live,
+  awaiting,
 }: {
   requirement: Requirement;
   statuses: ValidationReport | undefined;
+  live: LiveStatuses | undefined;
+  awaiting: boolean;
 }) {
   const count = requirement.criteria.length;
   return (
@@ -249,7 +366,13 @@ function RequirementCard({
         // above are their siblings.
         <Box sx={{ "& > *": { borderTop: 1, borderColor: "divider" } }}>
           {requirement.criteria.map((c) => (
-            <CriterionRow key={c.id} criterion={c} report={statuses?.get(c.id)} />
+            <CriterionRow
+              key={c.id}
+              criterion={c}
+              report={statuses?.get(c.id)}
+              live={live?.[c.id]}
+              awaiting={awaiting}
+            />
           ))}
         </Box>
       )}
@@ -260,37 +383,32 @@ function RequirementCard({
 function ValidationBody({
   criteria,
   statuses,
+  live,
   noPadding,
   fullWidth,
+  hideDescription,
+  awaitingReport,
 }: {
   criteria: ValidationCriteria;
   statuses: ValidationReport | undefined;
+  live: LiveStatuses | undefined;
   /** Required, not optional: `exactOptionalPropertyTypes` is on, so the public
    *  props are defaulted at the boundary rather than forwarded as `undefined`. */
   noPadding: boolean;
   fullWidth: boolean;
+  hideDescription: boolean;
+  awaitingReport: boolean;
 }) {
   const { requirements } = criteria;
-  // Per-method tally for the summary header, kept in a stable order. The
-  // per-run-state tally is deliberately NOT here: it belongs with the verdict it
-  // explains, which the consumer renders above this view (tallyCriterionStates in
-  // counts.ts), and duplicating it here would put the same numbers on the page
-  // twice.
-  const { total, orderedMethods, methodCounts } = useMemo(() => {
-    const methods = new Map<string, number>();
-    let n = 0;
-    for (const r of requirements) {
-      for (const c of r.criteria) {
-        n += 1;
-        methods.set(c.method, (methods.get(c.method) ?? 0) + 1);
-      }
-    }
-    const orderedM = [
-      ...METHOD_ORDER.filter((m) => methods.has(m)),
-      ...[...methods.keys()].filter((m) => !METHOD_ORDER.includes(m)).sort(),
-    ];
-    return { total: n, orderedMethods: orderedM, methodCounts: methods };
-  }, [requirements]);
+  // Per-method tally for the summary header, from counts.ts so the consumer's own
+  // method line (the console's tile, while an attempt is still running) counts the
+  // same criteria in the same order. The per-run-state tally is deliberately NOT
+  // here: it belongs with the verdict it explains, which the consumer renders above
+  // this view (tallyCriterionStates), and duplicating it here would put the same
+  // numbers on the page twice.
+  const methods = useMemo(() => tallyCriterionMethods(criteria), [criteria]);
+  // Every criterion has exactly one method, so the tally is a partition of them.
+  const total = methods.reduce((n, m) => n + m.count, 0);
 
   const reqCount = requirements.length;
   return (
@@ -310,6 +428,18 @@ function ValidationBody({
           Validation Criteria
         </Typography>
 
+        {/* What this document is, where it comes from, and what happens to it.
+            Nothing else in the spec workspace says so, and the reader meets the
+            criteria here before any run has produced a result to learn from. */}
+        {!hideDescription && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, maxWidth: "72ch" }}>
+            Each criterion represents one thing your software must do, based on your
+            requirements. After every deployment they are checked against the running
+            software, and the results appear under Validations. To change one, ask the
+            agent.
+          </Typography>
+        )}
+
         {/* Summary — totals plus a colored tally per verification method */}
         <Box
           sx={{
@@ -325,12 +455,8 @@ function ValidationBody({
             {reqCount} {reqCount === 1 ? "requirement" : "requirements"} ·{" "}
             {total} {total === 1 ? "criterion" : "criteria"}
           </Typography>
-          {orderedMethods.map((m) => (
-            <SolidBadge
-              key={m}
-              label={`${m} ${methodCounts.get(m) ?? 0}`}
-              color={METHOD_COLOR[m] ?? FALLBACK}
-            />
+          {methods.map(({ method, count }) => (
+            <MethodBadge key={method} method={method} count={count} />
           ))}
         </Box>
 
@@ -340,7 +466,13 @@ function ValidationBody({
           </Typography>
         ) : (
           requirements.map((r) => (
-            <RequirementCard key={r.id} requirement={r} statuses={statuses} />
+            <RequirementCard
+              key={r.id}
+              requirement={r}
+              statuses={statuses}
+              live={live}
+              awaiting={awaitingReport}
+            />
           ))
         )}
       </Box>
@@ -376,6 +508,39 @@ export interface ValidationViewProps {
    * govern width. Oxygen's own PageContent draws the same line.
    */
   fullWidth?: boolean;
+  /**
+   * Drop the paragraph explaining what the criteria are. Default off, same reason
+   * as the two above: the Spec view is where a reader first meets this document,
+   * with nothing else on the page to say what it is for. The Validations page is
+   * the opposite — the reader arrived there to read run results, and a sentence
+   * telling them results appear under Validations is redundant on the page that
+   * holds them.
+   */
+  hideDescription?: boolean;
+  /**
+   * Chip every criterion with what is ABOUT to happen to it, for a consumer showing
+   * the oracle while a validation attempt is in flight: "Pending" for the ones an
+   * agent will drive, "Manual" for the ones only a person can judge.
+   *
+   * Off by default, like its neighbours, and ignored for any criterion that
+   * HAS a report — the Spec view's file preview shows the plain oracle with no run
+   * attached to it, and chips there would name a run that does not exist.
+   *
+   * Named for the state rather than `pending`: a boolean prop by that name reads as
+   * react-query's `isPending` — "still loading" — which is the opposite of what this
+   * means. The criteria are loaded; the RESULTS are not.
+   */
+  awaitingReport?: boolean;
+
+  /**
+   * What the run is doing to each criterion right now — see LiveStatuses.
+   *
+   * Ranked ABOVE `report`, so a repeat attempt shows what it is re-working
+   * instead of the last attempt's verdict. Supply it only while a cycle is
+   * actually in flight: a stale map would keep overriding a settled report with
+   * statuses nothing is still producing.
+   */
+  live?: LiveStatuses;
 }
 
 export function ValidationView({
@@ -383,6 +548,9 @@ export function ValidationView({
   report,
   noPadding = false,
   fullWidth = false,
+  hideDescription = false,
+  awaitingReport = false,
+  live,
 }: ValidationViewProps) {
   const parsed = useMemo(() => parseValidationCriteria(criteria), [criteria]);
   // The report is optional and tolerant: a bad report never blocks the oracle —
@@ -417,8 +585,11 @@ export function ValidationView({
       <ValidationBody
         criteria={parsed}
         statuses={statuses}
+        live={live}
         noPadding={noPadding}
         fullWidth={fullWidth}
+        hideDescription={hideDescription}
+        awaitingReport={awaitingReport}
       />
     </>
   );

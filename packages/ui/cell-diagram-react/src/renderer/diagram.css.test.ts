@@ -94,6 +94,52 @@ describe("diagram interaction styles", () => {
     expect(missing).toEqual([]);
   });
 
+  // The dark palette was Tailwind slate, and slate is a blue: against a
+  // near-black app ground the canvas read as a navy slab sitting on the page
+  // rather than as the card holding it. The greys are the part that has to
+  // stay grey — the four boundary directions are exempt, since their hue is
+  // what they mean.
+  it("keeps the dark theme's greys off the blue axis", () => {
+    // EVERY neutral in the dark block, not a sample of them: a tint that
+    // creeps back into an untested token is exactly the regression this guards,
+    // and the four boundary directions plus the warning pair are the only
+    // tokens here whose hue is the thing they mean.
+    const greys = [
+      "--cd-canvas-bg",
+      "--cd-surface",
+      "--cd-surface-hover",
+      "--cd-line",
+      "--cd-line-strong",
+      "--cd-dots",
+      "--cd-node-border",
+      "--cd-external-border",
+      "--cd-edge",
+      "--cd-title-text",
+      "--cd-node-text",
+      "--cd-body-text",
+      "--cd-muted-text",
+      "--cd-subtle-text",
+      "--cd-disabled-text",
+      "--cd-boundary-color",
+      "--cd-info-text",
+      "--cd-info-bg",
+      "--cd-info-border",
+      "--cd-hint-active-text",
+    ];
+
+
+    for (const token of greys) {
+      const hex = darkTokenBlock.match(new RegExp(`${token}: (#[0-9a-f]{6});`))?.[1];
+      expect(hex, `${token} should be a six-digit hex`).toBeDefined();
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex!.slice(i, i + 2), 16));
+      // 8/255 of spread is a tint you cannot name; slate's #0f172a spans 27.
+      expect(
+        Math.max(r, g, b) - Math.min(r, g, b),
+        `${token} (${hex}) carries a visible hue`,
+      ).toBeLessThanOrEqual(8);
+    }
+  });
+
   it("turns diagram construction motion off for reduced-motion users", () => {
     const reducedMotionRule = styles.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/)?.[0] ?? "";
 

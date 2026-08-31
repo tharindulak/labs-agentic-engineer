@@ -9,7 +9,7 @@
   "exposure": "intranet",
   "dependencies": [
     { "kind": "platform-resource", "name": "lunch-db", "resourceType": "postgres", "parameters": { "size": "small" }, "description": "Stores rounds and items." },
-    { "kind": "platform-resource", "name": "team-auth", "resourceType": "thunder-app", "parameters": { "scopes": "openid profile email" }, "description": "Validates the signed-in teammate's identity on protected endpoints (Google Workspace SSO via Thunder)." },
+    { "kind": "platform-resource", "name": "team-auth", "resourceType": "thunder-app", "description": "Validates the signed-in teammate's identity on protected endpoints (Google Workspace SSO via Thunder)." },
     { "kind": "external", "name": "slack", "style": "sdk", "package": "npm:@slack/web-api", "description": "Posts the round-opened and round-closed notification messages to the team's Slack channel via chat.postMessage.", "config": [
       { "key": "SLACK_BOT_TOKEN", "secret": true, "description": "Bot token for the Slack app authorized to post to the team channel." },
       { "key": "SLACK_CHANNEL_ID", "description": "Channel ID the round-open/cutoff notifications are posted to." }

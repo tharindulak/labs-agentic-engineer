@@ -39,7 +39,7 @@ func TestSchemeRegistersThunderApplication(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-app", Namespace: "default"},
 		Spec: ThunderApplicationSpec{
 			DisplayName:  "My App",
-			Scopes:       "openid profile email",
+			Scopes:       "openid profile email group ou",
 			RedirectURIs: "https://example.com/callback",
 		},
 		Status: ThunderApplicationStatus{

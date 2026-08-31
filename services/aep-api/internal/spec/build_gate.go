@@ -29,7 +29,7 @@ package spec
 //   - every deployable component is ENRICHED (its design.json moved off the
 //     scaffold placeholder, a language decided) and carries its type-mandated
 //     artifact (service → openapi.yaml, web-application → wireframes.dsl);
-//   - a design with END-USER SIGN-IN carries specs/design/roles.json, it parses,
+//   - a design with END-USER SIGN-IN carries specs/design/security.json, it parses,
 //     and every story its roles cite is a real PRD story. The platform creates
 //     the roles and test users that file declares when the tag is built, so a
 //     design that signs users in but declares no roles ships an app whose
@@ -49,7 +49,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/platform/rolesspec"
+	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
 // Build-gate error codes (join the designspec/save vocabulary the console
@@ -63,7 +63,7 @@ const (
 	codeMissingComponentArtifact = "MISSING_COMPONENT_ARTIFACT"
 	// codeMissingRolesDocument — the design has sign-in but declares no roles.
 	codeMissingRolesDocument = "MISSING_ROLES_DOCUMENT"
-	// codeInvalidRolesDocument — roles.json does not parse, or breaks a
+	// codeInvalidRolesDocument — security.json does not parse, or breaks a
 	// referential rule the platform depends on at build time.
 	codeInvalidRolesDocument = "INVALID_ROLES_DOCUMENT"
 	// codeUnknownRoleStory — a role cites a PRD story that does not exist.
@@ -177,7 +177,7 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 	return errs
 }
 
-// validateRolesDocument checks the structured half of the security design.
+// validateRolesDocument checks the security design (roles, test users, thunder).
 //
 // Presence is keyed on END-USER SIGN-IN, read off committed truth rather than a
 // live catalog call: design-save already derives `exposesAPI.auth =
@@ -186,10 +186,10 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 // marker (derive_auth.go). So the marker's consequence is already in the bundle,
 // and the gate needs no cluster round-trip and no hardcoded resourceType name.
 //
-// The story cross-check lives here rather than in rolesspec because only the
-// gate sees the PRD: rolesspec validates one file, this validates the bundle.
+// The story cross-check lives here rather than in securityspec because only the
+// gate sees the PRD: securityspec validates one file, this validates the bundle.
 func validateRolesDocument(designFiles map[string]string, prdStories map[int]string) []FileValidationError {
-	raw, present := designFiles[rolesspec.BundleKey]
+	raw, present := designFiles[securityspec.BundleKey]
 	hasRoles := present && strings.TrimSpace(raw) != ""
 
 	if !hasRoles {
@@ -197,23 +197,23 @@ func validateRolesDocument(designFiles map[string]string, prdStories map[int]str
 			return nil
 		}
 		return []FileValidationError{{
-			Path: rolesspec.BundleKey, Code: codeMissingRolesDocument,
+			Path: securityspec.BundleKey, Code: codeMissingRolesDocument,
 			Message: "this design signs users in but declares no roles — write " +
-				"specs/design/roles.json with the roles the PRD's actors need and a test user " +
+				"specs/design/security.json with the roles the PRD's actors need and a test user " +
 				"for each, or the platform has nothing to provision and validation cannot " +
 				"exercise role-gated behaviour",
 		}}
 	}
 
-	doc, err := rolesspec.Parse([]byte(raw))
+	doc, err := securityspec.Parse([]byte(raw))
 	if err != nil {
-		var ve *rolesspec.ValidationError
+		var ve *securityspec.ValidationError
 		msg := err.Error()
 		if errors.As(err, &ve) {
 			msg = ve.Message
 		}
 		return []FileValidationError{{
-			Path: rolesspec.BundleKey, Code: codeInvalidRolesDocument, Message: msg,
+			Path: securityspec.BundleKey, Code: codeInvalidRolesDocument, Message: msg,
 		}}
 	}
 
@@ -225,7 +225,7 @@ func validateRolesDocument(designFiles map[string]string, prdStories map[int]str
 		for _, n := range role.Stories {
 			if _, ok := prdStories[n]; !ok {
 				errs = append(errs, FileValidationError{
-					Path: rolesspec.BundleKey, Code: codeUnknownRoleStory,
+					Path: securityspec.BundleKey, Code: codeUnknownRoleStory,
 					Message: fmt.Sprintf("role %q cites story %d, which the PRD does not define — "+
 						"cite a real story or drop it", role.Name, n),
 				})

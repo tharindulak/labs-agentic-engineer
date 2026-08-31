@@ -101,6 +101,20 @@ export type ChatMessage =
        */
       streaming?: boolean;
     }
+  | {
+      id: string;
+      role: "plan";
+      turnId: string;
+      /** Correlates the row with its declare_plan tool-call (replay-stable). */
+      toolCallId: string;
+      /** How many paths this call genuinely ADDED to the turn's plan — the
+       *  union in planStore ignores restated entries, and a call that adds
+       *  nothing never makes a row. */
+      added: number;
+      /** True when the plan already held entries, so the row reads as growth
+       *  ("Planned N more") rather than as the plan ("Planned N documents"). */
+      grew: boolean;
+    }
   | { id: string; role: "error"; content: string };
 
 const MAX_MESSAGES = 200;
@@ -223,7 +237,7 @@ export function settleUserMessage(
  * toolCallId always appends (never a false in-place hit). `merge` lets a caller
  * keep fields the fresh fold doesn't know (e.g. a recorded answer).
  */
-function upsertByToolCallId<R extends "tool" | "question">(
+function upsertByToolCallId<R extends "tool" | "question" | "plan">(
   key: string,
   role: R,
   msg: WithoutId<Extract<ChatMessage, { role: R }>>,
@@ -276,6 +290,18 @@ export function upsertQuestionMessage(
   upsertByToolCallId(key, "question", msg, (existing) =>
     existing.answers ? { answers: existing.answers } : {},
   );
+}
+
+/**
+ * Add a plan activity row (#576, ADR-0025) — the declare_plan call surfacing
+ * in the chat like any other tool step. Keyed by toolCallId so the belt-and-
+ * braces double publish (tool-input-end, then tool-call) lands on one row.
+ */
+export function upsertPlanMessage(
+  key: string,
+  msg: WithoutId<Extract<ChatMessage, { role: "plan" }>>,
+): void {
+  upsertByToolCallId(key, "plan", msg);
 }
 
 /** Streamed text accumulates into the turn's last assistant message. */

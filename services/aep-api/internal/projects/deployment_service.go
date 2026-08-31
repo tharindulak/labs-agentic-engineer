@@ -62,6 +62,12 @@ type DeploymentService struct {
 	// consumer of a protected sibling as `<DEP>_GATEWAY_URL`. Empty leaves every
 	// consumer on the direct-Service lane (see gateway_address.go).
 	gatewayHost string
+	// catalog, resourceClient, and thunder are the thunder-callback wait
+	// ports. Any nil (including a nil store) skips the wait so existing
+	// OC-only DeploymentState tests stay green without new wiring.
+	catalog        resourceMarkerCatalog
+	resourceClient bindingEnvironmentPatcher
+	thunder        ThunderApplicationReader
 }
 
 // ComponentEnvVarReader is the user's component config, consumer-side.
@@ -273,6 +279,11 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 // A binding that does not exist yet reads as pending, not as an error: between
 // the write and OpenChoreo admitting the object there is a window the poll has
 // to be able to sit in.
+//
+// After folding OpenChoreo Ready, a web-application whose platform-resource
+// CRT carries ConsumerURLEnvConfig is not Ready until the ThunderApplication
+// CR has the SPA callback (see applyThunderWait). Nil wait ports keep today's
+// OC-only verdict.
 func (s *DeploymentService) DeploymentState(ctx context.Context, orgID, projectID string, components []string) ([]delivery.ComponentDeploy, error) {
 	if s == nil || s.components == nil {
 		return nil, fmt.Errorf("deployment: not configured")
@@ -283,7 +294,11 @@ func (s *DeploymentService) DeploymentState(ctx context.Context, orgID, projectI
 		if err != nil {
 			return nil, fmt.Errorf("deployment: read binding for %q: %w", name, err)
 		}
-		out = append(out, componentDeployFrom(name, summary))
+		st := componentDeployFrom(name, summary)
+		if err := s.applyThunderWait(ctx, orgID, projectID, name, summary, &st); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
 	}
 	return out, nil
 }

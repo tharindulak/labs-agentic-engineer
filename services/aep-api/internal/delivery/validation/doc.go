@@ -36,7 +36,7 @@
 // validation-context endpoint before its agent starts.
 //
 // TEST CREDENTIALS do not come from this domain at all. The build provisions the
-// project's test users (the identity domain, from `specs/design/roles.json`) and
+// project's test users (the identity domain, from `specs/design/security.json`) and
 // publishes each account's login as a comment on the ROLES GATE ticket, which is
 // where the agent reads it (ADR-0022). That leaves exactly one published copy of
 // each password, so no two places can disagree about it.

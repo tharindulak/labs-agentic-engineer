@@ -17,9 +17,9 @@
  */
 
 import { PRD_PATH } from "./mapping";
+import { SECURITY_JSON_PATH } from "./designTree";
 
 const DESIGN_ROOT = "specs/design/design.md";
-const SECURITY = "specs/design/security.md";
 const OPENAPI_RE = /\/openapi\.ya?ml$/;
 const COMPONENT_DESIGN_RE = /^specs\/design\/components\/[^/]+\/design\.json$/;
 const VALIDATION_CRITERIA_RE = /^specs\/validation\/validation-criteria\.json$/;
@@ -32,9 +32,9 @@ function basename(path: string): string {
  * A document's NAME, never its filename (#575).
  *
  * The user is reading a document tree, not a repository — `prd.md` and
- * `security.md` are storage details that leaked into the one surface they read
- * throughout the journey. The repo paths deliberately do not change; this is
- * the mapping, and the lexicon holds the same table in words.
+ * `security.json` are storage details that leaked into the one surface they
+ * read throughout the journey. The repo paths deliberately do not change; this
+ * is the mapping, and the lexicon holds the same table in words.
  *
  * A file with no entry here falls back to its filename, which keeps an
  * agent-invented document readable rather than blank. Feature files land there
@@ -44,7 +44,7 @@ function basename(path: string): string {
 const TITLES: Record<string, string> = {
   [PRD_PATH]: "Product requirements",
   [DESIGN_ROOT]: "Design overview",
-  [SECURITY]: "Security",
+  [SECURITY_JSON_PATH]: "Security",
 };
 
 export function fileLabel(path: string): string {

@@ -17,7 +17,7 @@
  */
 
 import type { ReactElement, ReactNode } from "react";
-import { PageTitle, Stack } from "@wso2/oxygen-ui";
+import { Box, PageTitle, Stack } from "@wso2/oxygen-ui";
 import { StatusChip, type StatusTone } from "./StatusChip";
 
 export interface PageHeaderStatus {
@@ -64,9 +64,16 @@ export function PageHeader({
   return (
     <PageTitle>
       {backTo && (
-        <PageTitle.BackButton component={backTo.link}>
-          {backTo.label}
-        </PageTitle.BackButton>
+        // Shrink-wrapped on purpose. `PageTitle.BackButton` renders a
+        // full-width block row, and the router link inside it stretches with
+        // it — so the whole width of the page, out to the right margin, was a
+        // live back-navigation target with nothing visible there. Only the
+        // button should navigate.
+        <Box sx={{ width: "fit-content" }}>
+          <PageTitle.BackButton component={backTo.link}>
+            {backTo.label}
+          </PageTitle.BackButton>
+        </Box>
       )}
       <PageTitle.Header>
         {status ? (

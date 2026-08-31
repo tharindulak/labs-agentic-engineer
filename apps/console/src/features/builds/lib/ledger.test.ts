@@ -22,6 +22,8 @@ import {
   buildDuration,
   countTasks,
   isAwaitingValues,
+  isDeployable,
+  isDurationOpen,
   isLedgerLive,
   ledgerDuration,
   ledgerStatus,
@@ -32,6 +34,8 @@ import {
 type BuildSummary = components["schemas"]["BuildSummary"];
 type TaskView = components["schemas"]["TaskView"];
 type DeployStage = components["schemas"]["DeployStage"];
+type RunCycleView = components["schemas"]["RunCycleView"];
+type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 
 const build = (over: Partial<BuildSummary> = {}): BuildSummary => ({
   tag: "v1",
@@ -229,6 +233,104 @@ describe("buildDuration", () => {
 
   it("shows an em dash rather than an empty cell", () => {
     expect(ledgerDuration(build({ startedAt: "not-a-date" }))).toBe("—");
+  });
+});
+
+describe("isDurationOpen", () => {
+  it("is open exactly while the build has no end — that is when the clock is now", () => {
+    expect(isDurationOpen(build({ completedAt: null }))).toBe(true);
+    expect(isDurationOpen(build({ completedAt: "2026-08-14T16:38:04Z" }))).toBe(false);
+  });
+
+  it("stays open for a build the ledger no longer calls live", () => {
+    // The screenshot that reported this: `status` had already left
+    // started/in_progress, but `completedAt` was absent, so the Duration cell
+    // was still being measured against now — and had to keep counting.
+    // Keying the ticker on `isLedgerLive` would have frozen exactly this case.
+    const stray = build({ status: "completed", completedAt: null });
+    expect(isLedgerLive(stray)).toBe(false);
+    expect(isDurationOpen(stray)).toBe(true);
+  });
+
+  it("is closed when there is no span to measure at all", () => {
+    expect(isDurationOpen(build({ startedAt: "" }))).toBe(false);
+  });
+});
+
+describe("isDeployable", () => {
+  const cycle = (over: Partial<RunCycleView> = {}): RunCycleView => ({
+    id: "cycle-1",
+    kind: "coding",
+    attempts: 1,
+    createdAt: "2026-08-28T09:36:00Z",
+    ...over,
+  });
+
+  const run = (cycles: RunCycleView[], over: Partial<MilestoneRunView> = {}): MilestoneRunView => ({
+    id: "run-1",
+    milestoneNumber: 1,
+    milestoneTitle: "Milestone 1",
+    kind: "dev",
+    state: "succeeded",
+    origin: "spec-build",
+    createdAt: "2026-08-28T09:35:04Z",
+    cycles,
+    budgets: {
+      cyclesTotal: 1,
+      cycleCeiling: 8,
+      fixCycles: 0,
+      conflictCycles: 0,
+      buildRetriggers: 0,
+      validationCycles: 0,
+    },
+    validation: {},
+    ...over,
+  });
+
+  it("withholds the Deployments link until a pull request has actually merged", () => {
+    // The reported bug: the card offered a board that had nothing to show for
+    // this version, one line above a note saying it deploys as its tasks merge.
+    expect(isDeployable(build(), [run([cycle({ mergeSha: "" })])], undefined)).toBe(false);
+    expect(isDeployable(build(), [run([cycle({ mergeSha: "abc1234" })])], undefined)).toBe(true);
+  });
+
+  it("is not fooled by closed issues that no pull request ever produced", () => {
+    // Found by deploying: a cancelled run had BOTH its tasks reading
+    // `derivedStatus: "merged"` — that field only says the issue is closed —
+    // while its single cycle carried `prNumber` 0 and no merge SHA. Counting
+    // "merged" tasks would have called this version deployable.
+    expect(
+      isDeployable(build(), [run([cycle({ prNumber: 0, mergeSha: "" })], { state: "cancelled" })], undefined),
+    ).toBe(false);
+  });
+
+  it("asks EVERY run of the version, not just the newest", () => {
+    // Also found by deploying: a version whose coding cycle merged pull request
+    // #15 was later reworked by a `task` run that opened no cycle at all.
+    // Asking only the newest run made merged code look unmerged — and a later
+    // run cannot un-merge what is already in the repository.
+    const merged = run([cycle({ prNumber: 15, mergeSha: "c185b23" })], { id: "older" });
+    const rework = run([], { id: "newer", kind: "task", state: "cancelled" });
+    expect(isDeployable(build(), [rework, merged], undefined)).toBe(true);
+  });
+
+  it("stays away when there is no run to have merged anything", () => {
+    expect(isDeployable(build(), undefined, undefined)).toBe(false);
+    expect(isDeployable(build(), [], undefined)).toBe(false);
+    expect(isDeployable(build(), [run([])], undefined)).toBe(false);
+  });
+
+  it("ignores a validation cycle's SHA — it names the commit it judged", () => {
+    expect(
+      isDeployable(build(), [run([cycle({ kind: "validation", mergeSha: "abc1234" })])], undefined),
+    ).toBe(false);
+  });
+
+  it("offers the link regardless once the deploy names this version", () => {
+    // Whatever the runs say, a version the platform has deployed is on the
+    // Deployments board by definition.
+    expect(isDeployable(build({ tag: "v1" }), [], deploy({ version: "v1" }))).toBe(true);
+    expect(isDeployable(build({ tag: "v2" }), [], deploy({ version: "v1" }))).toBe(false);
   });
 });
 

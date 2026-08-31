@@ -1,5 +1,4 @@
 import { setupWorker } from "msw/browser";
-import { activityHandlers } from "./handlers/activity";
 import { agentChatHandlers } from "./handlers/agent-chat";
 import { projectHandlers } from "./handlers/project";
 import { projectsHandlers } from "./handlers/projects";
@@ -16,7 +15,6 @@ import { rolesHandlers } from "./handlers/roles";
 // specific than /projects/:name, so they register first.
 export const worker = setupWorker(
   ...agentChatHandlers,
-  ...activityHandlers,
   ...workloadDependenciesHandlers,
   ...projectHandlers,
   ...projectsHandlers,

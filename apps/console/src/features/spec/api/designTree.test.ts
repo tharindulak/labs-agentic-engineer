@@ -99,4 +99,36 @@ describe("buildDesignSection", () => {
     expect(section.hasComponents).toBe(false);
     expect(section.overview).toEqual([]);
   });
+
+  it("flags hasSecurity only when security.json exists", () => {
+    expect(
+      buildDesignSection([e("specs/design/design.md")]).hasSecurity,
+    ).toBe(false);
+    expect(
+      buildDesignSection([e("specs/design/security.json")]).hasSecurity,
+    ).toBe(true);
+  });
+
+  it("does not treat leftover security.md or roles.json as the Security entry", () => {
+    const section = buildDesignSection([
+      e("specs/design/design.md"),
+      e("specs/design/security.md"),
+      e("specs/design/roles.json"),
+    ]);
+    expect(section.hasSecurity).toBe(false);
+    expect(section.overview.map((f) => f.path)).toEqual([
+      "specs/design/design.md",
+      "specs/design/roles.json",
+      "specs/design/security.md",
+    ]);
+  });
+
+  it("keeps security.json out of the overview list", () => {
+    const section = buildDesignSection([
+      e("specs/design/design.md"),
+      e("specs/design/security.json"),
+    ]);
+    expect(section.hasSecurity).toBe(true);
+    expect(section.overview.map((f) => f.path)).toEqual(["specs/design/design.md"]);
+  });
 });

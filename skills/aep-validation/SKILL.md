@@ -244,6 +244,12 @@ tests/e2e/
   always executes the plugin's copy directly and refreshes this
   committed copy, which exists only so humans can reproduce the report
   after checkout.
+- `playwright.config.ts` is platform-owned too, and is the one scaffold
+  file to re-copy from the template on EVERY run rather than skip when
+  present. It carries the launch args that make deployed endpoints
+  reachable and the rule deciding which run may write `results.json`;
+  a repo scaffolded before either landed keeps the old behaviour
+  silently, which is exactly the class of bug those two exist to fix.
 
 ### 6. PLAN, then GENERATE
 
@@ -268,6 +274,18 @@ counts only after passing twice consecutively against the live app.
 - Spec naming (the report's join key — get this exactly right):
   - file: `tests/e2e/specs/<AC-ID>.spec.ts` (e.g. `AC-001-a.spec.ts`)
   - title: `test('<AC-ID>: <short form of the must>', ...)`
+- **Create the file before you explore for it.** For each criterion you
+  are authoring fresh, write `tests/e2e/specs/<AC-ID>.spec.ts` with its
+  `// spec:` header and nothing else, THEN explore, THEN fill in the
+  body. The header is mandatory either way — `generate-report.mjs`
+  hard-fails without it — so this changes only when you write it, and a
+  header-only spec is how the platform knows that criterion has been
+  picked up. Exploration is the longest stretch of this phase and the
+  only one nothing else can see into.
+
+  Only for specs you are CREATING. Never blank an existing spec back to
+  its header: that registers as a pre-existing spec modified with no
+  heal-log entry and fails the report.
 
 ### 7. RUN
 
@@ -298,17 +316,19 @@ Two things about this step will mislead you if you let them:
   unrecoverable — there is no way to attach to it or read its output
   later. Getting the timeout right up front is the whole game.
 
-If the suite is too big for one window, **shard it** — never let one
-call run past the limit:
+**Never narrow this call** — no spec filter, and none of `--shard`,
+`--grep`, `--last-failed`, `--only-changed`. The config decides which run
+may write `results.json` by whether the command narrows the suite: a
+complete run is this one, and anything narrower is a probe — a spec being
+checked while it is authored (step 6) or healed (step 8), neither of which
+may overwrite the report's input. A narrowed run therefore writes nothing,
+and `generate-report.mjs` exits 2 naming the missing file. That is
+deliberate: a run that loudly writes nothing beats one that quietly writes
+a third of the suite as if it were all of it.
 
-```bash
-# the `--` is what passes the filter through npm to Playwright
-npm test --prefix tests/e2e -- specs/AC-001-a.spec.ts specs/AC-001-b.spec.ts
-```
-
-Merge each batch's results yourself and keep the per-criterion verdicts;
-sharding changes how the suite is run, never what the report claims. A
-batch that severs is a batch you re-run smaller, not one you skip.
+If the suite genuinely cannot finish inside the window, say so in the plan
+and PR notes: that is a finding about the suite, not something to work
+around by merging batches by hand.
 
 The config writes `tests/e2e/test-results/results.json`. The run includes the
 regression set — that's free regression coverage, not an accident.
@@ -321,9 +341,10 @@ one against the live app, repair only *brittleness* (locators, waits,
 setup), never weaken what a test asserts. Log each heal in
 `tests/e2e/heal-log.json`. When the budget is exhausted, finish with
 one final full run so `results.json` reflects the authoritative state —
-under the same timeout discipline as step 7, sharded if that is what it
-takes. A final run that severs leaves you with no authoritative state at
-all, which is worse than a slower one that lands.
+under the same timeout discipline as step 7, and under its no-sharding
+rule for the same reason: a run that names specs is read as a probe and
+writes no `results.json` at all. A final run that severs leaves you with
+no authoritative state, and a sharded one leaves you with none either.
 
 ### 9. REPORT
 

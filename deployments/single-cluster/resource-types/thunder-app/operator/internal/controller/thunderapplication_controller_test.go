@@ -105,7 +105,7 @@ func newApp(ns, name string, spec v1alpha1.ThunderApplicationSpec) *v1alpha1.Thu
 func TestReconcile_FreshCR(t *testing.T) {
 	app := newApp("test-ns", "my-app", v1alpha1.ThunderApplicationSpec{
 		DisplayName:  "My App",
-		Scopes:       "openid profile email",
+		Scopes:       "openid profile email group ou",
 		RedirectURIs: "https://a.example.com,https://b.example.com",
 	})
 	admin := &fakeAdmin{clientID: "cid-123"}
@@ -126,8 +126,8 @@ func TestReconcile_FreshCR(t *testing.T) {
 	if got.Name != "aep-test-ns-my-app" {
 		t.Errorf("DesiredApp.Name = %q, want aep-test-ns-my-app", got.Name)
 	}
-	if !reflect.DeepEqual(got.Scopes, []string{"openid", "profile", "email"}) {
-		t.Errorf("Scopes = %#v, want [openid profile email]", got.Scopes)
+	if !reflect.DeepEqual(got.Scopes, []string{"openid", "profile", "email", "group", "ou"}) {
+		t.Errorf("Scopes = %#v, want [openid profile email group ou]", got.Scopes)
 	}
 	if !reflect.DeepEqual(got.RedirectURIs, []string{"https://a.example.com", "https://b.example.com"}) {
 		t.Errorf("RedirectURIs = %#v", got.RedirectURIs)

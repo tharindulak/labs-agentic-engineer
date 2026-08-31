@@ -274,6 +274,17 @@ export interface DiagramCanvasInsets {
 const DEFAULT_INSETS: DiagramCanvasInsets = { left: 0, right: 0 };
 const FIT_VIEW_VERTICAL_PADDING: `${number}px` = "112px";
 const FIT_VIEW_LEFT_PADDING = 112;
+
+/**
+ * The vertical breathing room a COMPACT canvas gets instead of the 112px above.
+ *
+ * That 112px is not decoration: it keeps the graph clear of the floating
+ * chrome — the zoom controls and the canvas notification — in the full-screen
+ * workspace. A preview hides both, so there is nothing left to clear, and on a
+ * short embed the reservation is ruinous: 112 top and bottom is 224px of a
+ * 340px panel, leaving a third of the box for the diagram it exists to show.
+ */
+const FIT_VIEW_COMPACT_PADDING: `${number}px` = "16px";
 const MOTION_SETTLE_MS = 420;
 
 interface FitPadding {
@@ -283,12 +294,13 @@ interface FitPadding {
   right: `${number}px`;
 }
 
-function buildFitPadding(insets: DiagramCanvasInsets): FitPadding {
+function buildFitPadding(insets: DiagramCanvasInsets, compact = false): FitPadding {
   const leftPadding = insets.left > 0 ? insets.left + FIT_VIEW_LEFT_PADDING : 0;
+  const vertical = compact ? FIT_VIEW_COMPACT_PADDING : FIT_VIEW_VERTICAL_PADDING;
 
   return {
-    top: FIT_VIEW_VERTICAL_PADDING,
-    bottom: FIT_VIEW_VERTICAL_PADDING,
+    top: vertical,
+    bottom: vertical,
     left: `${leftPadding}px`,
     right: `${insets.right}px`
   };
@@ -297,24 +309,29 @@ function buildFitPadding(insets: DiagramCanvasInsets): FitPadding {
 function FitViewController({
   insets,
   model,
-  fitKey
+  fitKey,
+  compact
 }: {
   insets: DiagramCanvasInsets;
   model: ProjectModel;
   fitKey?: string;
+  compact?: boolean;
 }) {
   const { fitView } = useReactFlow();
   const { left, right } = insets;
 
   useEffect(() => {
-    const fitOptions = { padding: buildFitPadding({ left, right }), duration: 200 };
+    const fitOptions = {
+      padding: buildFitPadding({ left, right }, compact),
+      duration: 200
+    };
     fitView(fitOptions);
     const postPaintFit = window.requestAnimationFrame(() => fitView(fitOptions));
 
     // model is only used to re-trigger the fit when the diagram data itself changes
     // (switching documents), not on every re-render (e.g. focus-click highlighting).
     return () => window.cancelAnimationFrame(postPaintFit);
-  }, [left, right, fitView, model, fitKey]);
+  }, [left, right, fitView, model, fitKey, compact]);
 
   return null;
 }
@@ -399,6 +416,23 @@ export interface DiagramCanvasProps {
   canvasMessage?: CanvasMessage | null;
   /** Light or dark color theme. Defaults to `"light"`. */
   theme?: DiagramTheme;
+  /**
+   * Fit the graph for an embed that hides the floating chrome, trading the
+   * room reserved for zoom controls and notifications for the diagram itself.
+   */
+  compact?: boolean;
+  /**
+   * A diagram to look at, not to operate: no dragging, no selection, and no
+   * keyboard focus on the nodes.
+   *
+   * A host cannot achieve this with `pointer-events: none` on a wrapper, which
+   * is what the overview panel tried. React Flow's own stylesheet sets
+   * `pointer-events: all` on `.react-flow__node`, so the nodes re-enable
+   * themselves and stay draggable; and pointer events never governed the
+   * keyboard anyway — every node carries `tabindex="0"`, so a keyboard user
+   * tabbed through eleven of them on a panel that is not supposed to respond.
+   */
+  readOnly?: boolean;
 }
 
 export interface CanvasMessage {
@@ -416,7 +450,9 @@ export function DiagramCanvas({
   customLayout = null,
   onCustomLayoutChange,
   canvasMessage = null,
-  theme = "light"
+  theme = "light",
+  compact = false,
+  readOnly = false
 }: DiagramCanvasProps) {
   const [activeConnectionIds, setActiveConnectionIds] = useState<string[]>([]);
   const [, setMotionVersion] = useState(0);
@@ -425,7 +461,15 @@ export function DiagramCanvas({
     () => (model ? toReactFlow(model) : { nodes: [], edges: [], cellSize: { width: 0, height: 0 } }),
     [model]
   );
-  const positionedNodes = useMemo(() => applyCustomLayout(flow.nodes, customLayout), [customLayout, flow.nodes]);
+  const laidOutNodes = useMemo(() => applyCustomLayout(flow.nodes, customLayout), [customLayout, flow.nodes]);
+  // Per-node `draggable` BEATS the canvas-wide `nodesDraggable`, so a read-only
+  // canvas has to clear the flag `flowLayout` sets on the kinds a user may
+  // normally arrange. Without this the nodes keep their drag handlers and the
+  // "read-only" preview is still something you can rearrange with a mouse.
+  const positionedNodes = useMemo(
+    () => (readOnly ? laidOutNodes.map((n) => ({ ...n, draggable: false })) : laidOutNodes),
+    [laidOutNodes, readOnly],
+  );
   const [dragNodes, setDragNodes] = useState<Node[] | null>(null);
   const liveNodes = dragNodes ?? positionedNodes;
   const motion = classifyDiagramMotion(
@@ -558,16 +602,24 @@ export function DiagramCanvas({
         edgeTypes={edgeTypes}
         minZoom={0.25}
         maxZoom={1.35}
-        nodesDraggable
+        nodesDraggable={!readOnly}
         nodesConnectable={false}
-        elementsSelectable
+        elementsSelectable={!readOnly}
+        nodesFocusable={!readOnly}
+        edgesFocusable={!readOnly}
+        disableKeyboardA11y={readOnly}
         proOptions={{ hideAttribution: true }}
         onNodesChange={handleNodesChange}
         onNodeDragStop={handleNodeDragStop}
         onNodeClick={(_, node) => setActiveConnections(getConnectionIdsForNode(node.id))}
         onPaneClick={() => setActiveConnections([])}
       >
-        <FitViewController insets={insets} model={model} fitKey={fitKey} />
+        <FitViewController
+          insets={insets}
+          model={model}
+          fitKey={fitKey}
+          compact={compact}
+        />
         <Background color={theme === "dark" ? "#334155" : "#cbd5e1"} gap={22} />
         <ZoomControls insets={insets} />
         {/* TODO: re-enable when the PNG/SVG image export feature is complete.

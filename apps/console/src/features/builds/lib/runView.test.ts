@@ -23,11 +23,14 @@ import {
   buildSessionLabel,
   externalValuesPark,
   gateDrive,
+  hasMergedWork,
+  isAgentStreaming,
   isDeliveryRun,
   isTerminalRun,
   runHold,
   runKind,
   runKindLabel,
+  mergedCycle,
   runStateChip,
   spentBudgets,
   terminalReasonText,
@@ -60,6 +63,106 @@ const run = (over: Partial<MilestoneRunView> = {}): MilestoneRunView => ({
   cycles: [],
   createdAt: "2026-07-10T09:00:00Z",
   ...over,
+});
+
+const cycle = (
+  over: Partial<components["schemas"]["RunCycleView"]> = {},
+): components["schemas"]["RunCycleView"] => ({
+  id: "c1",
+  kind: "coding",
+  attempts: 1,
+  createdAt: "2026-07-10T09:05:00Z",
+  ...over,
+});
+
+describe("mergedCycle / hasMergedWork", () => {
+  it("finds the cycle that actually merged, not the newest one", () => {
+    // The Build logs bug: the section was handed `cycles.at(-1)`, which is
+    // routinely a validation cycle or a coding cycle that never merged, and the
+    // cluster read answers empty for any cycle with no merge SHA.
+    const r = run({
+      cycles: [
+        cycle({ id: "merged", mergeSha: "abc1234" }),
+        cycle({ id: "retry", mergeSha: "" }),
+      ],
+    });
+    expect(mergedCycle([r])?.id).toBe("merged");
+    expect(hasMergedWork([r])).toBe(true);
+  });
+
+  it("looks across every run of the version, newest merge first", () => {
+    // A version is often worked by several runs; the merge is frequently in an
+    // earlier one, and a later run cannot un-merge it.
+    const older = run({ id: "older", cycles: [cycle({ id: "old-merge", mergeSha: "aaa" })] });
+    const newer = run({ id: "newer", kind: "task", cycles: [] });
+    expect(mergedCycle([newer, older])?.id).toBe("old-merge");
+  });
+
+  it("prefers the NEWER RUN's merge when both runs merged something", () => {
+    // The precedence rule itself. The two cases either side of this one pass
+    // just as happily if the scan runs oldest-first: one has no merge in the
+    // newer run, the other has both merges inside a single run.
+    const newer = run({ id: "newer", cycles: [cycle({ id: "new-merge", mergeSha: "bbb" })] });
+    const older = run({ id: "older", cycles: [cycle({ id: "old-merge", mergeSha: "aaa" })] });
+    expect(mergedCycle([newer, older])?.id).toBe("new-merge");
+  });
+
+  it("prefers the newest merge when several cycles merged", () => {
+    const r = run({
+      cycles: [cycle({ id: "first", mergeSha: "aaa" }), cycle({ id: "second", mergeSha: "bbb" })],
+    });
+    expect(mergedCycle([r])?.id).toBe("second");
+  });
+
+  it("does not count a validation cycle's SHA — it names the commit it judged", () => {
+    const r = run({ cycles: [cycle({ kind: "validation", mergeSha: "abc1234" })] });
+    expect(mergedCycle([r])).toBeUndefined();
+    expect(hasMergedWork([r])).toBe(false);
+  });
+
+  it("is undefined when nothing merged", () => {
+    expect(mergedCycle([run({ cycles: [cycle({ mergeSha: "" })] })])).toBeUndefined();
+    expect(mergedCycle([])).toBeUndefined();
+    expect(mergedCycle(undefined)).toBeUndefined();
+  });
+});
+
+describe("isAgentStreaming", () => {
+  it("streams only while a build session is open", () => {
+    expect(isAgentStreaming([run({ cycles: [cycle({ endedAt: null })] })])).toBe(true);
+    expect(
+      isAgentStreaming([run({ cycles: [cycle({ endedAt: "2026-07-10T09:40:00Z" })] })]),
+    ).toBe(false);
+  });
+
+  it("stops the moment the agent finishes, though the RUN is still in progress", () => {
+    // The bug: the chip read the build's status, and a run stays in_progress
+    // through the merge, the component builds and the deployment — long after
+    // the coding agent has stopped and there is nothing left to stream.
+    const settled = run({
+      state: "running",
+      cycles: [cycle({ endedAt: "2026-07-10T09:40:00Z", mergeSha: "abc" })],
+    });
+    expect(isAgentStreaming([settled])).toBe(false);
+  });
+
+  it("never streams on a terminal run", () => {
+    expect(
+      isAgentStreaming([run({ state: "cancelled", cycles: [cycle({ endedAt: null })] })]),
+    ).toBe(false);
+  });
+
+  it("asks only the newest run — an older run's open cycle is not live", () => {
+    const newest = run({ id: "newest", cycles: [cycle({ endedAt: "2026-07-10T09:40:00Z" })] });
+    const older = run({ id: "older", cycles: [cycle({ endedAt: null })] });
+    expect(isAgentStreaming([newest, older])).toBe(false);
+  });
+
+  it("is quiet between sessions, and with no run at all", () => {
+    expect(isAgentStreaming([run({ cycles: [] })])).toBe(false);
+    expect(isAgentStreaming([])).toBe(false);
+    expect(isAgentStreaming(undefined)).toBe(false);
+  });
 });
 
 describe("isTerminalRun / versionIsLive", () => {

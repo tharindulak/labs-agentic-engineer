@@ -37,6 +37,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/observability"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
+	"github.com/wso2/aep/aep-api/internal/clients/thunderapp"
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -556,7 +557,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		identityDirectory = directory
 		rolesEnsure = identity.NewEnsureService(directory, identityStore, identityDesignReader{art: artifactSvcGit})
 		roleCatalogSvc = identity.NewCatalogService(directory, identityStore)
-		slog.Info("roles ensure wired — a build provisions the roles and test users specs/design/roles.json declares")
+		slog.Info("roles ensure wired — a build provisions the roles and test users specs/design/security.json declares")
 	} else {
 		slog.Warn("roles ensure disabled — no Thunder admin client; builds will not provision roles or test users")
 	}
@@ -1064,6 +1065,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		OrgSecrets:        secretRefWriter,
 		OrgResourceDocs:   provisioning.NewGitOrgResourceDocs(repoService, gitOpsService),
 		Roles:             rolesEnsurerOrNil(rolesEnsure),
+		Markers:           resourceTypeCatalog,
+		SecurityJSON:      securityJSONReader{art: artifactSvcGit},
 	})
 	// Assemble the dependencies domain (P8): the provisioning slice (7 ops over
 	// provisioningSvc) + the resource-type-discovery slice (ListPlatformResourceTypes
@@ -1223,6 +1226,28 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The deployment service's two config inputs, wired here because both are
 	// built after it.
 	deploymentService.SetConfigSources(configService, runtimeConfigSvc)
+	// Thunder deploy-wait: after OC Ready, a web-app with ConsumerURLEnvConfig
+	// stays pending until the ThunderApplication CR carries the SPA callback.
+	// Nil reader (no kube API base — local compose) skips the wait.
+	deploymentService.SetResourceCatalog(thunderWaitMarkerCatalog{cat: resourceTypeCatalog})
+	deploymentService.SetResourceClient(resourceClient)
+	if cfg.KubeAPI.BaseURL != "" {
+		thunderClient, err := thunderapp.New(thunderapp.Config{
+			BaseURL:     cfg.KubeAPI.BaseURL,
+			BearerToken: cfg.KubeAPI.BearerToken,
+			TokenFile:   cfg.KubeAPI.TokenFile,
+			CAFile:      cfg.KubeAPI.CAFile,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("thunderapp client: %w", err)
+		}
+		deploymentService.SetThunderApplicationReader(thunderApplicationReader{
+			client: thunderClient,
+		})
+		slog.Info("ThunderApplication CR reader", "baseURL", cfg.KubeAPI.BaseURL)
+	} else {
+		slog.Info("ThunderApplication CR reader disabled — no KUBERNETES_SERVICE_HOST/PORT or KUBE_API_BASE_URL; thunder deploy-wait skipped")
+	}
 	// The address a consumer reaches a protected sibling's managed API on. Config
 	// carries only an override; the default lives beside the context-path builder
 	// it has to agree with.

@@ -22,7 +22,7 @@ import { Stack, Typography } from "@wso2/oxygen-ui";
 // One section-heading pattern for the whole console: a heading with
 // consistent spacing below, and an optional trailing slot for inline
 // chips/counts (e.g. the deployments board's env count + version). Used above
-// the overview's Recent activity / Components sections, the builds Tasks list,
+// the overview's Components / Architecture sections, the builds Tasks list,
 // and the deployments Development / Production boards so every section reads
 // the same.
 export function SectionTitle({

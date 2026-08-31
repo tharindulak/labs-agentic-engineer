@@ -20,17 +20,17 @@
  * The Security panel's LIVE half: what the platform actually created on the
  * identity provider, as opposed to what the design declares.
  *
- * The design half comes from the collab room (`rolesDesign.ts`), so the two are
+ * The design half comes from the collab room (`securityDesign.ts`), so the two are
  * read from different places on purpose — the room shows an edit the moment it
  * is made, and this shows the world as it was at the last Build. Rendering them
  * side by side is what makes "new at Build" and "already there" legible.
  *
- * Reveal and rotate are POSTs and their answers are never cached: a password is
+ * Reveal is a POST and its answer is never cached: a password is
  * a deliberate, momentary disclosure, not a value a query client should hold and
- * re-serve.
+ * re-serve. Rotate and delete stay on the BFF; this panel does not call them.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
@@ -94,39 +94,5 @@ export function useRevealTestUserPassword(projectName: string) {
     // Deliberately no cache write: the revealed password lives in the
     // component's own state for as long as it is on screen, and nowhere else.
     gcTime: 0,
-  });
-}
-
-export function useRotateTestUserPassword(projectName: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (username: string): Promise<TestUserPassword> => {
-      const { data, error } = await client.POST(
-        "/projects/{projectName}/roles/test-users/{username}/rotate",
-        { params: { path: { projectName, username } } },
-      );
-      if (error) throw toError(error, "Failed to rotate the password");
-      return data;
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: rolesKeys.all(projectName) });
-    },
-    gcTime: 0,
-  });
-}
-
-export function useDeleteTestUser(projectName: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (username: string) => {
-      const { error } = await client.DELETE(
-        "/projects/{projectName}/roles/test-users/{username}",
-        { params: { path: { projectName, username } } },
-      );
-      if (error) throw toError(error, "Failed to delete the test user");
-    },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: rolesKeys.all(projectName) });
-    },
   });
 }

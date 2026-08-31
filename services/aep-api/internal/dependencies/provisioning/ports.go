@@ -65,6 +65,22 @@ type DesignReader interface {
 	ReadDesignComponents(ctx context.Context, orgID, projectID string) ([]spec.DesignComponent, error)
 }
 
+// ResourceMarkerCatalog is the CRT marker lookup the end-user-auth overlay
+// keys on. *dependencies.ResourceTypeCatalog satisfies it. Nil skips overlay
+// (existing tests that never inject a catalog stay green).
+type ResourceMarkerCatalog interface {
+	MarkersByName(ctx context.Context) (map[string]dependencies.TypeMarkers, error)
+}
+
+// SecurityJSONReader returns the project's security.json bytes. Empty tag is
+// HEAD (HTTP drawer provision); a spec tag is the build's version. A missing
+// file is (nil, nil) — no overlay, no invented defaults. Nil reader skips
+// overlay. Parse is the caller's job: a present-but-invalid file must fail
+// provision, not silently skip.
+type SecurityJSONReader interface {
+	ReadSecurityJSON(ctx context.Context, orgID, projectID, tag string) ([]byte, error)
+}
+
 // RepoLocator resolves an org+project to its GitHub repo full name ("owner/name").
 // The provision Execution row's Repo MUST match the gate issue's repo
 // full name, or the funnel gate's LatestPerKind(repo, issue) cannot resolve the

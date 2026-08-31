@@ -408,6 +408,17 @@ func TestDeployStage_ValidationDerivation(t *testing.T) {
 		return []delivery.MilestoneRun{run}
 	}
 
+	// A VALIDATION run over the milestone the dev row names, built by re-kinding
+	// devRun the way the multi-run tests above do. It has to be this kind:
+	// newestValidatingOnMilestone selects on RunValidates, so a dev-kind row can
+	// never stand in for the run that answers for the version. The dev row stays
+	// LIVE for the reason at the top of this test.
+	validationOver := func(tag, state string) []delivery.MilestoneRun {
+		v := devRun(tag, state)
+		v.Kind, v.Origin = delivery.RunKindValidation, delivery.RunOriginRevalidate
+		return []delivery.MilestoneRun{v, devRun(tag, delivery.RunStateRunning)}
+	}
+
 	cycle := func(kind string, ended bool) *delivery.RunCycle {
 		c := &delivery.RunCycle{Kind: kind}
 		if ended {
@@ -477,6 +488,25 @@ func TestDeployStage_ValidationDerivation(t *testing.T) {
 		{
 			name:       "settled run that never validated → none",
 			runs:       withVerdict(delivery.RunStateFailed, ""),
+			wantStatus: "none",
+		},
+
+		// A person STOPPED the judging. `none` promises a verdict is still coming and
+		// nothing is, so this version would sit "any moment now" forever — and the
+		// promote gate, which holds on `none`, would never open again for it.
+		{
+			name:       "cancelled validation run with no verdict → cancelled",
+			runs:       validationOver("v1", delivery.RunStateCancelled),
+			wantStatus: "cancelled",
+		},
+		// The KIND guard. A cancelled DEV run is an ABANDONED INCREMENT, not judging
+		// somebody declined — the reconcile sweep suppresses its whole milestone for
+		// that reason. Without the guard this reads `cancelled`, which tells the
+		// console there is nothing left to wait for and offers an unjudged, abandoned
+		// version for promotion.
+		{
+			name:       "cancelled DEV run with no verdict → none, not cancelled",
+			runs:       withVerdict(delivery.RunStateCancelled, ""),
 			wantStatus: "none",
 		},
 

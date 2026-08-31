@@ -25,12 +25,13 @@ type ApiError = components["schemas"]["Error"];
 // Scenario switch for the project overview (#77/#183) and spec view (#80).
 // Toggle in devtools:
 //   localStorage.setItem('aep:mock:project',
-//     'fresh' | 'spec' | 'spec-failed' | 'building' | 'deploying' |
-//     'deployed' | 'deploy-failed' | 'repo-error' | 'error')
+//     'fresh' | 'spec' | 'spec-failed' | 'kickoff-failed' | 'building' |
+//     'deploying' | 'deployed' | 'deploy-failed' | 'repo-error' | 'error')
 export type ProjectScenario =
   | "fresh"
   | "spec"
   | "spec-failed"
+  | "kickoff-failed"
   | "building"
   | "deploying"
   | "deployed"
@@ -74,6 +75,56 @@ const noDeploy: DeployStage = {
 // server hid a real bug: the header chip read "Active" under MSW and "Building"
 // forever against the API. Mirror the server, and let the stage aggregates
 // carry the scenario.
+/**
+ * Track states the project scenarios cannot reach on their own.
+ *
+ * The overview track's hardest states are about the RELATIONSHIP between the
+ * three aggregates — a spec being amended while the last published version
+ * builds, a new version building over an older one still serving dev — and the
+ * scenario list is a ladder, so no rung holds two stages in disagreement.
+ *
+ * These override only `spec`/`build`/`deploy` on top of whatever scenario is
+ * selected, exactly as the validation override does, rather than adding rungs
+ * to a ladder twelve fixture records are keyed on.
+ */
+export const TRACK_SCENARIOS = ["amending", "drifting", "build-failed"] as const;
+
+export type TrackScenario = (typeof TRACK_SCENARIOS)[number];
+
+type TrackAggregates = Pick<ProjectStatus, "spec" | "build" | "deploy">;
+
+export const trackOverrides: Record<TrackScenario, TrackAggregates> = {
+  // Two legs unsettled at once: you are editing v1's spec while the platform
+  // builds v1. The summary is the only thing that can say so.
+  amending: {
+    spec: { exists: true, version: "v1", dirty: true, design: true, agent: "" },
+    build: { version: "v1", status: "running" },
+    deploy: noDeploy,
+  },
+  // Three versions on one bar: v2 published, v2 building, v1 still serving dev.
+  drifting: {
+    spec: { exists: true, version: "v2", dirty: false, design: true, agent: "" },
+    build: { version: "v2", status: "running" },
+    deploy: {
+      version: "v1",
+      status: "deployed",
+      components: { total: 3, ready: 3 },
+      validation: "passed",
+    },
+  },
+  // A red leg that keeps its version.
+  "build-failed": {
+    spec: { exists: true, version: "v2", dirty: false, design: true, agent: "" },
+    build: { version: "v2", status: "failed" },
+    deploy: {
+      version: "v1",
+      status: "deployed",
+      components: { total: 3, ready: 3 },
+      validation: "passed",
+    },
+  },
+};
+
 export const projectStatuses: Record<
   Exclude<ProjectScenario, "error">,
   ProjectStatus
@@ -106,6 +157,23 @@ export const projectStatuses: Record<
     specStatus: "draft",
     designStatus: "in_progress",
     spec: { exists: true, version: "", dirty: false, design: true, agent: "" },
+    build: idleBuild,
+    deploy: noDeploy,
+  },
+  // The kickoff turn died before it wrote anything — distinct from
+  // `spec-failed`, where a seeded PRD survives. The track's spec leg has a
+  // branch of its own for this ("The agent couldn't start / Try again"), and
+  // until this fixture existed nothing in the console could reach it.
+  "kickoff-failed": {
+    phase: "spec",
+    repoStatus: "ready",
+    repoUrl: REPO_URL,
+    hasSpec: false,
+    hasDesign: false,
+    hasTasks: false,
+    specStatus: "failed",
+    designStatus: "",
+    spec: { ...noSpec, agent: "failed" },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -408,6 +476,29 @@ const sharedAuthDependency = {
   ],
 };
 
+// The project's architecture as the agent authors it (ADR-0008: the console
+// derives the diagram in the browser from this file, and commits nothing).
+// Mirrors `designDependencies` above so the overview's diagram and its
+// dependency list agree — a graph that disagreed with the rows beside it would
+// be worse than no graph.
+const designCell = `title Demo Shop
+version v1
+
+component storefront web-app
+component catalog-api service
+component orders-api service
+
+north Customer -> storefront : HTTPS
+
+storefront -> catalog-api
+storefront -> orders-api
+
+catalog-api -> south shop-db : postgres
+orders-api -> south shop-db : postgres
+storefront -> east shop-auth : sign-in
+orders-api -> east stripe : payments
+`;
+
 const designDependencies: ComponentDependencies[] = [
   {
     componentName: "storefront",
@@ -493,8 +584,12 @@ export function projectDependencyReadiness(
 export function projectDependencies(
   s: Exclude<ProjectScenario, "error">,
 ): ComponentDependencies[] {
-  // No design yet, nothing to declare dependencies.
-  return s === "fresh" || s === "repo-error" ? [] : designDependencies;
+  // No design yet, nothing to declare dependencies. `kickoff-failed` belongs
+  // here for the same reason `fresh` does: its status says `hasDesign: false`,
+  // so a dependency list would be architecture the project never had.
+  return s === "fresh" || s === "repo-error" || s === "kickoff-failed"
+    ? []
+    : designDependencies;
 }
 
 // The OpenAPI contract served by GET .../components/:name/openapi — a
@@ -537,6 +632,7 @@ export const projectComponents: Record<
   fresh: emptyComponents,
   spec: emptyComponents,
   "spec-failed": emptyComponents,
+  "kickoff-failed": emptyComponents,
   building: builtComponents,
   deploying: builtComponents,
   deployed: deployedComponents,
@@ -600,16 +696,6 @@ const v3Tasks: TaskView[] = [
         url: `${BOARD_URL}/120#issuecomment-1`,
       },
     ],
-    executions: {
-      coding: {
-        id: "exec-120",
-        kind: "coding",
-        status: "succeeded",
-        createdAt: minutesAgo(46),
-        startedAt: minutesAgo(45),
-        endedAt: minutesAgo(31),
-      },
-    },
   }),
   v3Task(121, "Re-order a past order", "merged", {
     component: "orders-api",
@@ -622,16 +708,6 @@ const v3Tasks: TaskView[] = [
         url: `${BOARD_URL}/121#issuecomment-1`,
       },
     ],
-    executions: {
-      coding: {
-        id: "exec-121",
-        kind: "coding",
-        status: "succeeded",
-        createdAt: minutesAgo(30),
-        startedAt: minutesAgo(29),
-        endedAt: minutesAgo(20),
-      },
-    },
   }),
   v3Task(122, "Returns request with a reason code", "merged", {
     component: "orders-api",
@@ -644,16 +720,6 @@ const v3Tasks: TaskView[] = [
         url: `${BOARD_URL}/122#issuecomment-1`,
       },
     ],
-    executions: {
-      coding: {
-        id: "exec-122",
-        kind: "coding",
-        status: "succeeded",
-        createdAt: minutesAgo(19),
-        startedAt: minutesAgo(19),
-        endedAt: minutesAgo(12),
-      },
-    },
   }),
   // The one the agent is on right now — a running execution and a comment, so
   // the row tints, counts up, and carries its shimmer.
@@ -668,15 +734,6 @@ const v3Tasks: TaskView[] = [
         url: `${BOARD_URL}/123#issuecomment-1`,
       },
     ],
-    executions: {
-      coding: {
-        id: "exec-123",
-        kind: "coding",
-        status: "running",
-        createdAt: minutesAgo(7),
-        startedAt: minutesAgo(6),
-      },
-    },
   }),
   // Finished executing but still open: the pull request is up and waiting on a
   // human. Derived, not a platform state — see taskRow.ts.
@@ -691,16 +748,6 @@ const v3Tasks: TaskView[] = [
         url: `${BOARD_URL}/124#issuecomment-1`,
       },
     ],
-    executions: {
-      coding: {
-        id: "exec-124",
-        kind: "coding",
-        status: "succeeded",
-        createdAt: minutesAgo(15),
-        startedAt: minutesAgo(15),
-        endedAt: minutesAgo(9),
-      },
-    },
   }),
   v3Task(125, "Returns dashboard for support staff", "pending", {
     component: "storefront",
@@ -798,6 +845,7 @@ export const projectTasks: Record<
   fresh: [],
   spec: [],
   "spec-failed": [],
+  "kickoff-failed": [],
   building: [...v3Tasks, ...buildingTasks],
   deploying: doneTasks,
   deployed: doneTasks,
@@ -886,11 +934,28 @@ function milestoneRun(over: Partial<MilestoneRunView> = {}): MilestoneRunView {
         createdAt: "2026-07-10T09:14:00Z",
         endedAt: "2026-07-10T09:41:00Z",
       },
+      // A pull request that was SENT and never merged — the host refused it as
+      // a conflict, so the session ended with the pull request still open. The
+      // rows it claims must keep reading "PR sent": that is the state the
+      // console used to lose the moment a cycle ended.
       {
         id: "cycle-2",
+        kind: "coding",
+        attempts: 1,
+        branch: "aep/m1-c2",
+        prNumber: 4,
+        prUrl: `${REPO_URL}/pull/4`,
+        resolves: [10],
+        mergeVerdict: "refused",
+        mergeReason: "the pull request does not merge cleanly",
+        createdAt: "2026-07-10T09:44:00Z",
+        endedAt: "2026-07-10T09:52:00Z",
+      },
+      {
+        id: "cycle-3",
         kind: "fix",
         attempts: 2,
-        createdAt: "2026-07-10T09:45:00Z",
+        createdAt: "2026-07-10T09:55:00Z",
       },
     ],
     createdAt: "2026-07-10T09:12:00Z",
@@ -1064,6 +1129,23 @@ export function buildRunsForTag(
         ? failedRun
         : settledRun;
 
+  // Re-attribute the story's claims to THIS tag's real issue numbers, so every
+  // row state the build page can render is reachable in mock mode:
+  //
+  //   open cycle, no pull request  → In progress
+  //   ended cycle, pull request open → PR sent
+  //   any cycle with a merge SHA   → Merged
+  //
+  // Without a claim the console can only PRESUME the open session works every
+  // open issue (ADR-0015 §4's weaker strength), which paints the whole list as
+  // in progress — true of the fixture, but not what a real run looks like, and
+  // it would hide a regression in the claim path.
+  const coding = (projectTasks[s] ?? []).filter(
+    (t) => t.lineage?.specTag === tag && t.executorClass === "coding",
+  );
+  const merged = coding.filter((t) => t.derivedStatus === "merged").map((t) => t.issueNumber);
+  const open = coding.filter((t) => t.derivedStatus !== "merged").map((t) => t.issueNumber);
+
   return {
     ...story,
     tag,
@@ -1075,6 +1157,19 @@ export function buildRunsForTag(
       id: `run-${tag}-${i + 1}`,
       milestoneNumber: known.milestoneNumber,
       milestoneTitle: tag,
+      cycles: (run.cycles ?? []).map((cycle) => {
+        if (cycle.kind === "validation" || cycle.resolves === undefined) {
+          // A validation cycle claims no agent work, and a cycle the story
+          // never gave a claim to is left alone.
+          return !cycle.endedAt && open.length > 0
+            ? { ...cycle, resolves: open.slice(0, 1) }
+            : cycle;
+        }
+        if (cycle.mergeSha) return { ...cycle, resolves: merged };
+        // Sent and unmerged: claim an open issue that is NOT the one the live
+        // session is on, so the two states appear side by side.
+        return { ...cycle, resolves: open.slice(1, 2) };
+      }),
     })),
   };
 }
@@ -1086,6 +1181,7 @@ export const projectBuildRuns: Record<
   fresh: noRuns,
   spec: noRuns,
   "spec-failed": noRuns,
+  "kickoff-failed": noRuns,
   // A gate is open in the `building` scenario's issue list, so its run is
   // parked — which is exactly when the hold notice and cancel both matter.
   building: waitingRun,
@@ -1145,6 +1241,7 @@ export const projectCycleBuilds: Record<
   fresh: [],
   spec: [],
   "spec-failed": [],
+  "kickoff-failed": [],
   building: movingFanOut,
   deploying: movingFanOut,
   deployed: greenFanOut,
@@ -1159,6 +1256,7 @@ export const projectBuilds: Record<
   fresh: noBuilds,
   spec: noBuilds,
   "spec-failed": noBuilds,
+  "kickoff-failed": noBuilds,
   building: runningLedger,
   deploying: completedV1Build,
   deployed: completedV1Build,
@@ -1176,6 +1274,7 @@ export const projectTags: Record<Exclude<ProjectScenario, "error">, TagList> = {
   fresh: noTags,
   spec: noTags,
   "spec-failed": noTags,
+  "kickoff-failed": noTags,
   building: v1Tags,
   deploying: v1Tags,
   deployed: { ...v1Tags, specDirty: true },
@@ -1201,6 +1300,31 @@ to a cart, and check out.
 - Order history per customer.
 `;
 
+// The same PRD mid-interview: the agent has made calls it wants challenged and
+// left holes only the user can fill. Without this nothing in the mock could
+// reach the rail's attention state — the ornament, the count chip and the whole
+// problems dialog behind it were unreachable, on a surface that exists to
+// report exactly this.
+const unsettledPrd = `# Demo Shop — PRD
+
+## Goal
+
+A small storefront where customers browse the product catalog, add items
+to a cart, and check out.
+
+## Requirements
+
+- Browse products by category with search.
+- Cart persists across sessions *assumed* for 30 days.
+- Checkout with a mocked payment provider *assumed* card only.
+- Order history per customer *assumed* last 12 months.
+
+## Open Questions
+
+- Which payment provider goes live first?
+- Does checkout need guest orders, or is an account required?
+`;
+
 const userStories = `# Demo Shop — User stories
 
 - As a shopper, I can search the catalog so that I find products quickly.
@@ -1220,6 +1344,38 @@ Three components behind the project cell:
 | orders-api | service | Cart, checkout, order history |
 
 The storefront talks to both services; services share nothing.
+`;
+
+// The security design (#665): ONE document, and the Security rail entry reads
+// it alone. The roles it declares are the ones `fixtures/roles.ts` reconciles
+// against — `Compliance Admin` exists on the directory, `Viewer` does not yet
+// ("New at Build") — so the panel's live half has something to disagree with.
+const securityJson = `{
+  "version": 1,
+  "coldStartRole": "Compliance Admin",
+  "publicComponents": ["storefront"],
+  "roles": [
+    {
+      "name": "Compliance Admin",
+      "description": "Approves and audits submitted claims.",
+      "stories": [1, 2],
+      "grantedBy": "Platform IdP",
+      "permissions": [
+        { "component": "orders-api", "actions": ["approve", "refund"] },
+        { "component": "storefront", "screens": ["Orders", "Audit log"] }
+      ]
+    },
+    {
+      "name": "Viewer",
+      "description": "Reads the catalog and their own order history.",
+      "stories": [3],
+      "grantedBy": "Platform IdP",
+      "permissions": [{ "component": "catalog-api", "actions": ["read"] }]
+    }
+  ],
+  "testUsers": [{ "username": "test-compliance-admin", "role": "Compliance Admin" }],
+  "thunder": { "name": "demo-shop", "type": "browser" }
+}
 `;
 
 // Per-component design files (#80 rich design view): design.json for each of
@@ -1357,14 +1513,27 @@ const prdOnlyFiles: MockSpecFile[] = [
   { path: "specs/requirements/prd.md", content: seededPrd },
 ];
 
-const collaborationFiles: MockSpecFile[] = [
-  ...prdOnlyFiles,
+// Requirements plus the design prose, with a SETTLED PRD. Everything from
+// `building` onward builds on this: those scenarios have published a version,
+// and a published spec carrying open questions would contradict its own status.
+const settledSpecFiles: MockSpecFile[] = [
+  { path: "specs/requirements/prd.md", content: seededPrd },
   { path: "specs/requirements/user-stories.md", content: userStories },
   { path: "specs/design/architecture.md", content: architectureMd },
 ];
 
+// The same set mid-interview: the unsettled PRD, which is when assumptions and
+// open questions exist. Only the `spec` scenario gets it — that scenario IS the
+// interview in progress.
+const collaborationFiles: MockSpecFile[] = [
+  { path: "specs/requirements/prd.md", content: unsettledPrd },
+  ...settledSpecFiles.slice(1),
+];
+
 const fullFiles: MockSpecFile[] = [
-  ...collaborationFiles,
+  ...settledSpecFiles,
+  { path: "specs/design/design.cell", content: designCell },
+  { path: "specs/design/security.json", content: securityJson },
   {
     path: "specs/design/components/storefront/design.json",
     content: storefrontDesignJson,
@@ -1397,7 +1566,11 @@ export const projectSpecFiles: Record<
   fresh: prdOnlyFiles,
   spec: collaborationFiles,
   "spec-failed": prdOnlyFiles,
-  building: fullFiles,
+  "kickoff-failed": [],
+  // `building` deliberately keeps design.cell OUT: a build can start from a
+  // published spec before the architecture file lands, and that is the state
+  // the overview's diagram empty-state exists for.
+  building: fullFiles.filter((f) => f.path !== "specs/design/design.cell"),
   deploying: fullFiles,
   deployed: fullFiles,
   "deploy-failed": fullFiles,

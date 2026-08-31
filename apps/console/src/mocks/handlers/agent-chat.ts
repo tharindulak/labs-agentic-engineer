@@ -34,6 +34,7 @@
 
 import { http, HttpResponse } from "msw";
 import { ANSWER_PREFIX, ANSWERS_PREFIX } from "@aep/agent-stream";
+import { designPlanFrames } from "./designPlanFrames";
 import { registerChatFrames } from "./registerChatFrames";
 import {
   MAX_ATTACHMENT_FILES,
@@ -285,6 +286,12 @@ export const agentChatHandlers = [
     const turnId = String(params.turnId);
     const instruction = turnInstruction.get(turnId) ?? "";
     const failing = instruction.includes("fail");
+    // The /design run declares its plan (#576) — and owns its own failure
+    // variant ("/design fail" dies mid-write, leaving the wreckage), so it is
+    // checked before the generic failing stream.
+    if (instruction.trim().startsWith("/design")) {
+      return sse(designPlanFrames(turnId, failing));
+    }
     if (failing) {
       return sse([
         { type: "text-delta", delta: "Let me try that…" },

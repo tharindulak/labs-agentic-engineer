@@ -26,7 +26,7 @@ flowchart LR
     ENS --> PANEL
     CAT --> PANEL
   end
-  ENS -->|roles.json at the tag| SPEC[[spec]]
+  ENS -->|security.json at the tag| SPEC[[spec]]
   ENS -->|groups + users| IDP[[clients/thundersvc]]
   CAT -->|groups| IDP
   PANEL -->|AES-256-GCM| SEC[[platform/secrets · ColumnCipher]]
@@ -36,7 +36,7 @@ flowchart LR
 
 | | |
 |---|---|
-| `ensure.go` | The build-time ensure: read `specs/design/roles.json` at the tag, make every role and test user real, and return every account's login for the gate to publish. Three passes — classify, then accounts, then roles created complete with their members. |
+| `ensure.go` | The build-time ensure: read `specs/design/security.json` at the tag, make every role and test user real, and return every account's login for the gate to publish. Three passes — classify, then accounts, then roles created complete with their members. |
 | `catalog.go` | The design-time read: every role on the identity provider, with whether the platform created it. Backs the `list_roles` MCP tool. |
 | `repository.go` | `idp_roles`, `test_users`, `test_user_refs`, and the sealed password column. |
 | `panel.go` | The Security panel's domain service: the live-state read (degrading to `directoryAvailable: false` rather than failing), and reveal / rotate / delete behind the org+project and ownership fences. |
@@ -99,7 +99,7 @@ unavailable, rather than failing the build or printing a blank; and `Summary()`,
 which is the half of the result that reaches logs, never carries a password.
 
 **No model is ever in the loop below the version tag.** A model authors
-`roles.json` and reads the catalog. Everything from the tag down — the gate, the
+`security.json` and reads the catalog. Everything from the tag down — the gate, the
 ensure, the directory writes, the sealing — is deterministic code. These calls
 mint credentials, so that boundary is the single most important property here.
 
@@ -123,4 +123,4 @@ on it, because the token claim and the authz bindings both use the NAME.
 ## See also
 
 - [`ADR-0022`](../../../../docs/decisions/ADR-0022-roles-and-test-users-are-shared-directory-objects.md) — why the BFF writes the directory directly.
-- `skills/security-design/SKILL.md` — the agent-facing half: the two documents and the reuse-first rule.
+- `skills/security-design/SKILL.md` — the agent-facing half: `security.json` and the reuse-first rule.

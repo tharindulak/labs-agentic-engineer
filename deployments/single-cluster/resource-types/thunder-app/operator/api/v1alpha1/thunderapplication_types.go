@@ -24,7 +24,7 @@ import (
 type ThunderApplicationSpec struct {
 	// DisplayName shown in the Thunder console. Defaults to the CR name.
 	DisplayName string `json:"displayName,omitempty"`
-	// Scopes is the space-separated OIDC scope set (e.g. "openid profile email").
+	// Scopes is the space-separated OIDC scope set (e.g. "openid profile email group ou").
 	Scopes string `json:"scopes,omitempty"`
 	// RedirectURIs is a comma-separated list of allowed OAuth redirect URIs.
 	// Platform-managed: aep-api patches it via binding environmentConfigs once

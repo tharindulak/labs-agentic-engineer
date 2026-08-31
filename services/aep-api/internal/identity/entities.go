@@ -48,7 +48,7 @@ import "time"
 // delete-and-recreate, because Thunder sets members only at create — so nothing
 // may key on it.
 type IdPRole struct {
-	// Name is the role name verbatim, as it appears in roles.json and as the
+	// Name is the role name verbatim, as it appears in security.json and as the
 	// directory group name.
 	Name string `gorm:"column:name;primaryKey;type:text" json:"name"`
 	// ThunderGroupID is the current directory group id. It CHANGES whenever the

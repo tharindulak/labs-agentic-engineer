@@ -58,6 +58,7 @@ import {
 } from "@tanstack/react-router";
 import { useSession } from "../auth/SessionContext";
 import { OrgSwitcher, ProjectSwitcher } from "./HeaderSwitchers";
+import { ProjectStatusBadge } from "./ProjectStatusBadge";
 import { AlertsNotificationPanel, NotificationButton } from "./NotificationBell";
 import { AgentChatPanel } from "../features/agent-chat/components/AgentChatPanel";
 import { useHasPendingSeed } from "../features/agent-chat/useHasPendingSeed";
@@ -199,6 +200,9 @@ export function AppLayout() {
           <Header.Switchers showDivider={false}>
             <OrgSwitcher />
             <ProjectSwitcher />
+            {/* Beside the project's name, not beside each page's title: one
+                fact, in the one place that is on screen from every page. */}
+            <ProjectStatusBadge />
           </Header.Switchers>
           <Header.Spacer />
           <Header.Actions>

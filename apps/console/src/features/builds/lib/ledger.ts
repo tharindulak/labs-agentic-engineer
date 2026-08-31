@@ -18,11 +18,13 @@
 
 import type { StatusTone } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
-import { taskRowState } from "./taskRow";
+import { hasMergedWork } from "./runView";
+import { taskRowState, type RunClaims } from "./taskRow";
 
 type BuildSummary = components["schemas"]["BuildSummary"];
 type TaskView = components["schemas"]["TaskView"];
 type DeployStage = components["schemas"]["DeployStage"];
+type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 
 /**
  * Pure derivations for the version ledger (ADR-0021).
@@ -116,6 +118,21 @@ export function ledgerStatus(
 }
 
 /**
+ * Is the Duration cell still being measured against NOW?
+ *
+ * Deliberately keyed on the ABSENCE of `completedAt` rather than on
+ * `isLedgerLive`, because that is exactly the condition under which
+ * `buildDuration` falls back to `Date.now()`. Anything that renders such a
+ * duration has to re-render every second or the number freezes at whatever it
+ * was on first paint — which is what it did: react-query's structural sharing
+ * hands back an identical `BuildSummary` on every poll, so no poll ever caused
+ * a re-render and a running build's timer never moved.
+ */
+export function isDurationOpen(build: BuildSummary): boolean {
+  return Boolean(build.startedAt) && !build.completedAt;
+}
+
+/**
  * Is this version's RUN still in flight — worth polling, and cancellable?
  *
  * Deliberately NOT the same question as `LedgerStatus.live`, which is what
@@ -150,7 +167,7 @@ export interface TaskCounts {
  * attributed to versions at all, and the Builds ledger has no Tasks column
  * because of it. This runs on the build page, where the read is tag-scoped.
  */
-export function countTasks(tasks: TaskView[]): TaskCounts {
+export function countTasks(tasks: TaskView[], claims?: RunClaims): TaskCounts {
   const counts: TaskCounts = {
     total: tasks.length,
     done: 0,
@@ -160,14 +177,14 @@ export function countTasks(tasks: TaskView[]): TaskCounts {
     pending: 0,
   };
   for (const task of tasks) {
-    switch (taskRowState(task)) {
-      case "done":
+    switch (taskRowState(task, claims)) {
+      case "merged":
         counts.done += 1;
         break;
       case "in_progress":
         counts.inProgress += 1;
         break;
-      case "in_review":
+      case "pr_sent":
         counts.inReview += 1;
         break;
       case "blocked":
@@ -197,6 +214,28 @@ export function taskBreakdown(counts: TaskCounts | undefined): string {
   push(counts.blocked, "need config");
   push(counts.pending, "pending");
   return parts.length > 0 ? parts.join(" · ") : `${counts.total} total`;
+}
+
+/**
+ * Does the Deployments link belong on this version's card yet?
+ *
+ * A version reaches an environment when its work MERGES — before that the
+ * Deployments board has nothing to say about it, and offering the link invited
+ * the reader to go look at a page that could only disappoint them, one line
+ * above a note reading "v5 deploys as its tasks merge".
+ *
+ * So: one of the version's runs recorded a merge (`hasMergedWork` — a build
+ * cycle carrying a `mergeSha`), or the deploy aggregate already names this
+ * version, which settles the question outright. Both are facts the build page
+ * already holds; this adds no read.
+ */
+export function isDeployable(
+  build: BuildSummary,
+  runs: MilestoneRunView[] | undefined,
+  deploy?: DeployStage | undefined,
+): boolean {
+  if (deploy?.version === build.tag) return true;
+  return hasMergedWork(runs);
 }
 
 /**

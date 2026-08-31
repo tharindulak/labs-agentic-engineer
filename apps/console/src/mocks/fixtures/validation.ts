@@ -4,22 +4,28 @@ type BuildRunList = components["schemas"]["BuildRunList"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunCycleView = components["schemas"]["RunCycleView"];
 type DeployStage = components["schemas"]["DeployStage"];
-// The six VERDICTS, which is a strict subset of the nine states the chip can
-// show: `none`, `running` and `awaiting-fix` are lifecycle, and no run row or
-// cycle record ever carries them.
+// The six VERDICTS, which is a strict subset of the ten states the chip can
+// show: `none`, `running`, `awaiting-fix` and `cancelled` are lifecycle, and no
+// run row or cycle record ever carries them.
 type RunVerdict = NonNullable<
   components["schemas"]["RunValidation"]["verdict"]
 >;
 
 // Scenario switch for the VALIDATION surface, orthogonal to the project scenario
-// in ./project.ts. `deploy.validation` has nine values and only ONE of them is
+// in ./project.ts. `deploy.validation` has ten values and only ONE of them is
 // reachable from the project scenarios, so every other state of the Validation
-// page — the four non-green verdicts, the two lifecycle states, the empty ones —
+// page — the four non-green verdicts, the three lifecycle states, the empty ones —
 // could previously only be seen by hand-editing a fixture.
 //
 // Toggle in devtools, then reload:
 //   localStorage.setItem('aep:mock:validation', 'failed')
 //   localStorage.removeItem('aep:mock:validation')   // back to the project scenario
+//
+// Two companion keys narrow the `running` scenario further — which ATTEMPT is in
+// flight (see ValidationAttempt below) and whether the repo has an oracle at all:
+//   localStorage.setItem('aep:mock:validation-criteria', 'missing')
+// which drops validation-criteria.json from the file list, so the read 404s the way
+// it does for a version whose spec authored none (handlers/project.ts).
 //
 // Setting it alone is enough: with no `aep:mock:project` chosen, the base scenario
 // becomes `deployed` rather than the usual `building`, because a verdict only
@@ -31,6 +37,7 @@ export const VALIDATION_SCENARIOS: ValidationScenario[] = [
   "none",
   "running",
   "awaiting-fix",
+  "cancelled",
   "passed",
   "partial",
   "failed",
@@ -350,6 +357,11 @@ const ARTIFACTS: Record<ValidationScenario, Artifacts> = {
   // running or has not started. A REPEAT attempt does have one — see REPEAT_ARTIFACTS.
   running: { criteria: PARTIAL.criteria },
   none: { criteria: PARTIAL.criteria },
+  // Same pair as `none`: the oracle was authored, and the attempt that would have
+  // written a report against it was stopped before it committed one. The absence
+  // here is why the page must not read `cancelled` as "no criteria" — the criteria
+  // are right there, unanswered.
+  cancelled: { criteria: PARTIAL.criteria },
   // Mid-repair: the failed attempt's report is committed and stays readable, which
   // is what lets the page show WHAT is being fixed while the fix is in flight.
   "awaiting-fix": FAILED,
@@ -550,6 +562,28 @@ const RUNS: Record<ValidationScenario, MilestoneRunView> = {
     validation: { verdict: "failed", issue: 30, reportPath: REPORT_PATH },
     cycles: [CODING_1, validationCycle(2, "failed"), CODING_IN_FLIGHT],
   }),
+  // A person STOPPED the judging. The validation cycle was opened and closed with
+  // no merge SHA — what the agent stage records for a dispatch that produced
+  // nothing — so the run settles carrying no verdict at all. Kind and origin are
+  // the validation run's own, and that is the whole distinction this scenario
+  // exists to show: only a run of THAT kind reads as `cancelled`, because a
+  // cancelled dev run is an abandoned increment and means something else.
+  cancelled: run({
+    kind: "validation",
+    origin: "revalidate",
+    state: "cancelled",
+    validation: {},
+    cycles: [
+      {
+        id: "cycle-2",
+        kind: "validation",
+        attempts: 1,
+        validationIssue: 30,
+        createdAt: "2026-07-10T09:45:00Z",
+        endedAt: "2026-07-10T09:52:00Z",
+      },
+    ],
+  }),
   // The run is live and has not reached validation at all — the state every run
   // spends most of its life in.
   none: run({
@@ -566,7 +600,7 @@ const RUNS: Record<ValidationScenario, MilestoneRunView> = {
 // its numbers as the last attempt's — and `deploy.validation` is `running` for both,
 // so no value of the scenario switch can tell them apart.
 //
-// Hence a second devtools key rather than a tenth scenario:
+// Hence a second devtools key rather than an eleventh scenario:
 //   localStorage.setItem('aep:mock:validation', 'running')
 //   localStorage.setItem('aep:mock:validation-attempt', 'repeat')
 //

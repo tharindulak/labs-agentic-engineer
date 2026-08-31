@@ -119,9 +119,11 @@ function useProjectResource<T>(
   fetcher: () => Promise<{ data?: T; error?: unknown }>,
   what: string,
   refetchInterval?: number | ((data: T | undefined) => number | false),
+  enabled = true,
 ) {
   return useQuery({
     queryKey,
+    enabled,
     queryFn: async () => {
       const { data, error } = await fetcher();
       if (error || data === undefined) {
@@ -153,6 +155,11 @@ export function useProjectStatus(projectName: string) {
       !status || statusIsMoving(status)
         ? STATUS_ACTIVE_POLL_MS
         : STATUS_IDLE_POLL_MS,
+    // The toolbar badge calls this from every route, project or not, because a
+    // hook cannot be conditional. Without this it polled `/projects//status`
+    // twice a second from the projects list, settings, alerts — a 404 loop
+    // against a path that has no project in it.
+    projectName !== "",
   );
 }
 

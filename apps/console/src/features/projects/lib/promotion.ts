@@ -129,19 +129,33 @@ export function allConnectionsSet(
   return configuredCount(rows, values) === rows.length;
 }
 
-// Validation states that BLOCK promotion: a verdict still being earned
-// (running / awaiting-fix) or an outright red one (failed / unreported).
-// Everything else promotes — passed and partial on their merits, skipped /
-// none / inconclusive because there is no verdict to wait for.
+// Validation states that BLOCK promotion: a verdict still being earned (running /
+// awaiting-fix), an outright red one (failed / unreported), and `none`.
+//
+// `none` is the one that reads like an exception and is not. It is NOT the absence
+// of a verdict — it is the absence of one YET: the contract defines it as pending,
+// meaning a run is live or a dev run filed the version's validation task and nothing
+// has started judging it. Leaving it out is what lit this button up in the window
+// between the dev deployment going green and the validation cycle starting, and
+// through every coding cycle of a run whose earlier components were already serving.
+// Both of those offer production a version nothing has checked.
+//
+// Everything else promotes. passed and partial on their merits. skipped and
+// inconclusive because the question WAS asked and produced no verdict to wait for.
+// `cancelled` because a person stopped the judging themselves — the only no-verdict
+// state that is somebody's decision rather than an accident, and so the only one
+// where "promote anyway" is theirs to make.
 const BLOCKING_VALIDATION = new Set([
+  "none",
   "running",
   "awaiting-fix",
   "failed",
   "unreported",
 ]);
 
-/** Can this deploy state offer promotion at all? Dev must be live and the
- *  validation verdict must not be pending or failing. */
+/** Can this deploy state offer promotion at all? Dev must be live and validation
+ *  must have had its say — a verdict that is still expected blocks, the same as a
+ *  failing one. */
 export function canPromote(deploy: {
   status: string;
   validation: string;

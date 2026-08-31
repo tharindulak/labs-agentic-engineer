@@ -52,9 +52,17 @@ const loadSkillExec = (skills: SkillSourceArg): LoadSkillExec =>
 test("buildFileTools omits loadSkill when no skills are supplied (skill-free = today)", () => {
   const tools = buildFileTools(new FileBundle({}));
   assert.equal(LOAD_SKILL in tools, false);
-  // The file-mutation tools plus the always-registered HITL question tools
-  // (console ADR-0012 / #270), in declaration order.
-  assert.deepEqual(Object.keys(tools), ["addFile", "editFile", "removeFile", "ask_question", "ask_questions"]);
+  // The file-mutation tools plus the always-registered UI tools, in
+  // declaration order: the HITL questions (console ADR-0012 / #270) and the
+  // fire-and-forget plan declaration (ADR-0022 / #576).
+  assert.deepEqual(Object.keys(tools), [
+    "addFile",
+    "editFile",
+    "removeFile",
+    "ask_question",
+    "ask_questions",
+    "declare_plan",
+  ]);
 });
 
 test("buildFileTools registers loadSkill when skills are supplied", () => {
@@ -172,4 +180,19 @@ test("loadSkill I/O fault returns could-not-read — never unknown skills", asyn
       ["component-architecture"],
     );
   }
+});
+
+// #576: declaring a plan must NOT end the turn — the agent says what it is
+// about to write and then writes it. The call site pairs `hasToolCall` stop
+// conditions with the question tools only; here we hold the other half of that
+// contract: the tool resolves immediately rather than parking on the user.
+test("declare_plan acknowledges and resolves — it never awaits a human", async () => {
+  const tools = buildFileTools(new FileBundle({}));
+  const declare = tools["declare_plan"]!;
+  const exec = declare.execute as unknown as (
+    input: { paths: string[] },
+  ) => Promise<{ status: string; paths: string[] }>;
+  const out = await exec({ paths: ["specs/design/design.cell"] });
+  assert.equal(out.status, "ok");
+  assert.deepEqual(out.paths, ["specs/design/design.cell"]);
 });

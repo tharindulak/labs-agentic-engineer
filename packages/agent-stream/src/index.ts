@@ -40,6 +40,7 @@ export type {
   AskQuestionInput,
   AskQuestionsInput,
   QuestionAnswer,
+  DeclarePlanInput,
   LoadSkillInput,
   LoadSkillResult,
   LoadedSkill,
@@ -70,6 +71,7 @@ export {
   TURN_KINDS,
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
+  DECLARE_PLAN_TOOL,
   ANSWER_PREFIX,
   ANSWERS_PREFIX,
   buildAnswerInstruction,
@@ -82,11 +84,12 @@ export {
   isCollabConfig,
 } from "./contracts/sse-events.js";
 export type {
-  RolesDesign,
+  SecurityDesign,
+  ThunderClient,
   RoleDeclaration,
   RolePermission,
   TestUserDeclaration,
-} from "./contracts/roles-design.js";
+} from "./contracts/security-design.js";
 export type {
   ComponentDesign,
   Dependency,
@@ -136,20 +139,20 @@ export {
 } from "./component-design-schema.js";
 export type { ComponentDesignProblem } from "./component-design-schema.js";
 
-// --- The roles.json write-gate (the structured half of the security design) --
+// --- The security.json write-gate ------------------------------------------
 export {
-  checkRolesDesign,
-  checkRolesReferences,
-  rolesDesignSchema,
-  ROLES_DESIGN_JSON_RE,
+  checkSecurityDesign,
+  checkSecurityReferences,
+  securityDesignSchema,
+  SECURITY_DESIGN_JSON_RE,
   TEST_USERNAME_RE,
-} from "./roles-design-schema.js";
-export type { RolesDesignProblem } from "./roles-design-schema.js";
+} from "./security-design-schema.js";
+export type { SecurityDesignProblem } from "./security-design-schema.js";
 
 // --- JSON Schema publication (the BFF validates the same definitions) --------
 export {
   componentDesignJsonSchema,
-  rolesDesignJsonSchema,
+  securityDesignJsonSchema,
   planTaskJsonSchema,
   updateTaskJsonSchema,
 } from "./json-schema.js";

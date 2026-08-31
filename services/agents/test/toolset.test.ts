@@ -35,13 +35,14 @@ const SKILLS = testSkillSource([{ name: "task-planning", description: "plan task
 const bundle = () => new FileBundle({});
 const plan = () => new TaskPlan({});
 
-test("files tool set (no skills) is the file tools + the HITL question tools", () => {
+test("files tool set (no skills) is the file tools + the UI tools", () => {
   assert.deepEqual(Object.keys(buildFileTools(bundle())), [
     "addFile",
     "editFile",
     "removeFile",
     "ask_question",
     "ask_questions",
+    "declare_plan",
   ]);
 });
 
@@ -57,6 +58,7 @@ test("files tool set with skills adds only the skill loader", () => {
     "removeFile",
     "ask_question",
     "ask_questions",
+    "declare_plan",
     "loadSkill",
   ]);
 });

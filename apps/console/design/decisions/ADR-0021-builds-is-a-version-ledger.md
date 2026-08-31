@@ -49,16 +49,41 @@ dropdown, reading it, remembering it, and selecting the next one.
 5. **A task row's state is DERIVED, and the derivation is the decision.**
    `derivedStatus` is deliberately a two-value vocabulary — the issue is open, or
    it is closed — so the row's five states come from elsewhere, in this
-   precedence: closed → `done`; `hold` or a non-empty `blockedBy` → `blocked`;
-   a newest execution that is running and unfinished → `in_progress`; an
-   execution that **ended** while the issue is still open → `in_review`;
-   otherwise `pending`.
+   precedence: closed **or a recorded merge SHA** → `merged`; `hold` or a
+   non-empty `blockedBy` → `blocked`; a newest execution that is running and
+   unfinished → `in_progress`; a claiming cycle **with a pull request that has
+   not merged** → `pr_sent`; a claiming cycle still open without one →
+   `in_progress`; otherwise `pending`.
 
-   `in_review` is the one worth defending: there is no ready-for-review field on
-   the contract, and *"the agent finished and nothing merged"* is the only honest
-   reading of that pair. The row's second line is the issue's newest comment
+   **A row reports its pull request, not itself.** One build session dispatches
+   ONE pull request claiming a SET of issues (`resolves`), so its state lands on
+   every row in that set — three rows reading `PR sent` at once are three issues
+   on one pull request, which is the platform's actual unit of work.
+
+   Two corrections this took, both from deployed data:
+
+   - **Claims come from EVERY cycle of EVERY run, not from the open cycle.** A
+     cycle ends the moment its pull request settles, so reading only the open one
+     threw the answer away at exactly the moment it became final: a task whose
+     work had merged, or whose pull request was sent and refused, fell back to
+     `Pending` unless GitHub had also closed its issue. And a version is often
+     worked by several runs — a `task` run reworking what a `dev` run delivered —
+     so the newest run alone does not hold its history.
+   - **`merged` reads the SHA as well as the closed issue.** The two can disagree
+     for a moment, in one direction: the merge lands before GitHub's close event
+     does, and for that stretch the row said `PR sent` about merged work.
+
+   The row's second line is the issue's newest comment
    ([#612](https://github.com/wso2/labs-agentic-engineer/issues/612)), flattened
    to its first non-empty line.
+
+   **The row is not a link, and the list reads ascending.** The title used to
+   open the per-task detail page; that page is not a destination this surface
+   sends anyone to any more, and the row already carries what it led with. The
+   `#N` chip remains, and it goes to the issue on GitHub — which is also why
+   nothing was lost. Order is by issue number ascending, the order the milestone
+   was planned in: `list-tasks` promises none, so GitHub's newest-first default
+   showed through and the gates the platform files first sat at the bottom.
 
 6. **The ledger adds NO contract surface. Every cell comes from a read the
    console already makes.** This is the decision that shapes the whole feature:
@@ -95,6 +120,66 @@ dropdown, reading it, remembering it, and selecting the next one.
    *Reverses the direction of [#185](https://github.com/wso2/labs-agentic-engineer/issues/185)'s
    redirect. Old `/builds/118` links keep working; the redirect now points the
    other way.*
+
+9. **A running duration needs a clock, and the Deployments link needs merged
+   work.** Two things the summary card got wrong, both worth writing down
+   because the obvious implementation of each is the wrong one.
+
+   The Duration counts against `Date.now()` until the build ends — but polling
+   alone never made it move. React-query's structural sharing hands back the
+   *same* `BuildSummary` object when the payload has not changed, and a running
+   build's payload does not change between its own state transitions, so no
+   refetch ever caused a re-render and the number sat frozen at first paint.
+   `useTicker` supplies the second. It is keyed on `isDurationOpen` — the
+   absence of `completedAt` — and NOT on `isLedgerLive`, because the absence of
+   an end stamp is exactly the condition under which the number is being
+   measured against now. A build that has left `in_progress` without an end
+   stamp is still counting, and keying on the status would freeze it. "and
+   counting" follows the same condition, for the same reason.
+
+   **"Go to Deployments" appears only once the version's work has merged.** A
+   version reaches an environment as its work merges, so before that the board
+   has nothing to say about it and the link could only disappoint — it sat one
+   line above a note reading *"v5 deploys as its tasks merge"*, contradicting
+   it. `isDeployable` is a build cycle carrying a `mergeSha`, or the deploy
+   aggregate already naming this version.
+
+   The signal matters more than the gate. The obvious one — count the tasks
+   whose `derivedStatus` is `merged` — is WRONG, and deploying proved it inside
+   a minute: that field is the two-value vocabulary of §5, so a cancelled run
+   whose issues were closed without a pull request ever opening (`prNumber` 0,
+   no merge SHA) read as fully merged while nothing had landed in the repo.
+   `mergeSha` is the platform's only record of a merge, and the contract says
+   why there is no second one: *"a merge is recorded by the merge SHA, so a
+   second spelling of it could disagree with the first"*. Validation cycles are
+   excluded — a validation cycle's SHA names the commit it judged.
+
+   And it asks EVERY run of the version, not the newest one. Deploying caught
+   that too: a version whose coding cycle merged pull request #15 was later
+   reworked by a `task` run that opened no cycle at all, so reading `current`
+   made merged code look unmerged. A merge is a permanent fact about the
+   repository; a later run cannot take it back.
+
+10. **Two sections were reading the wrong thing about the run, and both said
+    nothing was happening when something was.**
+
+    **The "streaming" chip is the AGENT's state, not the build's.** It read
+    `isLedgerLive`, and a run stays `in_progress` through everything that
+    happens after its agent stops — the merge, the component builds, the
+    deployment — so the chip kept promising a live stream long after there was
+    nothing left to stream. `isAgentStreaming` asks the only question the chip
+    is for: does the newest, non-terminal run have a build cycle still open?
+
+    **Build logs must ask about the cycle that MERGED.** The section was handed
+    `cycles.at(-1)` — the newest cycle of the newest delivery run — and
+    `list-cycle-builds` answers empty for any cycle without a merge SHA ("a
+    cycle whose pull request has not merged has nothing to have built"). The
+    newest cycle is routinely a validation cycle or a retry that never merged,
+    and on the local stack the merge was one run further back still, so the
+    section sat on "No component builds were produced for this version"
+    permanently. `mergedCycle` walks the version's runs newest-first for the
+    newest cycle carrying a SHA — the same scope `isDeployable` needs, and for
+    the same reason.
 
 ## What this ADR does NOT cover
 

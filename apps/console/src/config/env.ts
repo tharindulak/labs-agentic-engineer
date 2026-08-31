@@ -54,8 +54,10 @@ export const env = {
     import.meta.env.VITE_API_MODE,
     import.meta.env.VITE_AUTH_MODE,
   ),
-  // Thunder OIDC (issue #91). Dev default is the dev-thunder-setup
-  // container; deployments override via window._env_.
+  // Thunder OIDC issuer (issue #91). Dev default is the dev-thunder-setup
+  // container; deployments override via window._env_. This is the REST/OIDC
+  // root, not the admin SPA — the Deploy "Thunder Console" link is
+  // `{thunderUrl}/console/users` (see thunderUsersConsoleHref).
   thunderUrl: getEnv("VITE_THUNDER_URL") || "http://localhost:8097",
   thunderClientId: getEnv("VITE_THUNDER_CLIENT_ID") || "aep-console-client",
   thunderScopes: getEnv("VITE_THUNDER_SCOPES") || "openid profile email",

@@ -17,16 +17,9 @@
  */
 
 import { useMemo, useState } from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  ButtonBase,
-  Chip,
-  Skeleton,
-  Stack,
-  Typography,
-} from "@wso2/oxygen-ui";
+import { Alert, Box, Button, Card, Chip, Skeleton } from "@wso2/oxygen-ui";
+import { Plug } from "@wso2/oxygen-ui-icons-react";
+import { OverviewRow } from "./OverviewRow";
 import { SectionTitle } from "../../../components/SectionTitle";
 import { EmptyState } from "../../../components/EmptyState";
 import { CatalogTypeDrawer } from "../../marketplace/components/CatalogTypeDrawer";
@@ -54,12 +47,39 @@ function rowLabel(row: WorkloadDependencyDTO): string {
   return row.name ?? row.ref ?? "resource";
 }
 
+/**
+ * The row's second line, when there is one worth printing.
+ *
+ * An org-service names the project and component providing it. A resource names
+ * the type it came from, but only when that is not just the name again — most
+ * platform resources are named after their type, and a row reading
+ * "postgres-cnpg · Platform · postgres-cnpg" says one thing three times.
+ *
+ * A row with no caption keeps its height regardless (`OverviewRow` reserves the
+ * line), so the list does not shuffle between two row sizes.
+ */
+function rowCaption(row: WorkloadDependencyDTO): string | undefined {
+  if (row.kind === "org-service") {
+    if (!row.project) return undefined;
+    return row.component ? `${row.project} / ${row.component}` : row.project;
+  }
+  return row.ref && row.ref !== rowLabel(row) ? row.ref : undefined;
+}
+
 function rowChipLabel(row: WorkloadDependencyDTO): string {
   if (row.kind === "org-service") return "Org-service";
   if (row.tag === "platform") return "Platform";
   return "External";
 }
 
+/**
+ * The project's deployed dependencies.
+ *
+ * One bordered container with dividers and a chevron per row — the same shape
+ * the Components list above it uses, because the two are one column and every
+ * row in both opens something. Free-floating rows were dense but they did not
+ * read as targets.
+ */
 export function OverviewDependencies({ projectName }: { projectName: string }) {
   const deps = useWorkloadDependencies(projectName);
   const platform = usePlatformResourceTypes();
@@ -127,41 +147,26 @@ export function OverviewDependencies({ projectName }: { projectName: string }) {
           description="Rows appear after a component has deployed. Unresolved design declarations stay off this list."
         />
       ) : (
-        <Stack spacing={0.5}>
-          {rows.map((row) => (
-            <ButtonBase
+        <Card variant="outlined">
+          {rows.map((row, i) => (
+            <OverviewRow
               key={`${row.kind}-${row.ref ?? row.name}-${row.project ?? ""}-${row.component ?? ""}`}
+              icon={<Plug size={18} />}
+              title={rowLabel(row)}
+              trailing={
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={rowChipLabel(row)}
+                  sx={{ height: 22, flexShrink: 0, fontSize: "0.75rem" }}
+                />
+              }
+              caption={rowCaption(row)}
               onClick={() => onRow(row)}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "flex-start",
-                gap: 1,
-                px: 1,
-                py: 0.75,
-                borderRadius: 1,
-                width: "100%",
-                textAlign: "left",
-                "&:hover": { bgcolor: "action.hover" },
-              }}
-            >
-              <Chip
-                size="small"
-                variant="outlined"
-                label={rowChipLabel(row)}
-              />
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {rowLabel(row)}
-              </Typography>
-              {row.kind === "org-service" && row.project && (
-                <Typography variant="caption" color="text.secondary">
-                  {row.project}
-                  {row.component ? ` / ${row.component}` : ""}
-                </Typography>
-              )}
-            </ButtonBase>
+              last={i === rows.length - 1}
+            />
           ))}
-        </Stack>
+        </Card>
       )}
       <CatalogTypeDrawer
         {...selection}

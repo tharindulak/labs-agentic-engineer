@@ -57,6 +57,7 @@ describe("projectChip — repo lifecycle still comes from phase", () => {
     expect(projectChip(status({ phase: "no-repo" }))).toEqual({
       label: "No repository",
       tone: "warning",
+      busy: false,
     });
   });
   it("cloning → info", () => {
@@ -81,7 +82,7 @@ describe("projectChip — before the first build, the spec aggregate decides", (
     expect(projectChip(status({ spec: { dirty: true } })).label).toBe("Spec in progress");
   });
   it("published and clean, nothing built → Spec published", () => {
-    expect(projectChip(status({}))).toEqual({ label: "Spec published", tone: "success" });
+    expect(projectChip(status({}))).toEqual({ label: "Spec published", tone: "success", busy: false });
   });
 });
 
@@ -90,6 +91,7 @@ describe("projectChip — delivery state outranks the spec", () => {
     expect(projectChip(status({ build: { version: "v1", status: "running" } }))).toEqual({
       label: "Building",
       tone: "info",
+      busy: true,
     });
   });
   it("build failed → Build failed", () => {
@@ -101,6 +103,7 @@ describe("projectChip — delivery state outranks the spec", () => {
     expect(projectChip(status({ build: { version: "v1", status: "succeeded" } }))).toEqual({
       label: "Built",
       tone: "success",
+      busy: false,
     });
   });
   it("rollout underway → Deploying", () => {
@@ -110,7 +113,7 @@ describe("projectChip — delivery state outranks the spec", () => {
         deploy: { version: "v1", status: "deploying", components: { total: 3, ready: 1 } },
       }),
     );
-    expect(c).toEqual({ label: "Deploying", tone: "info" });
+    expect(c).toEqual({ label: "Deploying", tone: "info", busy: true });
   });
   it("deploy failed → Deploy failed", () => {
     const c = projectChip(
@@ -119,7 +122,7 @@ describe("projectChip — delivery state outranks the spec", () => {
         deploy: { version: "v1", status: "failed", components: { total: 3, ready: 1 } },
       }),
     );
-    expect(c).toEqual({ label: "Deploy failed", tone: "error" });
+    expect(c).toEqual({ label: "Deploy failed", tone: "error", busy: false });
   });
 
   // The regression this whole file exists for: a settled build plus live
@@ -137,14 +140,33 @@ describe("projectChip — delivery state outranks the spec", () => {
         },
       }),
     );
-    expect(c).toEqual({ label: "Active", tone: "success" });
+    expect(c).toEqual({ label: "Active", tone: "success", busy: false });
   });
 
-  it("a validating run reads as Active even while the binding read is empty", () => {
+  // The allowance the binding read needs: a validation cycle in flight means
+  // the components ARE up, whatever the slower deploy read currently says. What
+  // it does NOT mean is that the project has settled — this used to read
+  // "Active", so a run finished in the toolbar that the toolbar never admitted
+  // had started.
+  it.each(["running", "awaiting-fix"] as const)(
+    "reads as Validating while validation is %s, binding read or no binding read",
+    (validation) => {
+      const c = projectChip(
+        status({
+          build: { version: "v1", status: "succeeded" },
+          deploy: { version: "v1", status: "none", validation },
+        }),
+      );
+      expect(c).toEqual({ label: "Validating", tone: "info", busy: true });
+    },
+  );
+
+  // A verdict settles it. Only the phase in flight outranks Active.
+  it("reads as Active once the verdict is in", () => {
     const c = projectChip(
       status({
         build: { version: "v1", status: "succeeded" },
-        deploy: { version: "v1", status: "none", validation: "running" },
+        deploy: { version: "v1", status: "none", validation: "passed" },
       }),
     );
     expect(c.label).toBe("Active");
@@ -164,5 +186,58 @@ describe("projectChip — delivery state outranks the spec", () => {
       }),
     );
     expect(c.label).toBe("Building");
+  });
+});
+
+// `busy` drives the toolbar badge's pulse: it means the platform is still
+// working and the label will change on its own, as opposed to a settled state
+// that waits for somebody to act. Asserted as a set so a new state cannot be
+// added without deciding which side of the line it falls on.
+describe("projectChip — busy marks the states that move by themselves", () => {
+  const cases: [string, ReturnType<typeof status>, boolean][] = [
+    ["Preparing repository", status({ phase: "repo-cloning" }), true],
+    ["Starting", status({ phase: "prompt", spec: { exists: false, version: "" } }), true],
+    ["Spec in progress", status({ spec: { version: "" } }), true],
+    ["Building", status({ build: { version: "v1", status: "running" } }), true],
+    [
+      "Deploying",
+      status({
+        build: { version: "v1", status: "succeeded" },
+        deploy: { version: "v1", status: "deploying", components: { total: 3, ready: 1 } },
+      }),
+      true,
+    ],
+    ["No repository", status({ phase: "no-repo" }), false],
+    ["Repository error", status({ phase: "repo-error" }), false],
+    ["Spec published", status({}), false],
+    ["Built", status({ build: { version: "v1", status: "succeeded" } }), false],
+    ["Build failed", status({ build: { version: "v1", status: "failed" } }), false],
+    [
+      "Deploy failed",
+      status({
+        build: { version: "v1", status: "succeeded" },
+        deploy: { version: "v1", status: "failed", components: { total: 3, ready: 1 } },
+      }),
+      false,
+    ],
+    [
+      "Active",
+      status({
+        build: { version: "v1", status: "succeeded" },
+        deploy: {
+          version: "v1",
+          status: "deployed",
+          components: { total: 1, ready: 1 },
+          validation: "passed",
+        },
+      }),
+      false,
+    ],
+  ];
+
+  it.each(cases)("%s → busy %s", (label, input, busy) => {
+    const chip = projectChip(input);
+    expect(chip.label).toBe(label);
+    expect(chip.busy).toBe(busy);
   });
 });

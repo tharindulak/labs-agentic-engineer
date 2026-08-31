@@ -63,7 +63,7 @@ type DirectoryAccount struct {
 }
 
 // DesignReader reads the design bundle at a spec tag — keys relative to
-// specs/design/, so the roles document is `roles.json`.
+// specs/design/, so the security document is `security.json`.
 type DesignReader interface {
 	GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 }

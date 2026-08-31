@@ -47,8 +47,8 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/platform/designspec"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
-	"github.com/wso2/aep/aep-api/internal/platform/rolesspec"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
+	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -553,17 +553,17 @@ func checkPreconditions(req ApplyRequest, current map[string]string) []Conflict 
 // gate uses) plus the name==dir rule; any other .json gets a cheap parseability
 // check. Warnings never block the commit.
 func softValidate(path, content string) []Warning {
-	// The roles document is the ONE spec file the platform later acts on
+	// The security.json document is the ONE spec file the platform later acts on
 	// deterministically — creating directory roles and test users from it at
 	// build time — so a malformed one is worth flagging the moment it is
 	// written, not three steps later when the build refuses.
-	if path == rolesspec.Path {
-		if _, err := rolesspec.Parse([]byte(content)); err != nil {
-			var ve *rolesspec.ValidationError
+	if path == securityspec.Path {
+		if _, err := securityspec.Parse([]byte(content)); err != nil {
+			var ve *securityspec.ValidationError
 			if errors.As(err, &ve) {
 				return []Warning{{Path: path, Code: ve.Code, Message: ve.Message}}
 			}
-			return []Warning{{Path: path, Code: rolesspec.CodeSchemaViolation, Message: err.Error()}}
+			return []Warning{{Path: path, Code: securityspec.CodeSchemaViolation, Message: err.Error()}}
 		}
 		return nil
 	}

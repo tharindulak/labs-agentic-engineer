@@ -19,6 +19,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -59,17 +60,18 @@ func Load() (Config, error) {
 		PlaygroundTokenEnabled:    r.readOptionalBool("PLAYGROUND_TOKEN_ENABLED", false),
 		// Default true: core capability, opt-out (unlike other booleans here which are opt-in extras).
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
-		AutoMergeCodingPRs:        r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
-		TenantGateMode:            r.readOptionalString("TENANT_GATE_MODE", "enforce"),
-		OAuthStateSigningKey:      r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
-		BFFPublicURL:              r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
-		BuildAuthRetryBudget:      r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
-		SkillsDir:                 r.readOptionalString("SKILLS_DIR", "/app/skills"),
+		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
+		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
+		OAuthStateSigningKey:     r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
+		BFFPublicURL:             r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
+		BuildAuthRetryBudget:     r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
+		SkillsDir:                r.readOptionalString("SKILLS_DIR", "/app/skills"),
 		ThunderAdmin: ThunderAdminConfig{
 			BaseURL:      r.readOptionalString("THUNDER_ADMIN_URL", ""),
 			ClientID:     r.readOptionalString("THUNDER_SYSTEM_CLIENT_ID", "aep-system-client"),
 			ClientSecret: r.readOptionalString("THUNDER_SYSTEM_CLIENT_SECRET", "aep-system-client-secret"),
 		},
+		KubeAPI:        r.kubeAPI(),
 		APIGatewayHost: r.readOptionalString("API_GATEWAY_HOST", ""),
 		PlatformIDP: PlatformIDPDefaults{
 			Issuer:  r.readOptionalString("PLATFORM_IDP_ISSUER", "http://thunder.openchoreo.localhost:8080"),
@@ -212,6 +214,34 @@ func (r *configReader) taskSigningKey() string {
 		return ""
 	}
 	return string(b)
+}
+
+const (
+	kubeSATokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	kubeSACAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+)
+
+// kubeAPI resolves the Kubernetes API endpoint for ThunderApplication CR LISTs.
+// Empty BaseURL is valid (local compose) — Assemble leaves the thunder reader nil.
+func (r *configReader) kubeAPI() KubeAPIConfig {
+	cfg := KubeAPIConfig{}
+	host := os.Getenv("KUBERNETES_SERVICE_HOST")
+	port := os.Getenv("KUBERNETES_SERVICE_PORT")
+	switch {
+	case host != "" && port != "":
+		cfg.BaseURL = "https://" + net.JoinHostPort(host, port)
+	default:
+		cfg.BaseURL = r.readOptionalString("KUBE_API_BASE_URL", "")
+	}
+	if v := os.Getenv("KUBE_API_BEARER"); v != "" {
+		cfg.BearerToken = v
+	} else if _, err := os.Stat(kubeSATokenPath); err == nil {
+		cfg.TokenFile = kubeSATokenPath
+	}
+	if _, err := os.Stat(kubeSACAPath); err == nil {
+		cfg.CAFile = kubeSACAPath
+	}
+	return cfg
 }
 
 func (r *configReader) readRequiredString(key string) string {

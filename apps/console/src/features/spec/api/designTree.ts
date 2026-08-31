@@ -39,7 +39,7 @@ export interface DesignSection {
   hasComponents: boolean;
   /** Whether a project-level design.cell exists (drives the Architecture tab). */
   hasCellDsl: boolean;
-  /** Whether either half of the security design exists (drives the Security entry). */
+  /** Whether specs/design/security.json exists (drives the Security rail entry). */
   hasSecurity: boolean;
   components: DesignComponentNode[];
 }
@@ -47,16 +47,12 @@ export interface DesignSection {
 /** The project-level cell-diagram DSL path (rendered via the Architecture tab, never as a file). */
 export const DESIGN_CELL_PATH = "specs/design/design.cell";
 
-/**
- * The two halves of the security design. They are ONE rail entry with two tabs,
- * not two documents: a user thinks about security as one subject, and the split
- * exists because the platform has to parse half of it, which is not their
- * problem. `lexicon.md` holds the same mapping in words.
- */
-export const SECURITY_MD_PATH = "specs/design/security.md";
-export const ROLES_JSON_PATH = "specs/design/roles.json";
+/** The security design document — one file, one rail entry. */
+export const SECURITY_JSON_PATH = "specs/design/security.json";
 
-const SECURITY_PATHS: readonly string[] = [SECURITY_MD_PATH, ROLES_JSON_PATH];
+function hideFromOverview(path: string): boolean {
+  return path === DESIGN_CELL_PATH || path === SECURITY_JSON_PATH;
+}
 
 // SpecFileEntry.path is the full repo-relative path (mapping.ts's current
 // scheme — the unprefixed room-key scheme it retired), so this must match
@@ -81,16 +77,12 @@ function isDsl(path: string): boolean {
 export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
   const design = files.filter((f) => f.group === "designs");
   const hasCellDsl = design.some((f) => f.path === DESIGN_CELL_PATH);
-  const hasSecurity = design.some((f) => SECURITY_PATHS.includes(f.path));
+  const hasSecurity = design.some((f) => f.path === SECURITY_JSON_PATH);
   // design.cell is surfaced through the Architecture tab (streaming cell
-  // diagram), never as a raw text file — keep it out of the overview list.
+  // diagram), never as a raw text file. security.json is the Security rail
+  // entry, not an overview row.
   const overview = design
-    .filter(
-      (f) =>
-        componentOf(f.path) === null &&
-        f.path !== DESIGN_CELL_PATH &&
-        !SECURITY_PATHS.includes(f.path),
-    )
+    .filter((f) => componentOf(f.path) === null && !hideFromOverview(f.path))
     .sort((a, b) => a.path.localeCompare(b.path));
 
   const byComponent = new Map<string, DesignComponentNode>();
@@ -118,6 +110,24 @@ export function buildDesignSection(files: SpecFileEntry[]): DesignSection {
     hasSecurity,
     components,
   };
+}
+
+/**
+ * The selection that WATCHES a path being written (#576, ADR-0026) — the same
+ * routing the rail's own rows use: the cell opens as the Architecture diagram,
+ * security.json opens the Security entry, a wireframe `.dsl` opens as its
+ * component's diagram, and everything else is the file itself. One definition,
+ * so follow-the-write can never land somewhere a click on the rail would not
+ * have gone.
+ */
+export function followSelection(path: string): SpecSelection {
+  if (path === DESIGN_CELL_PATH) return { kind: "cell-diagram" };
+  if (path === SECURITY_JSON_PATH) return { kind: "security" };
+  const component = componentOf(path);
+  if (component && isDsl(path)) {
+    return { kind: "wireframe", component, dslPath: path };
+  }
+  return { kind: "file", path };
 }
 
 /** Stable string identity for a selection (React keys + selected-state compare). */

@@ -4203,13 +4203,18 @@ components:
             `unreported` at exactly the surface that needs them, and `completed`
             never said whether anything passed.
 
-            Three LIFECYCLE values: none (the run has not reached validation),
-            running (a validation CYCLE is in flight — not merely a live run with
-            no verdict yet) and awaiting-fix (validation failed and the run is
-            repairing it — the work in flight is a CODING cycle, which is why the
-            state names the implementation rather than validation). The rest are
-            the verdict verbatim. They are mutually exclusive in time, so nothing
-            is hidden behind another.
+            Four LIFECYCLE values. none is PENDING, never settled: a verdict is
+            expected and has not arrived, because a run is live or a dev run filed
+            the version's validation task and nothing has started it yet. A client
+            must not read it as "there is no verdict to wait for" — that is what
+            skipped and inconclusive say. running is a validation CYCLE in flight,
+            not merely a live run with no verdict yet. awaiting-fix is validation
+            having failed with the run repairing it — the work in flight is a CODING
+            cycle, which is why the state names the implementation rather than
+            validation. cancelled is a person STOPPING the judging: a validation run
+            settled cancelled before recording a verdict, so nothing will answer for
+            this version unless somebody re-asks. The rest are the verdict verbatim.
+            They are mutually exclusive in time, so nothing is hidden behind another.
 
             passed (every criterion was automated and passed), partial (some
             passed, none failed, some were never covered), failed (a criterion
@@ -4227,6 +4232,7 @@ components:
           - none
           - running
           - awaiting-fix
+          - cancelled
           - passed
           - partial
           - failed
@@ -5181,6 +5187,14 @@ components:
         files:
           format: int64
           type: integer
+        itemId:
+          description: '`progress_item` only: WHICH named unit of work the line is about — the key a
+            consumer folds on, since many lines describe the same item and a reader wants one row
+            repainted rather than many rows printed. Validation binds items to acceptance criteria
+            ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status
+            itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running |
+            healing | pass | fail.'
+          type: string
         kind:
           type: string
         level:
@@ -5854,8 +5868,9 @@ components:
     RunProgressLine:
       additionalProperties: false
       description: 'One line of a cycle''s agent log: the runner''s progress envelope (phase | tool_use
-        | git_commit | git_push | gh_action | log | result) plus the attribution the console groups on —
-        which cycle produced it, and whether the main agent or one of its Task subagents did.'
+        | activity | tool_result | git_commit | git_push | gh_action | log | progress_item | result)
+        plus the attribution the console groups on — which cycle produced it, and whether the main
+        agent or one of its Task subagents did.'
       properties:
         branch:
           type: string
@@ -5907,6 +5922,14 @@ components:
         files:
           format: int64
           type: integer
+        itemId:
+          description: '`progress_item` only: WHICH named unit of work the line is about — the key a
+            consumer folds on, since many lines describe the same item and a reader wants one row
+            repainted rather than many rows printed. Validation binds items to acceptance criteria
+            ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status
+            itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running |
+            healing | pass | fail.'
+          type: string
         kind:
           type: string
         level:
@@ -6541,8 +6564,8 @@ components:
       type: object
     TimelineEvent:
       additionalProperties: false
-      description: 'A unified-timeline entry: today''s ProgressEvent (phase | tool_use | git_commit |
-        git_push | gh_action | build_step | log | result) plus its attribution — which execution attempt
+      description: 'A unified-timeline entry: today''s ProgressEvent (phase | tool_use | activity |
+        tool_result | git_commit | git_push | gh_action | build_step | log | progress_item | result) plus its attribution — which execution attempt
         it came from. This is the per-row shape the console renders; the FE groups rows by executionId/kind.'
       properties:
         branch:
@@ -6589,6 +6612,14 @@ components:
         files:
           format: int64
           type: integer
+        itemId:
+          description: '`progress_item` only: WHICH named unit of work the line is about — the key a
+            consumer folds on, since many lines describe the same item and a reader wants one row
+            repainted rather than many rows printed. Validation binds items to acceptance criteria
+            ("AC-003-a"), which `cycleKind` already implies, so this never repeats it. The status
+            itself rides on `status`, scoped by `kind`: planned | exploring | authoring | running |
+            healing | pass | fail.'
+          type: string
         kind:
           type: string
         level:

@@ -48,7 +48,7 @@ dependency named `user-auth` yields:
 | `USER_AUTH_CLIENT_ID` | `<DEP>_CLIENT_ID` | this app's platform-owned OAuth client id |
 | `USER_AUTH_ISSUER` | `<DEP>_ISSUER` | OIDC issuer / authority for `oidc-client-ts` |
 | `USER_AUTH_JWKS_URL` | `<DEP>_JWKS_URL` | JWKS endpoint (token validation reference) |
-| `USER_AUTH_SCOPES` | `<DEP>_SCOPES` | space-separated scopes (e.g. `openid profile email`) |
+| `USER_AUTH_SCOPES` | `<DEP>_SCOPES` | space-separated scopes (e.g. `openid profile email group ou`) |
 
 Hardcoding a fixed prefix — or any prefix other than YOUR dependency's name —
 gives `undefined` at module load and a redirect to `undefined/oauth2/authorize`.
@@ -91,7 +91,7 @@ and reloads.
 never decode the access token for roles and never hand-parse a JWT.
 
 **Roles and test users are platform-provisioned.** The roles your app matches on
-are the ones `specs/design/roles.json` declares; the platform creates them, and a
+are the ones `specs/design/security.json` declares; the platform creates them, and a
 test user per role, when the user clicks Build. Match on those names. Never write
 user- or group-provisioning code, and never seed a roster: an account you create
 is not one the platform can hand to the validation agent.
@@ -183,7 +183,8 @@ export async function listTodos() {
 The gateway hands your service the caller's verified identity as headers
 (`api-management` covers the mechanism and the 401-on-missing-`X-User-Id` rule).
 What follows is what that identity *means*. Which roles exist, and what each may
-do in this project, is `specs/design/roles.json` — read it before writing a
+do in this project, is `specs/design/security.json` — read role names,
+permissions, `coldStartRole`, and `publicComponents` from it before writing a
 resolver, and match its `roles[].name` values.
 
 ## Identity is not authorization
@@ -248,7 +249,7 @@ that header caller-controlled (`api-management`) — reading a role out of it le
 a caller name their own.
 
 **A caller with no record yet gets one, at the cold-start role.**
-`specs/design/roles.json`'s `coldStartRole` says which role a first-time caller
+`specs/design/security.json`'s `coldStartRole` says which role a first-time caller
 holds — read it from that file, not from prose. `null` there means a caller with
 no role reaches nothing, and there is no record to create. Otherwise create the
 record on first sign-in at that role, so a new user reaches the app's base
@@ -270,7 +271,7 @@ hardcode a roster.
 | Signed-in user loops back to the login page forever | A protected handler answers no-role (or a failed directory lookup keyed on `X-User-Id`) with **401**; the SPA reads 401 as "token expired" and restarts sign-in | Return **403**. Resolve the role from the service's one authority — `X-User-Groups` with a directory, the stored people record without one — and never key a *directory* lookup on `X-User-Id`. |
 | A role-scoped caller signs in but sees no rows | Scope derived the attribute from a group NAME (empty for a generic role group), or matched `X-User-Id` (an opaque subject) against a stored directory id (never equal) | Resolve the caller's directory record via `X-User-Name`, read the attribute from it, filter on that. |
 | Every user shows no role / `groups` is empty | Roles read from the access token or a hand-decoded JWT | SPA: `user.profile.groups`. API: `X-User-Groups`. |
-| Every signed-in user gets 403 and the app is unusable from a fresh deploy | The service requires a people record it has no way to create, or it creates one and then still resolves the role from `X-User-Groups` | Create the caller's record on first sign-in at the cold-start role, and resolve the role FROM that record — `specs/design/roles.json`'s `coldStartRole` names it. |
+| Every signed-in user gets 403 and the app is unusable from a fresh deploy | The service requires a people record it has no way to create, or it creates one and then still resolves the role from `X-User-Groups` | Create the caller's record on first sign-in at the cold-start role, and resolve the role FROM that record — `specs/design/security.json`'s `coldStartRole` names it. |
 | Sign-in loops at the right path, or the user is sent to login on every visit / new tab | No persistent `WebStorageStateStore` (the in-memory default loses the PKCE verifier across the redirect), session in `sessionStorage`, or the load path calls `signIn()` on a merely-expired token | `WebStorageStateStore({ store: localStorage })` + `automaticSilentRenew`; renew via `signinSilent()` and only `signIn()` when there is no session. |
 | After login, "invalid redirect URI" | `redirect_uri` doesn't match the `<origin>/callback` the platform registered | Compute `window.location.origin + '/callback'`. |
 | Logout button does nothing | `signOut()` calls only `signoutRedirect()`, which rejects (no `end_session_endpoint`), and the handler swallows it | Wrap it in the try/catch fallback to `removeUser()` + reload. |

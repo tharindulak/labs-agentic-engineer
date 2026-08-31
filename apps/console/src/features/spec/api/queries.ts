@@ -21,13 +21,19 @@ import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { specKeys } from "./keys";
 import { toSpecEntries } from "./mapping";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError } from "../../../api/errors";
 
 type FileContent = components["schemas"]["FileContent"];
 type ComponentDependencies = components["schemas"]["ComponentDependencies"];
 
+// ApiRequestError, not Error: it keeps the envelope's `code` alongside the same
+// message every existing caller already reads. The Validation page needs it to tell
+// a file that is genuinely ABSENT (`not_found` — a version whose spec authored no
+// criteria) from a read that merely failed, which decides whether the page explains
+// itself or offers a retry. Branching on the code rather than the message, which the
+// BFF owns and may reword.
 function toError(error: unknown, fallback: string): Error {
-  return new Error(apiErrorMessage(error, fallback));
+  return new ApiRequestError(error, fallback);
 }
 
 /**

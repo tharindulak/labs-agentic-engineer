@@ -71,7 +71,8 @@ Approved at section level; per-section detail is defined feature-by-feature.
   needs a registered name reuses it — Build does not re-collect those secrets.
 - **Project view** — inside a project the sidebar nav swaps to its sections
   (ADR-0010; no back-item, home is the header brand / project switcher):
-  - **Overview** — component map + status, deployment state, recent activity.
+  - **Overview** — the Spec → Build → Deploy track, the components and
+    dependencies index, and the architecture diagram.
   - **Spec** — the requirement, derived design + acceptance criteria.
   - **Builds** — the version ledger: one row per version, with its milestone,
     status, duration and start. A row opens that version's
@@ -91,6 +92,23 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- The project overview is a track of links, not a page of cards — Spec → Build
+  → Deploy is one bar with a step numeral per leg and a chevron in each seam,
+  and every leg links to the section that runs it. Lit means unsettled and more
+  than one leg may be lit (amending a spec while the last version builds lights
+  both, with one summary line relating them); a pulse means the platform is
+  working and amber-and-still means it is waiting on you. Validation rides the
+  deploy leg rather than becoming a fourth gate. Below the track, the components
+  and dependencies index sits beside the project's architecture diagram — the
+  same `design.cell` render as the spec workspace, sharing its layout, linking
+  through to the Architecture view. The activity feed is deleted rather than
+  relocated, its whole `features/activity` module with it, and the project's
+  status chip moves from three page titles to the toolbar beside the project
+  switcher. A project with nothing in it gets the same body, each panel showing
+  its own empty state, rather than a substitute page. The overview offers no actions at all: every way of starting work
+  stays on the page that owns it —
+  [#662](https://github.com/wso2/labs-agentic-engineer/issues/662)
+  ([ADR-0022](design/decisions/ADR-0022-the-overview-is-a-track-of-links.md))
 - External dependency values are collected on a version's build page, not in
   front of the Build button — provisioning authors every declared key EMPTY at
   build time, so the coding agent gets its env vars defined and Build never
@@ -104,7 +122,8 @@ here: they're the open `console` + `feature` issues.
   values live on the org record, which no project surface can clear —
   [ADR-0023](../../docs/decisions/ADR-0023-external-dependency-values-are-a-deploy-gate.md)
 - Empty states teach *what*, never narrate the *how* — the five flow-narrating
-  empty states (Builds, Deployments, Validations, Components, Recent activity)
+  empty states (Builds, Deployments, Validations, Components, Recent activity —
+  the last retired with the feed itself, #662)
   now say what lives on the page and why it is empty, retiring *published* /
   *plan* from all of them; Builds, the one surface a user can act on, gains a
   **Go to the spec** CTA. Wordings live in the lexicon's **Empty states**
@@ -164,6 +183,20 @@ here: they're the open `console` + `feature` issues.
   had asked for —
   [#575](https://github.com/wso2/labs-agentic-engineer/issues/575)
   (contract: `SpecStage.designOutdated`)
+- Spec view — the turn declares its plan: a skill says what it is **about to
+  write** (`declare_plan`, fire-and-forget tool-call-as-UI — ADR-0025), and the
+  rail renders the checklist — **ghost rows** holding the coming documents'
+  places, a pulse on the one being written, and an honest **count** (*2 of 6*)
+  that grows in waves because the cell fixes the component set mid-run. Every
+  status is derived from the mutation stream, never self-reported. A clean
+  turn's plan dissolves; a dead turn leaves its **wreckage** — done ticks, one
+  error, the remaining ghosts — surfaced through the attention chip until the
+  next declaring turn replaces it. The **editor follows the write** and yields
+  to the reader's first manual click (ADR-0026), superseding the cell's
+  yank-back. The chat records each declaration as an activity step (*Planned 3
+  documents*) —
+  [#576](https://github.com/wso2/labs-agentic-engineer/issues/576)
+  (contract: `declare_plan` in `@aep/agent-stream`; no aep-api change)
 - Overview — the spec card stops rewriting itself: **one button** (*Open spec*)
   in every state instead of three captions walked during a single kickoff with
   no user input, and **one line that always says something** instead of blanking

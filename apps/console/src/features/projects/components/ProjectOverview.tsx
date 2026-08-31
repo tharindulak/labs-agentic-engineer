@@ -32,12 +32,10 @@ import { Link as LinkIcon } from "@wso2/oxygen-ui-icons-react";
 import { Link } from "@tanstack/react-router";
 import { PageHeader } from "../../../components/PageHeader";
 import { SectionTitle } from "../../../components/SectionTitle";
-import { StatusChip } from "../../../components/StatusChip";
 import { useProject, useProjectComponents, useProjectStatus } from "../api/queries";
-import { projectChip } from "../lib/projectChip";
-import { RecentActivity } from "./RecentActivity";
 import { ComponentsList } from "./ComponentsList";
-import { OverviewPipeline } from "./OverviewPipeline";
+import { OverviewTrack } from "./OverviewTrack";
+import { OverviewArchitecture } from "./OverviewArchitecture";
 import { OverviewDependencies } from "./OverviewDependencies";
 
 function SectionError({
@@ -58,9 +56,12 @@ function SectionError({
 }
 
 // The overview renders from ONE polling read (#183): the status aggregate
-// powers the whole pipeline. The components list has no interval of its own —
+// powers the whole track. The components list has no interval of its own —
 // it refetches when the poll shows a build/deploy transition (the only times
-// components change).
+// components change). The architecture diagram adds no interval either: it is
+// a one-shot read of the committed design.cell, which only a design turn
+// changes, and a design turn is something the user watched happen in the spec
+// view.
 export function ProjectOverview({ projectName }: { projectName: string }) {
   const project = useProject(projectName);
   const status = useProjectStatus(projectName);
@@ -105,14 +106,12 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
               {initial}
             </Avatar>
             <Box>
-              <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-                <Typography variant="h4" component="span">
-                  {displayName}
-                </Typography>
-                {status.data && (
-                  <StatusChip {...projectChip(status.data)} appearance="soft" dot />
-                )}
-              </Stack>
+              {/* A block, not the inline span it was while a chip sat beside
+                  it in a row Stack — inline, the repo link below reflowed onto
+                  the same line as the name. */}
+              <Typography variant="h4" component="div">
+                {displayName}
+              </Typography>
               {status.data?.repoUrl && (
                 <MuiLink
                   href={status.data.repoUrl}
@@ -145,16 +144,23 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
         ) : status.isPending ? (
           <Skeleton variant="rounded" height={96} />
         ) : (
-          <OverviewPipeline projectName={projectName} status={status.data} />
+          <OverviewTrack projectName={projectName} status={status.data} />
         )}
 
-        {/* Two-column body: the agent-activity feed (what the agents have
-            done) beside the component cards (what they're building). */}
+      {/* Index left, architecture right: the lists are the half you click
+          (a component opens its contract, a dependency opens the catalog),
+          and the diagram is the half you read.
+
+          A project with nothing in it gets this same body, not a substitute.
+          An earlier pass swapped it for an explainer of the three stages, on
+          the theory that three panels each saying "nothing here yet" is worse
+          than one page that teaches. It is not: each panel's empty state
+          already names what belongs there and when it turns up, so the
+          explainer was a fourth surface teaching the same thing in worse
+          words, and it hid the shape of the page from the one reader who has
+          never seen it. */}
         <Grid container spacing={4}>
-          <Grid size={{ xs: 12, md: 6 }}>
-            <RecentActivity projectName={projectName} />
-          </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
+          <Grid size={{ xs: 12, md: 5 }}>
             <SectionTitle>Components</SectionTitle>
             {componentsQuery.isError ? (
               <SectionError
@@ -175,6 +181,9 @@ export function ProjectOverview({ projectName }: { projectName: string }) {
               />
             )}
             <OverviewDependencies projectName={projectName} />
+          </Grid>
+          <Grid size={{ xs: 12, md: 7 }}>
+            <OverviewArchitecture projectName={projectName} />
           </Grid>
         </Grid>
       </Stack>

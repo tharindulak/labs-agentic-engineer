@@ -117,6 +117,11 @@ function validationNote(validation: string, view: ReturnType<typeof validationVi
       // to the banner — whose sentence the Validation page's tile shares and cannot
       // drop. Deploy, not merge: validation runs against the deployed system.
       return "Waits for the implementation fix to deploy.";
+    case "cancelled":
+      // Keyed here rather than left to the tone, because `cancelled` is `neutral` and
+      // the neutral sentence below says the version had no criteria to check. It had
+      // them; nobody ran them.
+      return "Validation was cancelled — this version was never checked.";
     default:
       break;
   }

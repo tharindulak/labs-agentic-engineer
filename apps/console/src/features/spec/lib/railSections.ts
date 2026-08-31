@@ -67,6 +67,20 @@ export interface RailSection {
   title: string;
   state: SectionState;
   reasons: SectionReason[];
+  /**
+   * The declared plan's tally for this section — "2 of 6" on the header
+   * (#576). Present only while a plan (or its wreckage) holds entries here;
+   * a clean turn's plan dissolves and the count goes with it.
+   */
+  progress?: { done: number; total: number };
+}
+
+/** One declared-plan entry as the rail consumes it (#576) — a projection of
+ *  the planStore snapshot, kept structural so this module stays pure. */
+export interface RailPlanEntry {
+  path: string;
+  status: "planned" | "writing" | "done" | "error";
+  section: RailSection["id"] | null;
 }
 
 export interface RailInput {
@@ -85,6 +99,12 @@ export interface RailInput {
   assumptions: number;
   /** Gaps only the user can fill. */
   openQuestions: number;
+  /** The declared plan's entries (#576) — empty when no plan is live and no
+   *  wreckage stands. */
+  planEntries: RailPlanEntry[];
+  /** The declaring turn died leaving undone entries — the residue is the case
+   *  for re-running the flow, so it surfaces as an attention reason. */
+  planWreckage: boolean;
 }
 
 const REQUIREMENTS_MOVED = "The requirements have changed since";
@@ -226,35 +246,78 @@ export function railSections(input: RailInput): RailSection[] {
   // Retry against work in flight. The moment anything exists the honest
   // silence above resumes — a flowless turn could then be touching anything.
   const projectEmpty = !input.hasRequirements && !input.hasDesign && !input.hasValidation;
+  // The declared plan is the SHARPEST signal (#576): the entry being written
+  // names its section outright, so it outranks the flow-token guess. The flow
+  // and the empty-project elimination remain the fallbacks — a turn that
+  // declares nothing still pulses where it can be placed.
+  const writingSection = input.planEntries.find(
+    (e) => e.status === "writing" && e.section !== null,
+  )?.section;
   const activeID =
-    input.agentWorking && Object.hasOwn(SECTION_FOR_FLOW, input.agentFlow)
-      ? SECTION_FOR_FLOW[input.agentFlow]
-      : input.agentWorking && projectEmpty
-        ? "requirements"
-        : undefined;
+    input.agentWorking && writingSection
+      ? writingSection
+      : input.agentWorking && Object.hasOwn(SECTION_FOR_FLOW, input.agentFlow)
+        ? SECTION_FOR_FLOW[input.agentFlow]
+        : input.agentWorking && projectEmpty
+          ? "requirements"
+          : undefined;
 
   const section = (
     id: RailSection["id"],
     title: string,
     reasons: SectionReason[],
-  ): RailSection => ({
-    id,
-    title,
+  ): RailSection => {
+    const planned = input.planEntries.filter((e) => e.section === id);
+    const unfinished = planned.filter((e) => e.status !== "done").length;
+    // The wreckage reason (#576 decision 6): a dead turn's undone entries are
+    // the case for re-running the flow, surfaced through the same chip+dialog
+    // every other attention reason uses. Leads the list — it blocks the most.
+    //
+    // Scoped to the sections a DECLARING flow actually writes. `/design` is the
+    // only flow that declares (a single-document turn's count answers nothing),
+    // and its recovery is the delta pass this action fires. Naming that repair
+    // on Requirements would be wrong twice: it would call a requirements run a
+    // "design run", and its button would re-derive the design FROM the
+    // requirements the dead turn never finished. Requirements ghosts still show
+    // as rows; what they do not get is an action that makes things worse.
+    const wreck: SectionReason[] =
+      input.planWreckage && unfinished > 0 && id !== "requirements"
+        ? [
+            {
+              key: "plan-unfinished",
+              label: "The design run didn't finish",
+              count: unfinished,
+              action: "update-design",
+            },
+          ]
+        : [];
+    return {
+      id,
+      title,
     // ACTIVE outranks everything, and does not require the section to be empty:
     // a design run keeps pulsing Design after its first file lands, because it
     // is still writing the rest. Downstream sections stay dim through the whole
     // of the requirements interview, which is what they are — not begun, and
     // not beginnable until the thing they derive from exists.
-    state:
-      id === activeID
-        ? "active"
-        : !has[id]
-          ? "not-started"
-          : reasons.length > 0
+      state:
+        id === activeID
+          ? "active"
+          : wreck.length > 0
             ? "attention"
-            : "ready",
-    reasons: has[id] ? reasons : [],
-  });
+            : !has[id]
+              ? "not-started"
+              : reasons.length > 0
+                ? "attention"
+                : "ready",
+      // Wreckage stands even on a section with nothing committed yet — the
+      // ghosts ARE what there is to talk about — so it bypasses the has[] gate
+      // the ordinary reasons keep.
+      reasons: [...wreck, ...(has[id] ? reasons : [])],
+      ...(planned.length > 0
+        ? { progress: { done: planned.length - unfinished, total: planned.length } }
+        : {}),
+    };
+  };
 
   return [
     section("requirements", "Requirements", requirements),

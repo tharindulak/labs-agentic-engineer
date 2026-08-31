@@ -225,8 +225,8 @@ func TestDesignJSONStories(t *testing.T) {
 
 // ---- the roles document ----------------------------------------------------
 //
-// The structured half of the security design is the ONE spec file the platform
-// acts on deterministically at build time: it creates the roles and test users
+// The security design is the ONE spec file the platform acts on
+// deterministically at build time: it creates the roles and test users
 // the file declares. These pin the three things the gate owns about it —
 // presence when the design signs users in, parseability, and that the stories
 // its roles cite are real.
@@ -245,13 +245,14 @@ func rolesDoc(stories string) string {
 	return `{"version":1,"coldStartRole":"Member","publicComponents":[],` +
 		`"roles":[{"name":"Member","description":"Joins today's order.","stories":[` + stories + `],` +
 		`"grantedBy":"first sign-in","permissions":[{"component":"lunch-api","actions":["join round"]}]}],` +
-		`"testUsers":[{"username":"test-member","role":"Member"}]}`
+		`"testUsers":[{"username":"test-member","role":"Member"}],` +
+		`"thunder":{"name":"Expense Tracker","type":"browser"}}`
 }
 
 // A design with no sign-in needs no roles document — most designs are this.
 func TestBuildGate_NoSignInNeedsNoRolesDocument(t *testing.T) {
 	if errs := gateErrors(t, completeDesignFiles()); len(errs) != 0 {
-		t.Fatalf("a design with no sign-in should not be asked for roles.json, got %+v", errs)
+		t.Fatalf("a design with no sign-in should not be asked for security.json, got %+v", errs)
 	}
 }
 
@@ -271,7 +272,7 @@ func TestBuildGate_SignInWithoutRolesDocument(t *testing.T) {
 func TestBuildGate_SignInWithARolesDocumentPasses(t *testing.T) {
 	files := completeDesignFiles()
 	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
-	files["roles.json"] = rolesDoc("1, 2")
+	files["security.json"] = rolesDoc("1, 2")
 
 	if errs := gateErrors(t, files); len(errs) != 0 {
 		t.Fatalf("want a clean gate, got %+v", errs)
@@ -283,7 +284,7 @@ func TestBuildGate_SignInWithARolesDocumentPasses(t *testing.T) {
 func TestBuildGate_UnparseableRolesDocument(t *testing.T) {
 	files := completeDesignFiles()
 	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
-	files["roles.json"] = `{"version":1,`
+	files["security.json"] = `{"version":1,`
 
 	errs := gateErrors(t, files)
 	if !slices.Contains(codesOf(errs), codeInvalidRolesDocument) {
@@ -291,13 +292,13 @@ func TestBuildGate_UnparseableRolesDocument(t *testing.T) {
 	}
 }
 
-// A referential rule rolesspec owns surfaces through the same gate code, so the
+// A referential rule securityspec owns surfaces through the same gate code, so the
 // two halves of the validation cannot drift apart.
 func TestBuildGate_RolesDocumentBreakingAReferentialRule(t *testing.T) {
 	files := completeDesignFiles()
 	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
 	// coldStartRole names a role the document does not declare.
-	files["roles.json"] = strings.Replace(rolesDoc("1"), `"coldStartRole":"Member"`, `"coldStartRole":"Nobody"`, 1)
+	files["security.json"] = strings.Replace(rolesDoc("1"), `"coldStartRole":"Member"`, `"coldStartRole":"Nobody"`, 1)
 
 	errs := gateErrors(t, files)
 	if !slices.Contains(codesOf(errs), codeInvalidRolesDocument) {
@@ -307,12 +308,12 @@ func TestBuildGate_RolesDocumentBreakingAReferentialRule(t *testing.T) {
 
 // A role citing a story the PRD does not define means the design and the
 // requirements have drifted, and the permissions it grants trace to nothing.
-// The gate is the only place this is checkable: rolesspec validates one file,
+// The gate is the only place this is checkable: securityspec validates one file,
 // and only the gate also sees the PRD.
 func TestBuildGate_RoleCitingAStoryThePRDDoesNotDefine(t *testing.T) {
 	files := completeDesignFiles()
 	files["components/lunch-api/design.json"] = authService("lunch-api", "1, 2, 4")
-	files["roles.json"] = rolesDoc("1, 99")
+	files["security.json"] = rolesDoc("1, 99")
 
 	errs := gateErrors(t, files)
 	if !slices.Contains(codesOf(errs), codeUnknownRoleStory) {
@@ -329,7 +330,7 @@ func TestBuildGate_RoleCitingAStoryThePRDDoesNotDefine(t *testing.T) {
 // it is the same file the platform will provision from either way.
 func TestBuildGate_RolesDocumentValidatedEvenWithoutSignIn(t *testing.T) {
 	files := completeDesignFiles()
-	files["roles.json"] = rolesDoc("1, 99")
+	files["security.json"] = rolesDoc("1, 99")
 
 	errs := gateErrors(t, files)
 	if !slices.Contains(codesOf(errs), codeUnknownRoleStory) {

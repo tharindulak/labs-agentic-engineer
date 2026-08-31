@@ -80,29 +80,39 @@
 }
 
 .cell-diagram-root[data-cd-theme="dark"] {
+  /*
+   * Neutral, not slate. The dark palette was Tailwind slate (#0f172a and
+   * friends), which is a blue: on a console whose dark ground is near-black,
+   * the diagram read as a navy slab dropped onto the page rather than as part
+   * of the card holding it. These are the same values re-picked off the
+   * grey axis, so the canvas sits at the surrounding surface's weight and the
+   * only colour left in the diagram is the colour that means something — the
+   * four boundary directions.
+   */
+
   /* text */
-  --cd-title-text: #e2e8f0;
-  --cd-node-text: #e2e8f0;
-  --cd-body-text: #cbd5e1;
-  --cd-muted-text: #94a3b8;
-  --cd-subtle-text: #cbd5e1;
-  --cd-disabled-text: #64748b;
-  --cd-boundary-color: #cbd5e1;
+  --cd-title-text: #ededf0;
+  --cd-node-text: #ededf0;
+  --cd-body-text: #d0d0d4;
+  --cd-muted-text: #96969e;
+  --cd-subtle-text: #d0d0d4;
+  --cd-disabled-text: #6b6b73;
+  --cd-boundary-color: #d0d0d4;
 
   /* surfaces */
-  --cd-surface: #1e293b;
-  --cd-surface-hover: #334155;
-  --cd-canvas-bg: #0f172a;
-  --cd-chip-bg: rgba(30, 41, 59, 0.88);
-  --cd-chip-bg-strong: rgba(30, 41, 59, 0.92);
-  --cd-title-bg: rgba(30, 41, 59, 0.86);
+  --cd-surface: #1c1c1f;
+  --cd-surface-hover: #2a2a2f;
+  --cd-canvas-bg: #121214;
+  --cd-chip-bg: rgba(28, 28, 31, 0.88);
+  --cd-chip-bg-strong: rgba(28, 28, 31, 0.92);
+  --cd-title-bg: rgba(28, 28, 31, 0.86);
 
   /* lines & borders */
-  --cd-line: #334155;
-  --cd-line-strong: #475569;
-  --cd-node-border: #64748b;
-  --cd-external-border: #94a3b8;
-  --cd-dots: #334155;
+  --cd-line: #2e2e33;
+  --cd-line-strong: #3f3f46;
+  --cd-node-border: #6b6b73;
+  --cd-external-border: #96969e;
+  --cd-dots: #2e2e33;
 
   /* boundary zones / directions (brightened for dark backgrounds) */
   --cd-north: #38bdf8;
@@ -110,7 +120,7 @@
   --cd-south: #34d399;
   --cd-west: #a78bfa;
   --cd-cross: #a78bfa;
-  --cd-edge: #94a3b8;
+  --cd-edge: #96969e;
 
   /* shadows */
   --cd-shadow-controls: 0 4px 12px rgba(0, 0, 0, 0.4);
@@ -134,9 +144,9 @@
   --cd-warn-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
 
   /* notification: info */
-  --cd-info-text: #0f172a;
-  --cd-info-bg: #cbd5e1;
-  --cd-info-border: #cbd5e1;
+  --cd-info-text: #121214;
+  --cd-info-bg: #d0d0d4;
+  --cd-info-border: #d0d0d4;
 
   /* drive react-flow's own canvas background from the theme */
   --xy-background-color: var(--cd-canvas-bg);
