@@ -49,13 +49,27 @@ func ctxWithOrg(org string) context.Context {
 	return tenant.WithBoundOrg(context.Background(), org)
 }
 
+// validBody is the ONLY shape this endpoint accepts: the agent's own report
+// document. Every column is derived from it, so a test that wants to invalidate
+// a field removes it from the REPORT rather than from the request.
 func validBody() *gen.CreateRcaAgentReportRequest {
-	return &gen.CreateRcaAgentReportRequest{
-		Project:        "proj",
-		Title:          "Checkout 500s",
-		Summary:        "Spike in 500s",
-		Classification: "code-level",
-		Diagnosis:      "npe in handler",
+	return &gen.CreateRcaAgentReportRequest{Report: validReport()}
+}
+
+func validReport() map[string]any {
+	return map[string]any{
+		"summary": "Spike in 500s",
+		"alert_context": map[string]any{
+			"project":    "proj",
+			"component":  "proj-checkout",
+			"alert_name": "checkout 5xx",
+		},
+		"result": map[string]any{
+			"root_causes": []any{
+				map[string]any{"summary": "Checkout 500s", "confidence": "high"},
+			},
+		},
+		"handoff": map[string]any{"classification": "code_level"},
 	}
 }
 
@@ -83,22 +97,25 @@ func TestCreateReport_Valid(t *testing.T) {
 	}
 }
 
-func TestCreateReport_MissingRequiredFields(t *testing.T) {
-	cases := map[string]func(*gen.CreateRcaAgentReportRequest){
-		"project":        func(b *gen.CreateRcaAgentReportRequest) { b.Project = "" },
-		"title":          func(b *gen.CreateRcaAgentReportRequest) { b.Title = "" },
-		"summary":        func(b *gen.CreateRcaAgentReportRequest) { b.Summary = "" },
-		"diagnosis":      func(b *gen.CreateRcaAgentReportRequest) { b.Diagnosis = "" },
-		"classification": func(b *gen.CreateRcaAgentReportRequest) { b.Classification = "" },
+// The 400 names fields of the REPORT, because that is what the caller can act
+// on: an agent whose document has no alert context cannot fix "project".
+func TestCreateReport_ReportMissingRequiredContent(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"alert_context.project": func(r map[string]any) {
+			r["alert_context"] = map[string]any{"alert_name": "checkout 5xx"}
+		},
+		"summary": func(r map[string]any) { delete(r, "summary") },
 	}
-	for field, blank := range cases {
+	for field, break_ := range cases {
 		t.Run(field, func(t *testing.T) {
 			repo := &fakeRepo{}
-			body := validBody()
-			blank(body)
+			report := validReport()
+			break_(report)
 
 			_, err := New(repo).CreateRcaAgentReport(ctxWithOrg("acme"),
-				gen.CreateRcaAgentReportRequestObject{Body: body})
+				gen.CreateRcaAgentReportRequestObject{
+					Body: &gen.CreateRcaAgentReportRequest{Report: report},
+				})
 
 			assertStatus(t, err, 400)
 			if !strings.Contains(err.Error(), field) {
@@ -111,16 +128,37 @@ func TestCreateReport_MissingRequiredFields(t *testing.T) {
 	}
 }
 
-func TestCreateReport_InvalidClassification(t *testing.T) {
-	body := validBody()
-	body.Classification = "vibes"
-
-	_, err := New(&fakeRepo{}).CreateRcaAgentReport(ctxWithOrg("acme"),
-		gen.CreateRcaAgentReportRequestObject{Body: body})
+// A body with no report at all. There is no other shape to fall back to.
+func TestCreateReport_MissingReport(t *testing.T) {
+	repo := &fakeRepo{}
+	_, err := New(repo).CreateRcaAgentReport(ctxWithOrg("acme"),
+		gen.CreateRcaAgentReportRequestObject{Body: &gen.CreateRcaAgentReportRequest{}})
 
 	assertStatus(t, err, 400)
-	if !strings.Contains(err.Error(), "code-level") {
-		t.Errorf("error %q does not name the allowed classifications", err)
+	if !strings.Contains(err.Error(), "report is required") {
+		t.Errorf("error %q must say the report is required", err)
+	}
+	if len(repo.created) != 0 {
+		t.Error("nothing may be persisted without a report")
+	}
+}
+
+// A classification this contract does not know is not passed through to the
+// column: the read side treats it as a closed set, so it resolves to "none".
+func TestCreateReport_UnknownClassificationBecomesNone(t *testing.T) {
+	repo := &fakeRepo{}
+	report := validReport()
+	report["handoff"] = map[string]any{"classification": "vibes"}
+
+	_, err := New(repo).CreateRcaAgentReport(ctxWithOrg("acme"),
+		gen.CreateRcaAgentReportRequestObject{
+			Body: &gen.CreateRcaAgentReportRequest{Report: report},
+		})
+	if err != nil {
+		t.Fatalf("an unknown classification is normalised, not refused: %v", err)
+	}
+	if got := repo.created[0].Classification; got != "none" {
+		t.Errorf("stored classification = %q, want none", got)
 	}
 }
 

@@ -167,6 +167,16 @@ func BuildRunName(projectID, component, sha string, attempt int) string {
 // between them, so neither has to import the other's world.
 var ErrDeployPermanent = errors.New("permanent deploy failure")
 
+// ErrProvisionPermanent marks a provisioning failure that repeating cannot
+// change: the ClusterResourceType is missing, or the Resource never cuts a
+// release.
+//
+// It is the same seam as ErrDeployPermanent: WHICH provision failures are
+// permanent belongs to the dependencies domain; turning that into Temporal's
+// vocabulary belongs to run/errors.go. This sentinel is the seam so run does
+// not import dependencies.
+var ErrProvisionPermanent = errors.New("permanent provision failure")
+
 // ComponentDeploy is one component's deployment in one environment, as the run
 // loop reasons about it: which release was pinned, and what the cluster says
 // about the binding that pins it.

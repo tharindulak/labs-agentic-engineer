@@ -69,9 +69,18 @@ Three properties the escalated issue must keep:
 ## Invariants — don't break
 - **Escalation never fails the write.** A report that cannot be stored is an incident nothing
   recovers, so a filing failure is logged and the report is persisted without an issue.
-- **Escalation reads the decision out of markdown** — `diagnosis` is one free-text blob, so
-  confidence and action status are recovered by anchored pattern, never semantic parsing. The durable
-  fix is for the SRE agent to send both as structured fields.
+- **The write body is the agent's own report, and this domain does the mapping.** `create-report`
+  accepts one field — `report`, the SRE agent's report document, deliberately unmodelled in the
+  contract — and every column is derived from it in `createreport/native.go`. That is what lets the
+  agent's publisher stay generic: the side that owns this contract owns the translation, so an AEP
+  field rename is not a change to the OpenChoreo repository. A report that cannot fill the row is a
+  400 naming fields of the REPORT, since that is what the caller can act on.
+- **Escalation reads the decision from FIELDS, never from prose.** It used to recover the recommended
+  actions out of the rendered `diagnosis` by anchored regex — an undocumented text format acting as a
+  cross-repo contract, where reordering one line in another repository would have silently stopped
+  escalation. The actions now arrive structured. The escalated issue still quotes the handoff's
+  reasoning by slicing the `## Handoff decision` section out of `diagnosis`, which is display-only,
+  fails safe to an empty quote, and reads markdown this domain itself renders.
 - **Correlation only promotes false→true**, and is best-effort: a lookup failure serves the stored
   snapshot rather than failing the read. `Deployed` requires a *succeeded* build (the "Verify Fix"
   threshold), not merely a build.

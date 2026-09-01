@@ -25,6 +25,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // In-memory stand-ins for the ports, holding the same RULES the real providers
@@ -622,7 +623,7 @@ func (f *fakeIssues) withClosedIssue(milestone, number int, labels ...string) *f
 	return f
 }
 
-// fakeOracle answers whether the project authored acceptance criteria.
+// fakeOracle answers whether the project authored validation criteria.
 type fakeOracle struct {
 	has bool
 	err error
@@ -879,15 +880,30 @@ type fakeComponents struct {
 	mu      sync.Mutex
 	ensured []string
 	failFor string
+	// absent names several components the design does not carry, for the cases
+	// failFor's single name cannot express — a create whose component is missing
+	// under BOTH the name it was given and its unprefixed form.
+	absent map[string]bool
+	// failWith fails every name with an error that is NOT a resolution failure,
+	// which is the other half of the prefix fallback's contract: a design read
+	// that broke says nothing about the name, so it must not be retried.
+	failWith error
 }
 
+// EnsureComponent fails for exactly the names the design does not carry, and
+// fails the way the real resolver does — wrapping spec.ErrComponentRemovedAfterGeneration,
+// which is the sentinel the create path's project-prefix fallback keys off.
+// A plain error here would let that fallback pass its tests without ever running.
 func (f *fakeComponents) EnsureComponent(_ context.Context, _, _, component string) error {
 	f.mu.Lock()
 	f.ensured = append(f.ensured, component)
-	fail := component == f.failFor
+	fail, broken := component == f.failFor || f.absent[component], f.failWith
 	f.mu.Unlock()
+	if broken != nil {
+		return broken
+	}
 	if fail {
-		return fmt.Errorf("design has no component %q", component)
+		return fmt.Errorf("%w: %s", spec.ErrComponentRemovedAfterGeneration, component)
 	}
 	return nil
 }

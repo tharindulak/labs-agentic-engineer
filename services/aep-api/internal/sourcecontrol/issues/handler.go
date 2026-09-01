@@ -114,11 +114,14 @@ func (h *Handler) createAdopted(
 
 // mapCreateError translates the create path's sentinels into the envelope.
 //
-// An unresolvable componentName is the caller's own bug — a project prefix left
-// on the name is the one that keeps happening — so it is a 400 that names the
-// component, not an opaque 500. Nothing was filed when it fires. The sentinel
-// is worded for a component removed after generation; here the same condition
-// means the name was never in the design, so the message is this path's own.
+// An unresolvable componentName is the caller's own bug, so it is a 400 that
+// names the component, not an opaque 500. Nothing was filed when it fires. The
+// sentinel is worded for a component removed after generation; here the same
+// condition means the name was never in the design, so the message is this
+// path's own. It fires only for a name the design carries under NEITHER the
+// form given nor without its project prefix — the prefix that used to be the
+// common cause is resolved before this point (eventcore.ensureNamedComponent),
+// which is why the message asks for the design name rather than blaming one.
 func mapCreateError(err error, componentName string) error {
 	switch {
 	case errors.Is(err, sourcecontrol.ErrRepoNotFound):

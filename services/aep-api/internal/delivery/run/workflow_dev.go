@@ -84,6 +84,20 @@ func (l *loop) fillMilestone(ctx workflow.Context) (settled bool, res RunResult,
 		return false, RunResult{}, nil
 	}
 	l.st.Phase = delivery.RunPhasePlanning
+
+	// CANCEL IS ASKED THREE TIMES IN THIS FUNCTION and the first is the row, not
+	// the signal. It covers the one case the other two cannot: a cancel whose
+	// signal never arrived. The cancel surface swallows a failed delivery so a
+	// dead engine cannot wedge the console, and planning is the longest stretch a
+	// run has — so without this read a lost signal costs the whole phase rather
+	// than the moment. It is one database round trip per build.
+	if cancelled, cerr := l.cancelled(ctx); cerr != nil {
+		return true, l.result(), cerr
+	} else if cancelled {
+		res, err = l.settle(ctx, delivery.RunStateCancelled, "")
+		return true, res, err
+	}
+
 	in := PlanMilestoneInput{
 		OrgID:           l.in.OrgID,
 		ProjectID:       l.in.ProjectID,
@@ -94,7 +108,20 @@ func (l *loop) fillMilestone(ctx workflow.Context) (settled bool, res RunResult,
 	// Gates FIRST. An open gate is a dispatch hold, so minting the gates before
 	// the work is what makes the dispatch predicate honest from the moment the
 	// first Task lands — the same order the click ran them in.
-	if gerr := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).ProvisionGates, in).Get(ctx, nil); gerr != nil {
+	//
+	// gateActivityCtx, not activityCtx: this is the one activity here whose
+	// retries are BOUNDED, because provisioning has answers repeating cannot
+	// change and the unbounded default turned one of them into a permanent loop
+	// that re-minted the version's gates on every attempt. See
+	// gateActivityAttempts.
+	cancelled, gerr := l.awaitInterruptibly(ctx, gateActivityCtx(ctx), (*Activities).ProvisionGates, in)
+	if cancelled {
+		workflow.GetLogger(ctx).Info("cancelled while provisioning the version's gates",
+			"milestone", l.in.MilestoneNumber, "tag", l.in.Tag)
+		res, err = l.settle(ctx, delivery.RunStateCancelled, "")
+		return true, res, err
+	}
+	if gerr != nil {
 		res, err = l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonPlanFailed)
 		if err != nil {
 			return true, l.result(), err
@@ -104,14 +131,40 @@ func (l *loop) fillMilestone(ctx workflow.Context) (settled bool, res RunResult,
 	}
 	if l.in.Rebuild {
 		// The milestone is already filled — the click reopened exactly the issues
-		// the cancel closed, marker and all. Re-planning here would mint nothing
+		// the cancel closed, marker and all, and CONFIRMED against the milestone
+		// that it holds planned work at all. Re-planning here would mint nothing
 		// (every title slug is already in the milestone) and the run would then
-		// settle an unbuilt version as delivered. See RunInput.Rebuild.
+		// settle an unbuilt version as delivered. See RunInput.Rebuild, and the
+		// cancel branch below for the one case this reads slightly generously.
 		workflow.GetLogger(ctx).Info("rebuilding an unchanged version — its milestone is already filled, not re-planning",
 			"milestone", l.in.MilestoneNumber, "tag", l.in.Tag)
 		return false, RunResult{}, nil
 	}
-	if perr := workflow.ExecuteActivity(planActivityCtx(ctx), (*Activities).PlanMilestone, in).Get(ctx, nil); perr != nil {
+	cancelled, perr := l.awaitInterruptibly(ctx, planActivityCtx(ctx), (*Activities).PlanMilestone, in)
+	if cancelled {
+		// The turn is cut short mid-plan, so the milestone may hold SOME of the
+		// version's work — the cancel closes and marks whatever landed, and a
+		// rebuild reopens exactly that.
+		//
+		// KNOWN LIMITATION, and it is the milestone's shape that causes it: a
+		// partial plan is indistinguishable from a complete one. Both hold
+		// `development` issues, so build.reopenIncrement answers "filled", the
+		// rebuild skips its planning turn, and the version ships the Tasks that
+		// landed rather than the Tasks it declared. The way out is to change the
+		// spec, which cuts a new tag and plans it fresh.
+		//
+		// It is not NEW here — a planning turn that failed permanently half-way
+		// leaves the same shape — but a cancel makes it reachable on purpose, so
+		// it is written down rather than left to be rediscovered. Fixing it means
+		// either re-planning on every rebuild (additive and idempotent, but an LLM
+		// turn the skip exists to save) or recording how far the turn got, which
+		// is a fact the milestone cannot carry.
+		workflow.GetLogger(ctx).Info("cancelled while planning the version's tasks",
+			"milestone", l.in.MilestoneNumber, "tag", l.in.Tag)
+		res, err = l.settle(ctx, delivery.RunStateCancelled, "")
+		return true, res, err
+	}
+	if perr != nil {
 		res, err = l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonPlanFailed)
 		if err != nil {
 			return true, l.result(), err

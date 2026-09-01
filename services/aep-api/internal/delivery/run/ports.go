@@ -189,7 +189,7 @@ type BuildReader interface {
 type ValidationCoordinator interface {
 	// EnsureValidationIssue mints the run's validation issue into the milestone
 	// at deployed-green and returns its number, or 0 when the project has no
-	// acceptance criteria. Minting here rather than at plan time is what keeps
+	// validation criteria. Minting here rather than at plan time is what keeps
 	// an unworkable issue out of the working set for the whole run.
 	EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int) (int, error)
 	// Verdict reads the validation runner's committed report AT `at` — the

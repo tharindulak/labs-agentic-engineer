@@ -20,6 +20,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { AepApiError, type AepClientOptions, createIssue, listIssues } from "./aepClient.js";
+import { annotatePlatformIssues } from "./platformIssues.js";
 
 function textResult(payload: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
@@ -52,7 +53,8 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
       title: "Search related AE issues",
       description:
         "Search existing GitHub issues on a project's repo to find related/duplicate issues before filing a new one. " +
-        "Keyword-ranked: pass space-separated keywords (component name + symptom terms), not a sentence; results come back ranked by keyword overlap for you to judge.",
+        "Keyword-ranked: pass space-separated keywords (component name + symptom terms), not a sentence; results come back ranked by keyword overlap for you to judge. " +
+        "An issue marked `PlatformRecord: true` is AE's own plan for what to BUILD, not a defect report: read `ReadAs` on it before you treat it as evidence about whether something is broken.",
       inputSchema: {
         project: z.string().describe("OpenChoreo/AE project name"),
         query: z
@@ -75,7 +77,10 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
           ...(query !== undefined ? { query } : {}),
           ...(labels !== undefined ? { labels } : {}),
         });
-        return textResult(issues);
+        // Annotated here rather than left to the caller's prompt: what AE's own
+        // planned-work issues mean is AE's fact, and a reader that gets it wrong
+        // rules out a code change it should have filed. See platformIssues.ts.
+        return textResult(annotatePlatformIssues(issues));
       } catch (err) {
         return errorResult(err);
       }
@@ -101,7 +106,7 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
           .string()
           .optional()
           .describe(
-            "The component this issue is about, as AE's design names it: UNPREFIXED (e.g. 'service1', not 'myproject-service1'). Checked before the issue is filed — a name the design does not carry fails this call rather than surfacing later inside a coding cycle.",
+            "The component this issue is about. AE's design names it unprefixed ('service1'), and a name carrying its project prefix ('myproject-service1') is resolved to the design name for you, so pass whichever your world uses. Checked before the issue is filed — a name the design carries under neither form fails this call rather than surfacing later inside a coding cycle.",
           ),
         dedupeKey: z
           .string()

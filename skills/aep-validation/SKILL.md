@@ -9,14 +9,14 @@ metadata:
 
 # WSO2 Labs Agentic Engineer validation task
 
-You are validating a deployed system against its acceptance criteria.
+You are validating a deployed system against its validation criteria.
 Deliverable: **one PR** containing committed e2e tests and a validation
 report — everything under `tests/`. A failing criterion is report
 *content*, not a task failure — you open the PR either way.
 
-The acceptance oracle (`specs/validation/validation-criteria.json`) is
-**read-only input**: you read it to know what to test, but you never
-modify it or anything else under `specs/`. All artifacts you produce
+The validation criteria (`specs/validation/validation-criteria.json`) are
+**read-only input**: you read them to know what to test, but you never
+modify them or anything else under `specs/`. All artifacts you produce
 live under `tests/`.
 
 The `aep` skill's authentication model (preconfigured `git`/`gh`),
@@ -47,7 +47,7 @@ The prompt carries the issue URL. Read it with comments:
 gh issue view <url> --comments
 ```
 
-The body must contain: the **acceptance oracle** section (criteria file
+The body must contain: the **Validation criteria** section (criteria file
 path + per-criterion tables), a **Test layout** section, and **Report**
 requirements. If a required section is missing, post an issue comment
 naming what's missing and exit with failure.
@@ -366,7 +366,7 @@ cp "$AEP_SKILLS_DIR/aep-validation/scripts/generate-report.mjs" \
 ```
 
 This writes `tests/validation/report.md` + `report.json`. It reads the
-oracle but never writes it — coverage is expressed by each criterion's
+criteria but never writes them — coverage is expressed by each criterion's
 pass/fail in the report, not by a flag in the criteria file. Exit code 2
 means a contract violation: spec titles that don't map to criterion ids
 (fix titles, re-run tests from step 7), a spec file missing its
@@ -419,7 +419,7 @@ and the PR link; the platform closes the issue itself.
 
 - Modify application source, component App Paths, or the root
   `package.json` — tests and report only.
-- Write or modify anything under `specs/` — the acceptance oracle is
+- Write or modify anything under `specs/` — the validation criteria are
   read-only input; all validation artifacts live under `tests/`.
 - Delete or skip a previously committed spec. If one is obsolete, say
   so in the PR description and report — a human removes it.

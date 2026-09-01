@@ -55,9 +55,40 @@ func declinedReport() *ops.RcaAgentReport {
 	}
 }
 
+// declinedActions is the same report's actions as the DECISION now sees them:
+// as fields. The Markdown above is still what the console renders — and what
+// the issue body quotes the handoff's reasoning out of — but nothing decides
+// from it any more.
+func declinedActions() []nativeAction {
+	return []nativeAction{
+		{
+			Description: "Update ReleaseBinding `svc1-development` env var `IDLE_TIMEOUT` to at least 15s",
+			Status:      "revised",
+		},
+		{Description: "Investigate and optimize service2's processing latency", Status: "suggested"},
+		{
+			Description: "Implement retry logic with exponential back-off in service1",
+			Status:      "suggested",
+		},
+	}
+}
+
+// withStatus returns the actions with every `suggested` rewritten, for the cases
+// that used to rewrite the rendered Markdown.
+func withStatus(actions []nativeAction, from, to string) []nativeAction {
+	out := make([]nativeAction, len(actions))
+	copy(out, actions)
+	for i := range out {
+		if out[i].Status == from {
+			out[i].Status = to
+		}
+	}
+	return out
+}
+
 func TestShouldEscalate_HighConfidenceDeclineWithCodeActions(t *testing.T) {
 	t.Parallel()
-	got := shouldEscalate(declinedReport())
+	got := shouldEscalate(declinedReport(), declinedActions())
 	if !got.escalate {
 		t.Fatalf("a high-confidence decline with unaddressed code-level actions must escalate; reason=%q", got.reason)
 	}
@@ -74,7 +105,7 @@ func TestShouldEscalate_SkipsWhenAnIssueWasAlreadyFiled(t *testing.T) {
 	r := declinedReport()
 	n := int64(5)
 	r.IssueNumber = &n
-	if shouldEscalate(r).escalate {
+	if shouldEscalate(r, declinedActions()).escalate {
 		t.Fatal("a report that already carries an issue must not be escalated again")
 	}
 }
@@ -90,7 +121,7 @@ func TestShouldEscalate_EscalatesWhenNoIssueWasFiledWhateverTheClassification(t 
 	for _, c := range []string{"none", "config-level", "code-level", "mixed"} {
 		r := declinedReport()
 		r.Classification = c
-		got := shouldEscalate(r)
+		got := shouldEscalate(r, declinedActions())
 		if !got.escalate {
 			t.Fatalf("classification %q with no issue recorded must escalate; reason=%q", c, got.reason)
 		}
@@ -106,34 +137,37 @@ func TestShouldEscalate_SkipsAnyClassificationOnceAnIssueIsRecorded(t *testing.T
 		r.Classification = c
 		n := int64(5)
 		r.IssueNumber = &n
-		if shouldEscalate(r).escalate {
+		if shouldEscalate(r, declinedActions()).escalate {
 			t.Fatalf("classification %q with an issue recorded must not escalate", c)
 		}
 	}
 }
 
-// Confidence is no longer a gate: any code the report suspects is handed over.
-// A low-confidence root cause with a code-level action is still a code-level
+// Confidence is not a gate: any code the report suspects is handed over. A
+// low-confidence root cause with a code-level action is still a code-level
 // action nobody addressed, and an unfiled defect is dropped for good.
-func TestShouldEscalate_EscalatesOnAnyCodeSuspicionRegardlessOfConfidence(t *testing.T) {
-	t.Parallel()
-	for _, confidence := range []string{"high", "medium", "low"} {
-		r := declinedReport()
-		r.Diagnosis = strings.ReplaceAll(r.Diagnosis, "confidence: high", "confidence: "+confidence)
-		got := shouldEscalate(r)
-		if !got.escalate {
-			t.Fatalf("confidence %q: must still escalate; reason=%q", confidence, got.reason)
-		}
-	}
-}
-
-// No confidence annotation at all is the same case: the actions are what matter.
-func TestShouldEscalate_EscalatesWithNoConfidenceAnnotation(t *testing.T) {
+//
+// This is now true STRUCTURALLY rather than by policy — the decision is handed
+// the actions and nothing else, so there is no confidence in scope to gate on.
+// The test earns its keep by pinning that the input stayed that narrow: a future
+// change that reaches back into the report to consult confidence would have to
+// widen this signature, and this is what would notice.
+func TestShouldEscalate_CannotSeeConfidenceAtAll(t *testing.T) {
 	t.Parallel()
 	r := declinedReport()
-	r.Diagnosis = strings.ReplaceAll(r.Diagnosis, " _(confidence: high)_", "")
-	if got := shouldEscalate(r); !got.escalate {
-		t.Fatalf("a missing confidence annotation must not block a code-level action; reason=%q", got.reason)
+
+	// Every confidence the report could carry, and one carrying none. The
+	// decision is unaffected because it never receives any of them.
+	for _, diagnosis := range []string{
+		r.Diagnosis,
+		strings.ReplaceAll(r.Diagnosis, "confidence: high", "confidence: low"),
+		strings.ReplaceAll(r.Diagnosis, " _(confidence: high)_", ""),
+	} {
+		r.Diagnosis = diagnosis
+		got := shouldEscalate(r, declinedActions())
+		if !got.escalate {
+			t.Fatalf("the decision must not turn on confidence; reason=%q", got.reason)
+		}
 	}
 }
 
@@ -142,8 +176,7 @@ func TestShouldEscalate_EscalatesWithNoConfidenceAnnotation(t *testing.T) {
 func TestShouldEscalate_SkipsWhenEveryActionIsConfig(t *testing.T) {
 	t.Parallel()
 	r := declinedReport()
-	r.Diagnosis = strings.ReplaceAll(r.Diagnosis, "_(suggested)_", "_(revised)_")
-	got := shouldEscalate(r)
+	got := shouldEscalate(r, withStatus(declinedActions(), "suggested", "revised"))
 	if got.escalate {
 		t.Fatalf("no code-level action means nothing to hand a coding agent; reason=%q", got.reason)
 	}
@@ -153,8 +186,7 @@ func TestShouldEscalate_SkipsConfigLevelWithNoCodeActions(t *testing.T) {
 	t.Parallel()
 	r := declinedReport()
 	r.Classification = "config-level"
-	r.Diagnosis = strings.ReplaceAll(r.Diagnosis, "_(suggested)_", "_(revised)_")
-	if shouldEscalate(r).escalate {
+	if shouldEscalate(r, withStatus(declinedActions(), "suggested", "revised")).escalate {
 		t.Fatal("config-level with only config actions must not escalate")
 	}
 }
@@ -162,8 +194,8 @@ func TestShouldEscalate_SkipsConfigLevelWithNoCodeActions(t *testing.T) {
 func TestEscalationIssue_CarriesActionsAndPreserveGuard(t *testing.T) {
 	t.Parallel()
 	r := declinedReport()
-	dec := shouldEscalate(r)
-	title, body := escalationIssue(r, dec.actions)
+	dec := shouldEscalate(r, declinedActions())
+	title, body := escalationIssue(r, dec.actions, dec.configActions)
 
 	if title == "" {
 		t.Fatal("title is required")
@@ -199,8 +231,8 @@ func TestEscalationIssue_StatesTheSpecConflictAndTheCriteriaCheck(t *testing.T) 
 	r := declinedReport()
 	r.Diagnosis += "\n## Handoff decision\n\n**Classification:** none\n\n" +
 		"Action 2 conflicts with AC-003-a, which fixes service2's delay at ~8s.\n"
-	dec := shouldEscalate(r)
-	_, body := escalationIssue(r, dec.actions)
+	dec := shouldEscalate(r, declinedActions())
+	_, body := escalationIssue(r, dec.actions, dec.configActions)
 
 	// The conflict is carried, not used to drop the issue.
 	if !strings.Contains(body, "AC-003-a") {
@@ -221,8 +253,8 @@ func TestEscalationIssue_StatesTheSpecConflictAndTheCriteriaCheck(t *testing.T) 
 func TestEscalationIssue_CriteriaCheckSurvivesAMissingHandoffSection(t *testing.T) {
 	t.Parallel()
 	r := declinedReport()
-	dec := shouldEscalate(r)
-	_, body := escalationIssue(r, dec.actions)
+	dec := shouldEscalate(r, declinedActions())
+	_, body := escalationIssue(r, dec.actions, dec.configActions)
 	if !strings.Contains(body, "specs/validation/validation-criteria.json") {
 		t.Fatalf("the criteria check is unconditional:\n%s", body)
 	}

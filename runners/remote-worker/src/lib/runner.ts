@@ -482,7 +482,7 @@ export async function runClaudeQuery(
   });
 
   // Per-criterion progress — see validation_progress.ts. Validation only: a
-  // coding run has no acceptance criteria to report on, and registering the
+  // coding run has no validation criteria to report on, and registering the
   // matchers anyway would put a hook on every Write, Edit and Bash call of every
   // run to derive nothing.
   const validationProgress =

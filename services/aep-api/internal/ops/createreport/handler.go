@@ -63,14 +63,14 @@ func (h *Handler) WithEscalator(e ops.IssueEscalator) *Handler {
 func (h *Handler) CreateRcaAgentReport(ctx context.Context, request gen.CreateRcaAgentReportRequestObject) (gen.CreateRcaAgentReportResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 
-	report, err := toDomain(org, request.Body)
+	report, actions, err := toDomain(org, request.Body)
 	if err != nil {
 		return nil, apierr.BadRequest(err.Error())
 	}
 	// Before the insert, so one write records both the report and the issue it
 	// caused — no second UPDATE, and no window where the report exists claiming
 	// no issue while one is already being worked.
-	h.escalate(ctx, org, report)
+	h.escalate(ctx, org, report, actions)
 	if err := h.reports.Create(ctx, report); err != nil {
 		return nil, apierr.Internal("failed to create rca-agent report")
 	}
@@ -83,11 +83,13 @@ func (h *Handler) CreateRcaAgentReport(ctx context.Context, request gen.CreateRc
 //
 // It mutates report rather than returning, because the fields it sets belong to
 // the same row the caller is about to insert.
-func (h *Handler) escalate(ctx context.Context, org string, report *ops.RcaAgentReport) {
+func (h *Handler) escalate(
+	ctx context.Context, org string, report *ops.RcaAgentReport, actions []nativeAction,
+) {
 	if h.escalator == nil {
 		return
 	}
-	decision := shouldEscalate(report)
+	decision := shouldEscalate(report, actions)
 	if !decision.escalate {
 		slog.DebugContext(ctx, "rca report: not escalated",
 			"project", report.Project, "component", report.Component,
@@ -95,7 +97,7 @@ func (h *Handler) escalate(ctx context.Context, org string, report *ops.RcaAgent
 		return
 	}
 
-	title, body := escalationIssue(report, decision.actions)
+	title, body := escalationIssue(report, decision.actions, decision.configActions)
 	filed, err := h.escalator.FileAndDispatch(ctx, org, report.Project,
 		unprefixedComponent(report.Project, report.Component),
 		title, body, escalationDedupeKey(report))
@@ -129,51 +131,27 @@ func unprefixedComponent(project, component string) string {
 	return strings.TrimPrefix(component, project+"-")
 }
 
-// toDomain validates the wire body and maps it onto the domain entity. Fields
-// the contract marks required are enforced here rather than left to a DB NOT
-// NULL error, so the caller gets a precise 400.
-func toDomain(org string, in *gen.CreateRcaAgentReportRequest) (*ops.RcaAgentReport, error) {
+// toDomain maps the wire body onto the domain entity and the escalation
+// decision's input.
+//
+// The body carries ONE thing: `report`, the SRE agent's own report document.
+// Every column is derived from it here, which is why the agent needs no
+// knowledge of this schema — it sends what it modelled and the side that owns
+// the contract does the mapping. Validation lives here rather than in the schema
+// because the 400 has to name fields of the REPORT to be actionable, and a
+// schema error would name fields of this request instead.
+func toDomain(org string, in *gen.CreateRcaAgentReportRequest) (
+	*ops.RcaAgentReport, []nativeAction, error,
+) {
 	if in == nil {
-		return nil, fmt.Errorf("%w: request body is required", ops.ErrInvalidReport)
+		return nil, nil, fmt.Errorf("%w: request body is required", ops.ErrInvalidReport)
 	}
-	var missing []string
-	if in.Project == "" {
-		missing = append(missing, "project")
+	if len(in.Report) == 0 {
+		return nil, nil, fmt.Errorf("%w: report is required", ops.ErrInvalidReport)
 	}
-	if in.Title == "" {
-		missing = append(missing, "title")
+	row, err := fromNative(org, in.Report)
+	if err != nil {
+		return nil, nil, err
 	}
-	if in.Summary == "" {
-		missing = append(missing, "summary")
-	}
-	if in.Diagnosis == "" {
-		missing = append(missing, "diagnosis")
-	}
-	if in.Classification == "" {
-		missing = append(missing, "classification")
-	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("%w: missing required field(s): %v", ops.ErrInvalidReport, missing)
-	}
-	if !validClassifications[in.Classification] {
-		return nil, fmt.Errorf("%w: classification %q must be one of code-level, config-level, mixed, none",
-			ops.ErrInvalidReport, in.Classification)
-	}
-	return &ops.RcaAgentReport{
-		OrgID:          org,
-		Project:        in.Project,
-		Component:      in.Component,
-		Title:          in.Title,
-		Summary:        in.Summary,
-		Classification: in.Classification,
-		Diagnosis:      in.Diagnosis,
-		IssueNumber:    in.IssueNumber,
-		IssueURL:       in.IssueURL,
-		IssueTitle:     in.IssueTitle,
-		IssueExcerpt:   in.IssueExcerpt,
-		Dispatched:     in.Dispatched,
-		Recurrence:     int(in.Recurrence),
-		Deployed:       in.Deployed,
-		DeployedAt:     in.DeployedAt,
-	}, nil
+	return row, nativeActions(in.Report), nil
 }

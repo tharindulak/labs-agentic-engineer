@@ -4,7 +4,7 @@
 
 Take a versioned Spec end-to-end: cut the version, plan its Tasks into a GitHub MILESTONE, and run a
 supervised loop that dispatches the coding agent at that milestone until it settles — merging, building
-and deploying along the way — then judge what was deployed against the version's acceptance criteria.
+and deploying along the way — then judge what was deployed against the version's validation criteria.
 **Single write-authority over the milestone-run store and the three Temporal workflows that drive it.**
 
 ```mermaid
@@ -126,7 +126,10 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   gate → whole-spec gate + `v<N>` tag cut → milestone → supersede → run row → plan. The ORDER is the
   domain fact `build` owns; the two halves it does not own (the planning turn, the gate resolvers) are
   root ports. Preflight emits no `external-config` collect for a **Registered External
-  resource** the org catalog already holds (ADR-0021).
+  resource** the org catalog already holds (ADR-0021). Pre-tag also refuses an unknown
+  `resourceType` (`ErrUnknownResourceType` → 409) the same way it refuses an end-user-auth
+  conflict: the design is unsatisfiable on this cluster, so the click claims no version and
+  starts no workflow.
 - **What preflight gates**: it reports what a version's dependencies still need, and only
   `needsResolution` — a dependency the design itself cannot name (ambiguous, unresolved, missing spec,
   or an org service awaiting access) — blocks the version cut. `needsInput` stays the broad "there is
@@ -209,6 +212,32 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   whole version because nothing told a blip from an answer, and it left no history to diagnose. As
   activities it is durable, retried, and classified by `planErr` exactly as every other I/O the loop does.
   A planning failure still settles `plan-failed` — same terminal reason, now written by the supervisor.
+  **The phase is cancellable and its gate activity gives up** ([ADR-0024][adr24]). Its two activities are
+  raced against the cancel channel (`loop.awaitInterruptibly`) and heartbeat, so a cancel both settles the
+  run and stops the work in flight — without it the phase was blind to cancel for its whole duration, which
+  is what let a version with an unsatisfiable dependency loop for 22 minutes over six unread cancels.
+  `ProvisionGates` is the one activity here with a BOUNDED retry policy (`gateActivityAttempts`), because
+  provisioning has answers repeating cannot change and the unbounded default made one of them a permanent
+  loop. It is the LAST of three guards, not the only one: the named faults are refused at the click or
+  fail on attempt one (see the retry-classification bullet below), and the cap catches the permanent modes
+  nobody has named yet. What it looped ON was the gate mint, whose dedupe considered only OPEN gates while
+  the same activity closes the ready ones — so the mint now keys on (version, dependency) in EVERY state,
+  which a version label on the gate is what makes safe (`provisioning.gateVersionLabelPrefix`).
+- **A CANCELLED version says so, in both aggregates that report one** ([ADR-0024][adr24]).
+  `build.statusFromRunState` (the version ledger and the build page header) and
+  `projects.buildStageStatus` (the toolbar's project badge) both folded `cancelled` into `failed`;
+  both now carry their own value, and they move together because a reader sees both at once. `blocked`
+  still reads as failed in both — nobody CHOSE blocked, which is the whole difference. Note the cost:
+  two contract enums gained a value, so the console and the BFF are no longer independently
+  deployable for this change (an old bundle rendered the new value as "Unknown"). Ship the console
+  with, or before, the BFF.
+- **Whether a rebuild skips the planning turn is answered by the MILESTONE, not by the spec status**
+  ([ADR-0024][adr24]). `Rebuild` means "already filled", and an unchanged spec is not evidence of that: a
+  run that died in its planning phase leaves the milestone holding its gates and no work, and a run that
+  skips planning over it reads the empty working set as "planning produced nothing" and settles the version
+  succeeded having built none of it. `build.reopenIncrement` lists the milestone's issues in every state
+  and reports whether any `development` issue is among them; an unreadable milestone answers "not filled",
+  because the wrong "filled" is silent and the wrong "not filled" costs one turn that mints nothing.
 - **The supervisor is the ONLY writer that settles a run row.** The one exception is a start that never
   happened: `StartRun` reports `ErrRunNotStarted` from a degraded boot, and the click settles the row it
   armed rather than leaving a non-terminal row with no workflow behind it. That state is unhealable by
@@ -373,6 +402,16 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   refuses with `ErrNoAdoptableMilestone`, while `AdoptOnCreate` still FILES the issue as a ledger entry
   and returns that refusal as its reason — an incident nobody recorded is worse than one nobody adopted,
   and nothing retries a handoff.
+- **A component named in the caller's vocabulary still resolves.** External callers of create-issue name
+  components the way their own runtime does, and OpenChoreo's — the SRE/RCA handoff's — prefixes the
+  project (`myproject-service1`) where the design carries the bare name (`service1`). Refusing that was
+  this call's most common failure and the most expensive kind, since the refusal lands before anything is
+  filed and nothing retries a handoff: an incident correctly triaged was dropped over a naming
+  convention. `ensureNamedComponent` tries the name AS GIVEN first — so a design that genuinely carries a
+  hyphenated `<project>-<name>` component resolves to itself and no caller loses a component to the
+  fallback — and only a name the design does not carry is retried without its prefix, and only on the
+  resolution sentinel, since a design read that broke says nothing about the name. A name missing under
+  both forms is still refused before filing, naming the string the caller actually sent.
 - **A parked run is woken by whichever side wrote the work.** `wakeIfWorkable` is the one definition of
   "this milestone can now be worked", and who calls it follows the write: a human's arming arrives as an
   `issues` delivery that re-evaluates the predicate on its way out, so `AdoptIssue` leaves the wake to it
@@ -400,7 +439,21 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   secondary rate limit wears a 403 and is deliberately NOT one — and `run/errors.go` owns turning them
   into Temporal's vocabulary. The guard is per call site, so an activity added later that returns a
   source-control error raw is back on unbounded retry; `CloseMilestone` is the one deliberate exception,
-  swallowing its error by contract and so never retrying.
+  swallowing its error by contract and so never retrying. The same split applies to provision and
+  deploy: `provisionErr` / `deployErr` mark `ErrProvisionPermanent` / `ErrDeployPermanent` non-retryable.
+  A provision wait-answer (Resource `Ready=False` / `ResourceTypeNotFound` — even when a
+  prior release exists — or a create that never
+  cuts a release) is permanent; a GetResource blip or cancelled wait is not. Do not bound
+  `activityCtx` with `MaximumAttempts` — permanence is the activity's to declare, and bounding the
+  SHARED options would put every activity on a cap sized for one of them.
+  **`ProvisionGates` is the one activity with a cap of its own, and the two guards are layered rather
+  than alternative** (ADR-0024). Classification is the front line: a fault we can NAME is refused before
+  the run starts (an unknown `resourceType` is a 409 on the click) or fails on attempt one with the
+  provisioner's own message. The cap in `gateActivityCtx` catches only what is left — a permanent fault
+  nobody has named yet, which under the unbounded default is an invisible forever-loop rather than a
+  failed build. Three attempts, spaced by `gateActivityRetryInterval` so they span a blip rather than
+  three seconds of it. Do not add a cap anywhere else without an answer to "which permanent mode does
+  this catch that a classifier could not name?"
 - **Every terminal reason names exactly one failure class.** `redispatch-budget` is agent death (including
   a Job that exited without a pull request); `build-retrigger-budget` is a build that stayed red through
   its one automatic re-trigger with no fix issue to recover it; `deploy-budget` is a component that
@@ -745,3 +798,5 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   A comment read that fails costs the caller its comments, never its Tasks — this list also drives the
   run card's gate-hold vs. empty-working-set distinction.
 - Platform-wide rules (tenant gate, secrets fence, persistence-in-domain) → [../../README.md](../../README.md).
+
+[adr24]: ../../../../docs/decisions/ADR-0024-cancel-reaches-the-planning-phase.md

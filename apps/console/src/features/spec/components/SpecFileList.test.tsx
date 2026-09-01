@@ -179,14 +179,14 @@ describe("SpecFileList — the rail carries state", () => {
     const onReason = renderWith({ assumptions: 2, openQuestions: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: "Requirements: 3 to resolve" }));
-    expect(screen.getByText("1 open question")).toBeInTheDocument();
-    expect(screen.getByText("2 assumptions to challenge")).toBeInTheDocument();
+    expect(screen.getByText("1 question only you can answer")).toBeInTheDocument();
+    expect(screen.getByText("2 decisions marked assumed")).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open the document" })[0]!);
     expect(onReason).toHaveBeenCalledWith("document");
   });
 
-  // The acceptance criteria are written against the same stories, so they go
+  // The validation criteria are written against the same stories, so they go
   // stale with the design and clear with it — two amber sections, one reason
   // each, one repair.
   it("marks design and validation together", () => {

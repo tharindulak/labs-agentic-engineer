@@ -21,9 +21,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // AdoptTarget is the issue being handed to the coding agent, plus the
@@ -158,9 +160,12 @@ type CreateAdoptResult struct {
 // Refusals are answered, not raised. A project with no version to adopt into
 // still gets its issue — as a ledger entry, with the reason — because nothing
 // retries a handoff and dropping it loses the incident for good. componentName
-// is the one thing that DOES refuse before writing: an unknown name means the
-// caller's own naming is wrong (a project prefix left on, typically), and
-// failing here is what stops it surfacing later inside a cycle.
+// is the one thing that DOES refuse before writing: a name the design does not
+// carry cannot be built, and failing here is what stops it surfacing later
+// inside a cycle. The one naming difference that is NOT the caller's bug is
+// handled rather than refused — an external caller names components in its own
+// vocabulary, and OpenChoreo's carries the project prefix; see
+// ensureNamedComponent.
 func (e *Events) AdoptOnCreate(
 	ctx context.Context,
 	orgID, projectID, componentName string,
@@ -193,7 +198,7 @@ func (e *Events) AdoptOnCreate(
 	// Before anything is written: a component the design does not carry cannot
 	// be built, so refuse while refusing is still free.
 	if componentName != "" && e.p.Components != nil {
-		if cerr := e.p.Components.EnsureComponent(ctx, orgID, projectID, componentName); cerr != nil {
+		if cerr := e.ensureNamedComponent(ctx, orgID, projectID, componentName); cerr != nil {
 			return nil, fmt.Errorf("adopt on create: %w", cerr)
 		}
 	}
@@ -281,6 +286,62 @@ func (e *Events) AdoptOnCreate(
 			"project", projectID, "issue", issue.Number, "milestone", milestone.Number, "error", rerr)
 	}
 	return &CreateAdoptResult{Issue: issue, Adopted: true}, nil
+}
+
+// ensureNamedComponent resolves the component an external caller named against
+// the one the DESIGN carries, then ensures it.
+//
+// The two vocabularies differ and the callers of create-issue live in the other
+// one. OpenChoreo — the SRE/RCA handoff's world — names a component with its
+// project prefixed (`myproject-service1`), while the design carries the bare
+// name (`service1`). That mismatch was this call's most common failure, and an
+// expensive one: the refusal lands before anything is filed, and nothing
+// retries a handoff, so an incident the handoff correctly decided to file was
+// dropped for good over a naming convention.
+//
+// The name as GIVEN is always tried first, so a design that genuinely carries a
+// hyphenated `<project>-<name>` component still resolves to itself and no
+// caller loses a component to the fallback. Only a name the design does not
+// carry is retried without its project prefix, and only THAT failure is
+// retried: any other error is the caller's answer, since a design read that
+// failed says nothing about the name.
+//
+// The refusal itself is unchanged for a name that is genuinely not in the
+// design — it is still what stops a bad name surfacing later inside a coding
+// cycle, and the error names the string the caller actually sent rather than
+// the one the fallback tried.
+func (e *Events) ensureNamedComponent(ctx context.Context, orgID, projectID, componentName string) error {
+	err := e.p.Components.EnsureComponent(ctx, orgID, projectID, componentName)
+	if err == nil || !errors.Is(err, spec.ErrComponentRemovedAfterGeneration) {
+		return err
+	}
+
+	bare, prefixed := withoutProjectPrefix(componentName, projectID)
+	if !prefixed {
+		return err
+	}
+	if berr := e.p.Components.EnsureComponent(ctx, orgID, projectID, bare); berr != nil {
+		// Report the original: the caller sent the prefixed name, and naming the
+		// string it did not send would send it looking for the wrong bug.
+		return err
+	}
+	slog.InfoContext(ctx, "eventcore: component named with its project prefix — resolved to the design name",
+		"project", projectID, "given", componentName, "resolved", bare)
+	return nil
+}
+
+// withoutProjectPrefix strips a leading `<project>-` from a component name,
+// reporting whether there was one to strip. A name that is EXACTLY the prefix
+// leaves nothing behind and is not a prefixed name.
+func withoutProjectPrefix(componentName, projectID string) (string, bool) {
+	if projectID == "" {
+		return componentName, false
+	}
+	prefix := projectID + "-"
+	if !strings.HasPrefix(componentName, prefix) || len(componentName) == len(prefix) {
+		return componentName, false
+	}
+	return componentName[len(prefix):], true
 }
 
 // wakePolicy says who owns waking a run already parked on the milestone. It is
@@ -453,7 +514,7 @@ func (e *Events) start(ctx context.Context, projectID string, req delivery.Start
 	return err
 }
 
-// Revalidate asks a version's acceptance criteria again, against the system
+// Revalidate asks a version's validation criteria again, against the system
 // already deployed.
 //
 // It is AdoptIssue's sibling and deliberately so: both hand a milestone to the
@@ -509,7 +570,7 @@ func (e *Events) Revalidate(ctx context.Context, orgID, projectID string, milest
 		return "", cerr
 	}
 	if !hasCriteria {
-		return "", delivery.ErrNoAcceptanceCriteria
+		return "", delivery.ErrNoValidationCriteria
 	}
 
 	slog.InfoContext(ctx, "eventcore: revalidating a deployed version",

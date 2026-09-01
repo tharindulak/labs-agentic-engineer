@@ -36,6 +36,56 @@ const (
 	// covers the one that is not.
 	activityTimeout = 2 * time.Minute
 
+	// gateActivityTimeout bounds ProvisionGates. Wider than activityTimeout
+	// because that activity is not one round trip: it authors every one of the
+	// version's platform resources in sequence, and each one WAITS up to a minute
+	// for OpenChoreo to cut its ResourceRelease
+	// (openchoreo.WaitForReleaseChange). Four dependencies, one of them
+	// unsatisfiable, already exceeds two minutes — and a StartToClose expiry
+	// there reports "timeout" as the run's terminal reason instead of the
+	// provisioning failure that actually happened, which is the one thing a
+	// reader of a failed version needs.
+	gateActivityTimeout = 5 * time.Minute
+
+	// gateActivityAttempts is how many times ProvisionGates is tried before the
+	// run gives up on the version.
+	//
+	// BOUNDED, unlike almost everything else here, and the bound is the point.
+	// Provisioning has answers that repeating cannot change — a dependency naming
+	// a ClusterResourceType nobody installed is the case that taught us — and
+	// under Temporal's default unbounded policy such an answer becomes a
+	// permanent, invisible loop: the activity re-mints the version's gate issues
+	// on every attempt (they are deduped against OPEN gates, and it closes the
+	// ready ones itself), so the symptom is a milestone filling with duplicate
+	// gates forever rather than a failed build.
+	//
+	// It is the BACKSTOP, not the front line, and that split is deliberate. The
+	// case above is now caught twice before it reaches here: the build click
+	// refuses a design naming a type the cluster does not have, and a permanent
+	// provision fault that does reach the activity comes back non-retryable and
+	// fails on attempt one with the provisioner's own message (provisionErr). Both
+	// only cover the modes we can NAME. This bound covers the rest — including the
+	// next one nobody has met — which is why it stays even though the incident
+	// that motivated it now fails earlier and reads better.
+	//
+	// Three rather than one, because the same call is also how a genuine GitHub or
+	// OpenChoreo blip shows up, and failing a version on the first hiccup would
+	// trade a rare runaway for a common false failure.
+	gateActivityAttempts = 3
+
+	// gateActivityRetryInterval is the FIRST gap between those attempts, and it is
+	// set explicitly because Temporal's default (1s, doubling) makes the bound
+	// above far tighter than it looks. A fault that fails FAST — connection
+	// refused, DNS, a 4xx — burns all three attempts in about three seconds, so a
+	// blip lasting longer than a blink would fail the version. That is the false
+	// failure the bound was supposed to avoid, arrived at by a different road.
+	//
+	// At 10s doubling, the three attempts span ~30 seconds: long enough to sit out
+	// an ordinary hiccup, short enough that a version nobody can provision still
+	// gives up while its author is watching. The named permanent faults do not
+	// wait for any of this — provisionErr fails them on attempt one.
+	gateActivityRetryInterval = 10 * time.Second
+
 	// planActivityTimeout bounds PlanMilestone, the only activity that waits on
 	// an agent turn rather than a round trip. A healthy plan turn has no upper
 	// bound on its total length — only on its SILENCE, and the plan tap's own
@@ -685,6 +735,65 @@ func (l *loop) cancelled(ctx workflow.Context) (bool, error) {
 	return facts.CancelRequested, nil
 }
 
+// awaitInterruptibly executes one activity and STOPS WAITING the moment a cancel
+// arrives, answering which of the two happened.
+//
+// It exists for the planning bookend, and the bug it closes is worth naming: the
+// cycle loop asks l.cancelled at every boundary, but the bookend runs BEFORE the
+// first boundary, so for as long as it lasted a run was blind to cancel. Two
+// activities is not much of a window until one of them retries — a version whose
+// gates could not be authored sat there re-minting them, with six delivered
+// cancel signals unread in the channel and nothing but a Temporal terminate to
+// end it.
+//
+// The activity's context is a CHILD of the caller's, so cancelling it leaves the
+// workflow's own context live and the run settles on the ordinary path —
+// closing its issues, closing the milestone, writing its row. That is the whole
+// reason cancel is a signal here and not a Temporal workflow cancellation
+// (delivery.SigRunCancel), and this helper is how the planning phase joins that
+// design rather than working around it.
+//
+// The future resolves at once because WaitForCancellation is left off: the
+// workflow does not wait for the worker to acknowledge. What makes the ATTEMPT
+// stop rather than merely be abandoned is the heartbeat on its activity options
+// — see heartbeating — and the two are a pair. Without the heartbeat this still
+// returns instantly and the run still settles; the orphaned attempt just runs out
+// its remaining wait, unaware, before finding the workflow gone.
+//
+// The cancel channel is DRAINED on the way out, exactly as cancelRequested
+// drains it, so the signal is consumed by whoever acts on it and never acted on
+// twice.
+func (l *loop) awaitInterruptibly(ctx, actCtx workflow.Context, act, arg any) (cancelled bool, err error) {
+	actCtx, stopActivity := workflow.WithCancel(actCtx)
+	// Deferred rather than called on the cancel branch alone: on the ordinary
+	// branch the activity has already finished and this is a no-op, and one exit
+	// path is easier to keep correct than two.
+	defer stopActivity()
+
+	future := workflow.ExecuteActivity(actCtx, act, arg)
+	sel := workflow.NewSelector(ctx)
+	// CANCEL IS ADDED FIRST, and the order is load-bearing rather than tidy.
+	// Selector.Select walks its cases in registration order and takes the first
+	// that is ready, so when the activity finished in the same workflow task the
+	// cancel landed in, this is what decides which of the two the run acts on.
+	//
+	// The cancel has to win. The alternative reports the activity's own outcome
+	// for a run a person had already stopped — and when that outcome is a failure,
+	// the version settles `plan-failed` with a cancel sitting unread, which is
+	// both the wrong terminal reason and the wrong story on the issues. Discarding
+	// a successful attempt costs nothing either way: gates dedupe, and a plan the
+	// cancel is about to close was work nobody wanted.
+	sel.AddReceive(l.cancel, func(c workflow.ReceiveChannel, _ bool) {
+		c.Receive(ctx, nil)
+		cancelled = true
+	})
+	sel.AddFuture(future, func(f workflow.Future) {
+		err = f.Get(ctx, nil)
+	})
+	sel.Select(ctx)
+	return cancelled, err
+}
+
 // ---- activity calls --------------------------------------------------------
 
 // activityCtx is the options every activity but the dispatch runs under.
@@ -709,6 +818,31 @@ func activityCtx(ctx workflow.Context) workflow.Context {
 func planActivityCtx(ctx workflow.Context) workflow.Context {
 	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: planActivityTimeout,
+		// Heartbeat so a cancel can reach the turn — a 30-minute agent turn is the
+		// longest a run is ever blind, and the one a person is most likely to change
+		// their mind during. The timeout is deliberately generous rather than tight;
+		// activityHeartbeatTimeout says why, and it matters most here.
+		HeartbeatTimeout: activityHeartbeatTimeout,
+	})
+}
+
+// gateActivityCtx runs ProvisionGates with a BOUNDED retry policy — see
+// gateActivityAttempts for why this one activity does not get the unbounded
+// default, and gateActivityTimeout for why it gets longer than a round trip.
+//
+// The heartbeat timeout is what makes a cancel reach the work rather than only
+// the waiting: without one, cancelling the activity's context frees the WORKFLOW
+// immediately but the attempt in the worker runs to completion unaware, so the
+// resources it was mid-way through authoring keep being authored. See
+// heartbeating, which supplies the beats these options expect.
+func gateActivityCtx(ctx workflow.Context) workflow.Context {
+	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: gateActivityTimeout,
+		HeartbeatTimeout:    activityHeartbeatTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: gateActivityAttempts,
+			InitialInterval: gateActivityRetryInterval,
+		},
 	})
 }
 

@@ -19,6 +19,8 @@ package eventcore
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -155,10 +157,10 @@ func TestAdoptOnCreate_NoVersionStillFilesTheIssueAndSaysWhy(t *testing.T) {
 	}
 }
 
-// A component the design does not carry is the caller's own bug — the project
-// prefix left on the name is the one that keeps happening. It fails BEFORE the
-// issue is filed, because the alternative is an issue whose component cannot be
-// built and a failure that only surfaces later, inside a cycle.
+// A component the design does not carry at all is the caller's own bug. It
+// fails BEFORE the issue is filed, because the alternative is an issue whose
+// component cannot be built and a failure that only surfaces later, inside a
+// cycle.
 func TestAdoptOnCreate_UnknownComponentRefusesBeforeFilingAnything(t *testing.T) {
 	h := newHarness(t, succeededRun("run-1", 3))
 	h.comps.failFor = "demohello-order-service"
@@ -171,6 +173,92 @@ func TestAdoptOnCreate_UnknownComponentRefusesBeforeFilingAnything(t *testing.T)
 	if len(h.issues.created) != 0 || len(h.sup.started) != 0 {
 		t.Fatalf("a refusal before filing must write nothing: created=%v started=%+v",
 			h.issues.created, h.sup.started)
+	}
+}
+
+// The naming difference that is NOT the caller's bug. An external caller names
+// components in its own vocabulary, and OpenChoreo's prefixes the project:
+// the SRE/RCA handoff sends `proj1-order-service` for the design's
+// `order-service`. Refusing that dropped the incident for good, because
+// nothing retries a handoff.
+func TestAdoptOnCreate_ProjectPrefixedComponentResolvesToTheDesignName(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 3))
+	h.comps.absent = map[string]bool{testProject + "-order-service": true}
+
+	out, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject,
+		testProject+"-order-service",
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"})
+	if err != nil {
+		t.Fatalf("a project-prefixed component must resolve, not refuse: %v", err)
+	}
+	if !out.Adopted {
+		t.Fatalf("the issue must be adopted like any other, got %+v", out)
+	}
+	if len(h.issues.created) != 1 {
+		t.Fatalf("want exactly one create, got %d", len(h.issues.created))
+	}
+	// The bare name is what actually gets provisioned — resolving the name is
+	// the point, not merely tolerating it.
+	if !slices.Contains(h.comps.ensured, "order-service") {
+		t.Fatalf("the design name must be the one ensured, got %v", h.comps.ensured)
+	}
+}
+
+// The fallback must never cost a caller a component. A design that genuinely
+// carries a hyphenated `<project>-<name>` component resolves to ITSELF, because
+// the name as given is always tried first.
+func TestAdoptOnCreate_AComponentNamedLikeAPrefixIsNotStripped(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 3))
+	name := testProject + "-order-service" // in the design under exactly this name
+
+	if _, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, name,
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"}); err != nil {
+		t.Fatalf("adopt on create: %v", err)
+	}
+	if !slices.Contains(h.comps.ensured, name) {
+		t.Fatalf("the name as given must be ensured, got %v", h.comps.ensured)
+	}
+	if slices.Contains(h.comps.ensured, "order-service") {
+		t.Fatalf("a name that resolves as given must never be retried stripped, got %v", h.comps.ensured)
+	}
+}
+
+// Missing under both the name given and its unprefixed form is still a refusal,
+// and it names the string the CALLER sent — pointing them at a name they never
+// passed would send them looking for the wrong bug.
+func TestAdoptOnCreate_PrefixFallbackStillRefusesAnUnknownComponent(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 3))
+	given := testProject + "-nosuch"
+	h.comps.absent = map[string]bool{given: true, "nosuch": true}
+
+	_, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, given,
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"})
+	if err == nil {
+		t.Fatal("a component missing under both names must fail the call")
+	}
+	if !strings.Contains(err.Error(), given) {
+		t.Fatalf("the refusal must name the component the caller sent, got %v", err)
+	}
+	if len(h.issues.created) != 0 || len(h.sup.started) != 0 {
+		t.Fatalf("a refusal before filing must write nothing: created=%v started=%+v",
+			h.issues.created, h.sup.started)
+	}
+}
+
+// A design read that failed says nothing about the name, so it is not a case
+// for the fallback: the error is the caller's answer and the component is
+// resolved exactly once.
+func TestAdoptOnCreate_ANonResolutionErrorIsNotRetriedStripped(t *testing.T) {
+	h := newHarness(t, succeededRun("run-1", 3))
+	given := testProject + "-order-service"
+	h.comps.failWith = errors.New("artifact store unreachable")
+
+	if _, err := h.events.AdoptOnCreate(context.Background(), testOrg, testProject, given,
+		sourcecontrol.CreateIssueRequest{Title: "checkout 500s", Body: "prose"}); err == nil {
+		t.Fatal("a failed design read must surface, not fall back")
+	}
+	if len(h.comps.ensured) != 1 {
+		t.Fatalf("only a resolution failure may be retried, got %v", h.comps.ensured)
 	}
 }
 

@@ -143,7 +143,7 @@ export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] 
   if (failing) {
     // Dies mid-write: the API design's input opens and its path resolves
     // (planned → writing), then the turn fails — error on the API design,
-    // the acceptance criteria still a ghost.
+    // the validation criteria still a ghost.
     frames.push(
       { type: "tool-input-start", id: `f-api-${turnId}`, toolName: "addFile" },
       { type: "tool-input-delta", id: `f-api-${turnId}`, delta: `{"path":"${API}","content":"{` },
@@ -153,7 +153,7 @@ export function designPlanFrames(turnId: string, failing: boolean): MockFrame[] 
   }
   frames.push(
     ...addFile(`f-api-${turnId}`, API),
-    { type: "text-delta", delta: "Writing the acceptance criteria… " },
+    { type: "text-delta", delta: "Writing the validation criteria… " },
     ...addFile(`f-criteria-${turnId}`, CRITERIA),
     { type: "text-delta", delta: "\n\nThe design is ready — read it at your pace." },
     { type: "turn-committed", noChanges: true },

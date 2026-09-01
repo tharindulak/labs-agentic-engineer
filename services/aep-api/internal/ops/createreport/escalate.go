@@ -18,7 +18,6 @@ package createreport
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/ops"
@@ -53,26 +52,22 @@ import (
 // repository and the spec; it decides, and closing as not planned is a first
 // class answer (ADR-0023).
 //
-// Reading the decision out of markdown is a known compromise. `diagnosis` is one
-// free-text blob, so confidence and action status are recovered by pattern rather
-// than read from fields. It is kept deliberately narrow — two anchored patterns,
-// no semantic parsing — and the durable fix is for the SRE agent to send both as
-// structured fields, which is a contract change on its side.
+// The decision is read from FIELDS, not from prose. It used to be recovered from
+// `diagnosis` by regex, because that free-text blob was all the SRE agent sent;
+// the agent now sends its whole report and the actions arrive structured
+// (native.go). That closes the worst seam this file had: an anchored pattern
+// matching Markdown authored in another repository, where reordering one line
+// would have silently stopped escalation — the very failure escalation exists to
+// prevent.
 
 // suggestedStatus marks an action the remediation agent could NOT express as an
 // OpenChoreo ReleaseBinding change. Per the skill that is "a strong signal ...
 // it is not a config problem", which is what makes it the code-level marker.
-const suggestedStatus = "_(suggested)_"
+const suggestedStatus = "suggested"
 
 // revisedStatus marks an action already actionable as configuration. Present
 // only so the escalated issue can mention it as context — never as work.
-const revisedStatus = "_(revised)_"
-
-var (
-	// actionBullet captures one recommended-action bullet and its status
-	// annotation. Rationale lines are indented and so never match.
-	actionBullet = regexp.MustCompile(`(?m)^-\s+(.*?)\s*(_\((?:suggested|revised)\)_)\s*$`)
-)
+const revisedStatus = "revised"
 
 // escalationDecision is why a report was or was not escalated. The reason is
 // carried for the log line: "did not escalate" is the answer somebody will ask
@@ -89,7 +84,7 @@ type escalationDecision struct {
 
 // shouldEscalate applies the rule. Every gate is a reason a coding agent would
 // have nothing to do, or would duplicate work already done.
-func shouldEscalate(r *ops.RcaAgentReport) escalationDecision {
+func shouldEscalate(r *ops.RcaAgentReport, actions []nativeAction) escalationDecision {
 	if r == nil {
 		return escalationDecision{reason: "no report"}
 	}
@@ -102,7 +97,7 @@ func shouldEscalate(r *ops.RcaAgentReport) escalationDecision {
 	if r.IssueNumber != nil {
 		return escalationDecision{reason: "an issue is already recorded on this report"}
 	}
-	code, config := splitActions(r.Diagnosis)
+	code, config := splitActions(actions)
 	if len(code) == 0 {
 		return escalationDecision{
 			reason:        "no code-level action remains — nothing to hand a coding agent",
@@ -114,13 +109,17 @@ func shouldEscalate(r *ops.RcaAgentReport) escalationDecision {
 
 // splitActions returns the recommended actions by status: code-level (suggested)
 // and config (revised). Order is preserved so the issue reads like the report.
-func splitActions(diagnosis string) (code, config []string) {
-	for _, m := range actionBullet.FindAllStringSubmatch(diagnosis, -1) {
-		text := strings.TrimSpace(m[1])
+//
+// A status this does not recognise is neither, and is dropped rather than
+// guessed at: escalating on an action nobody classified would file work off a
+// status the remediation agent never asserted.
+func splitActions(actions []nativeAction) (code, config []string) {
+	for _, a := range actions {
+		text := strings.TrimSpace(a.Description)
 		if text == "" {
 			continue
 		}
-		switch m[2] {
+		switch a.Status {
 		case suggestedStatus:
 			code = append(code, text)
 		case revisedStatus:
@@ -144,7 +143,7 @@ func splitActions(diagnosis string) (code, config []string) {
 //     investigated.
 //   - The config action as context, so the fix does not re-implement in code
 //     what the remediation agent already changed in configuration.
-func escalationIssue(r *ops.RcaAgentReport, actions []string) (title, body string) {
+func escalationIssue(r *ops.RcaAgentReport, actions, configActions []string) (title, body string) {
 	component := r.Component
 	if component == "" {
 		component = r.Project
@@ -184,14 +183,12 @@ func escalationIssue(r *ops.RcaAgentReport, actions []string) (title, body strin
 			"repository in front of you and say which it is.\n")
 	}
 
-	if len(r.Diagnosis) > 0 {
-		if _, config := splitActions(r.Diagnosis); len(config) > 0 {
-			b.WriteString("\n## Already handled as configuration\n\n")
-			for _, a := range config {
-				fmt.Fprintf(&b, "- %s\n", a)
-			}
-			b.WriteString("\nDo not re-implement these in code.\n")
+	if len(configActions) > 0 {
+		b.WriteString("\n## Already handled as configuration\n\n")
+		for _, a := range configActions {
+			fmt.Fprintf(&b, "- %s\n", a)
 		}
+		b.WriteString("\nDo not re-implement these in code.\n")
 	}
 
 	fmt.Fprintf(&b, "\n---\n\nThe SRE handoff ruled this out (classification `%s`) while the actions "+

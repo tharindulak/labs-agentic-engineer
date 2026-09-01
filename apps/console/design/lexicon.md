@@ -21,8 +21,8 @@ yet a product word.
 ## Naming rules
 
 1. **A section names the class; an artifact names the document.** An artifact label adds
-   information, never echoes its header — `ACCEPTANCE CRITERIA › Acceptance criteria` fails
-   this.
+   information, never repeats its header outright — `VALIDATION › Validation` fails this;
+   `REQUIREMENTS › Product requirements` and `VALIDATION › Validation criteria` do not.
 2. **Filenames are never labels.** The user reads a document tree, not a repo.
 3. **Plural for things that accumulate over time, singular for the one a project has.**
    Builds, Deployments, Issues, Validations — Overview, Spec.
@@ -42,7 +42,7 @@ concept for *the agreed description of what we're building*.
 |---|---|---|
 | `REQUIREMENTS` | **Product requirements** | `specs/requirements/prd.md` |
 | `DESIGN` (not `DESIGNS` — one design, several files) | **Architecture** · **Design overview** · **Security** · then per-component | `specs/design/` |
-| `VALIDATION` | **Acceptance criteria** | `specs/validation/validation-criteria.json` |
+| `VALIDATION` | **Validation criteria** | `specs/validation/validation-criteria.json` |
 
 **Security** is one rail entry, one page:
 
@@ -550,8 +550,8 @@ three assumptions and one otherwise look identical and *how much* is what a glan
 
 | section | what the dialog lists | its fix |
 |---|---|---|
-| Requirements | *N open questions* | **Open the document**, where the settle controls already are |
-| Requirements | *N assumptions to challenge* | **Open the document** |
+| Requirements | *N questions only you can answer* | **Open the document**, where the settle controls already are |
+| Requirements | *N decisions marked assumed* | **Open the document** |
 | Design · Validation | *The requirements have changed since* | **Update the design** |
 
 **Ordered by how badly it hurts to ignore**, which is what makes the hover's pick meaningful rather
@@ -571,8 +571,17 @@ rail reports; Design stays clickable throughout.
 **But Generate design warns first when they stand.** The rail says the same thing at rest; the click
 is the moment it becomes consequential, because the design is derived from those guesses and
 overturning one afterwards means deriving again. So the dialog names what is unsettled and offers
-both ways: *Resolve issues* returns to the requirements document, where the settle controls already
-live on the flagged lines, and *Generate anyway* goes on.
+both ways: *Review them first* returns to the requirements document, where the controls already live
+on the flagged lines, and *Generate anyway* goes on.
+
+**In the user's words** ([#666](https://github.com/wso2/labs-agentic-engineer/issues/666)): the
+dialog is titled *Some decisions are still yours*, and its one paragraph says what the agent did
+(*made some decisions on your behalf — marked assumed in the document*), what happens next (*the
+design will be built on the requirements as they stand*) and what being wrong costs (*the design has
+to be generated again*). *Settled*, *derived*, *judgment* and *to challenge* were retired from it:
+they are how this file talks about the document, not how a user reads it. The rows say *N decisions
+marked assumed* — pointing at the pill they will find on the line — and *N questions only you can
+answer*, which is the fact that makes an open question different.
 
 This is where the dialog's two moods separate, and the distinction is the point:
 
@@ -767,7 +776,7 @@ redundant on the page holding them.
 
 **Unsettled: `deployment` or `build`.** This description says criteria are checked
 *after every deployment*; the **Validations** empty state says *"After a build,
-your software is checked against the acceptance criteria in your spec"*. Both name
+your software is checked against the validation criteria in your spec"*. Both name
 the same event. *Deployment* is the more accurate word, since validation runs
 against the deployed system and needs its resolved endpoints, but that empty state
 was out of scope when this pane was written. Whoever settles it changes both and
@@ -939,7 +948,7 @@ five surfaces fill themselves.
 |---|---|---|
 | Builds | **No builds yet.** A build hands your design to coding agents, which write your components and open pull requests. | **Go to the spec** |
 | Deployments | **Nothing deployed yet.** Your components run here once they are built — each environment shows what is live and where to reach it. | — |
-| Validations *(never validated)* | **Nothing validated yet.** After a build, your software is checked against the **acceptance criteria** in your spec; results appear here. | — |
+| Validations *(never validated)* | **Nothing validated yet.** After a build, your software is checked against the **validation criteria** in your spec; results appear here. | — |
 | Validations *(version skipped)* | **This version was not validated** — it has no validation criteria, or it was an incident run, which gets no validation cycle. | — |
 | Components *(overview)* | **No components yet.** Components are the services and apps your design is made of — they appear as agents build them. | — |
 | Architecture *(overview)* | **No architecture yet.** Once the agent designs your app, its components and the connections between them are drawn here. | — |
@@ -954,9 +963,11 @@ that had already started, and narrated the *how* (a shared workspace, files chan
 on screen calls by those names. Its suggestions offered to draft requirements that exist. Both now
 open a conversation **about** the spec.
 
-The **Validations** wording is load-bearing: renaming the artifact to *Acceptance criteria* while
-the section stayed *Validations* broke the link between the criteria and the runs against them, and
-this sentence is where it is restored.
+**The document and its rows carry different names, on purpose.** The **Validation criteria** are
+the document; one row inside it is an **acceptance criterion**, which is what its `AC-` id says and
+what the term means everywhere else. Naming the document after one of its rows — the earlier
+*Acceptance criteria* label — cost the link between the criteria and the runs against them, and
+took a sentence of empty-state copy to restore. They share a root again, so nothing has to.
 
 **Validations has two empty states, and only one narrates.** The page is version-scoped, so a
 version that was skipped — no criteria, or an incident run — is a different fact from a project
@@ -1034,7 +1045,7 @@ too, in the same message as the text it overrides.
 
 ### The rules it carries
 
-1. **Name things the way the UI names them.** *Architecture*, not `design.cell`. *Acceptance
+1. **Name things the way the UI names them.** *Architecture*, not `design.cell`. *Validation
    criteria*, not `specs/validation/validation-criteria.json`. The mapping is the table under
    [The spec workspace](#the-spec-workspace) — this file is its source, and the console skill is
    how it reaches the agent.
@@ -1067,11 +1078,32 @@ renaming; it needed to stop being visible.
 | the user's intent | command | where it is offered |
 |---|---|---|
 | start from an idea | `/start with <idea>` | fired at project creation ([#522](https://github.com/wso2/labs-agentic-engineer/issues/522)); the idea rides along, cropped, so the user can see the agent is working from **their** words rather than a bare command ([#528](https://github.com/wso2/labs-agentic-engineer/issues/528)) |
-| add a feature | `/feature <idea>` | code lens on the story list |
-| add an actor | `/actor <who>` | code lens on Actors |
+| add a feature | `/feature <idea>` | code lens on the story list — opens the aim box to collect the idea, and sends the command plus their words |
+| add an actor | `/actor <who>` | code lens on Actors — same collecting box |
 | go deeper on a feature | `/expand <story>` | code lens on the story, which carries itself as the subject |
-| settle an assumption or an open question | `/settle <the point>` | code lens on the flagged line |
+| answer an open question | `/settle <the point>` | code lens on the question |
 | take up the open questions | `/settle` over the section | code lens on **Open Questions** |
+| talk a line through | *Discuss* — no command; opens the aim box on the line, Enter sends Discuss | code lens on any bullet |
+
+**An `*assumed*` run offers verdicts, not a command**
+([#652](https://github.com/wso2/labs-agentic-engineer/issues/652)). An assumption is a decision
+the agent already made, and the user's response to it is a judgement, not a request — so the line
+carries **Agree · Discuss**. *Agree* is a **direct edit**: it strips the flag and keeps the decision —
+no agent turn, no model, one undo — and it stays live while an agent holds the turn, which is exactly
+when a reviewer is reading flagged lines. *Discuss* opens the aim box on the line. Two, deliberately:
+a line with four controls on it stops reading as a line. *Remove* and *Reopen* were built and cut for
+that reason — dropping or reopening a decision is a sentence away in Discuss, and the editor deletes a
+bullet as well as any control could. The word is **Agree**, not *Accept* — *Accept* is what the
+agent-suggestion review bar says, and this is a different act. `/settle` on a flagged line is retired;
+the marker leaving the document is itself the signal the agent reads.
+
+**An add-lens asks before it fires** ([#666](https://github.com/wso2/labs-agentic-engineer/issues/666)):
+`+ Actor` and `+ Feature` have a subject the document cannot supply, so the click opens the aim box
+with one question (*Who are they, and what do they do?* / *Describe the feature in your own words…*)
+and one button (*Add actor* / *Add feature*). The send is the command plus the user's words —
+`/feature manager should approve` — which is the same shape the per-line lenses compose from the
+entry they sit on. An empty send is the bare command, exactly what the lens did before it learned to
+ask; the agent then asks in chat instead.
 
 **A command names the user's intent, never the document operation.** `/feature` says what they
 came to do; `/amend Add a feature` said what the system does to a file.
@@ -1111,11 +1143,13 @@ of per-line is a control that is only there while the pointer is.
 **The lens is a control beside the line, not the line made clickable.** The PRD is a collaborative
 editor: a line that fires a command on click is a line the user can no longer put a caret in.
 
-**A lens goes inert, saying which, while an agent holds the turn** — the same two conditions that
-gate the header's launchers, since firing a command mid-interview supersedes the live question form
-for the whole room.
+**A lens that starts a turn goes inert, saying which, while an agent holds the turn** — the same
+two conditions that gate the header's launcher, since firing a command mid-interview supersedes
+the live question form for the whole room. Agree starts no turn and never
+goes inert: it is the document being edited, and the document is always the user's to edit.
 
-Shipped in [#579](https://github.com/wso2/labs-agentic-engineer/issues/579).
+Shipped in [#579](https://github.com/wso2/labs-agentic-engineer/issues/579); the verdicts in
+[#666](https://github.com/wso2/labs-agentic-engineer/issues/666).
 
 ## Navigation
 
@@ -1134,10 +1168,6 @@ Endpoints · Alerts**. **Settings** stays in the footer in both contexts
 > this file; ADR-0010's decision (the sidebar swaps wholesale to project sections) still holds and
 > only its illustrative list is stale, so it is left for an explicit supersede rather than edited
 > in place.
-
-`Validations` (the runs) and `Acceptance criteria` (what they check) no longer share a word, so
-the link between them is made explicit in the section's empty state
-([#533](https://github.com/wso2/labs-agentic-engineer/issues/533)).
 
 ## Resources
 

@@ -834,7 +834,7 @@ const doneTasks: TaskView[] = buildingTasks.map((t) => ({
 // property and lives on the run rows, which is where the deployment surface
 // reads it.
 export const validationTask: TaskView = {
-  ...task(30, "Validate deployed system against acceptance criteria", "merged"),
+  ...task(30, "Validate the deployed system against its validation criteria", "merged"),
   executorClass: "validation",
 };
 
@@ -1488,14 +1488,6 @@ const ordersApiDesignJson = `{
   "dependencies": []
 }`;
 
-const validationPlan = `# Demo Shop — Validation plan
-
-- Catalog search returns seeded products by name and category.
-- Cart contents survive a browser restart.
-- Checkout produces an order visible in order history.
-- Each service exposes /healthz returning 200.
-`;
-
 // The two validation artifacts come from ./validation.ts, which builds the oracle
 // and the run report from ONE outcome map so they cannot disagree — and which the
 // aep:mock:validation switch swaps wholesale to reach every verdict.
@@ -1550,7 +1542,6 @@ const fullFiles: MockSpecFile[] = [
     path: "specs/design/components/orders-api/design.json",
     content: ordersApiDesignJson,
   },
-  { path: "specs/validation/validation-plan.md", content: validationPlan },
   {
     path: "specs/validation/validation-criteria.json",
     content: DEFAULT_VALIDATION_CRITERIA,

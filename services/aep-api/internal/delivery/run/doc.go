@@ -149,14 +149,15 @@
 //
 // Only issues OPEN at cancel time are marked, which is the whole reason the marker
 // exists: work a cycle genuinely finished stays closed and unmarked, so the way
-// back cannot resurrect it. That way back is a rebuild, decided by the SPEC-SAVE
-// STATUS alone — a changed spec cuts a new tag and plans it fresh, an unchanged one
-// reuses the same milestone, reopens exactly the marked set, clears the label and
-// starts a run with `Rebuild` set. Such a run mints its gates and SKIPS the
-// planning turn (see RunInput.Rebuild): plan dedupe is the title slug against the
-// milestone's issues in ANY state, so a re-plan over a cancel that closed
-// everything would mint nothing and the loop would settle an unbuilt version as
-// delivered.
+// back cannot resurrect it. That way back is a rebuild: a changed spec cuts a new
+// tag and plans it fresh, an unchanged one reuses the same milestone, reopens
+// exactly the marked set and clears the label. Whether that run also SKIPS the
+// planning turn is a second question, asked of the MILESTONE rather than of the
+// spec status — it skips only a milestone that holds planned work (see
+// RunInput.Rebuild). Both readings are load-bearing: a re-plan over a filled
+// milestone mints nothing, because plan dedupe is the title slug against its
+// issues in ANY state, while a skip over an EMPTY one hands the loop an empty
+// working set. Either way the loop would settle an unbuilt version as delivered.
 //
 // A dev run therefore **settles at deployed-green having minted the validation
 // task, and never validates**. Its verdict column stays EMPTY, which is the

@@ -251,9 +251,9 @@ fi
 #     Best-effort: a rebuilt cluster loses the locally-imported RCA image and
 #     the pod sits in ImagePullBackOff; re-running setup-observability.sh
 #     fixes it (it re-imports the tag it defaults to, currently
-#     tharindulak/sre-agent:recurrence — which is built LOCALLY and not yet
-#     published, so unlike the earlier tags there is no Docker Hub copy to fall
-#     back on; see that script's RCA_IMAGE_TAG notes for the degradation chain).
+#     tharindulak/sre-agent:handoff-provider — built LOCALLY and NOT yet pushed to
+#     Docker Hub, so there is no registry copy to fall back on; see that script's
+#     RCA_IMAGE_TAG notes for the degradation chain).
 if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/dev/null; then
     RCA_NS="openchoreo-observability-plane"
     if kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" get deploy ai-rca-agent &>/dev/null; then

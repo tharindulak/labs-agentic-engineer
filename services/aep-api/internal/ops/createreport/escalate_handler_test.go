@@ -47,15 +47,47 @@ func (f *fakeFiler) FileAndDispatch(
 }
 
 // declinedBody is the wire shape of a high-confidence decline that still names
-// code-level actions — the case the platform must file for.
+// code-level actions — the case the platform must file for. It is report
+// c82f1fb8, as the agent's own document rather than as a pre-mapped row: the
+// end-to-end path now includes the derivation, so these tests exercise it.
 func declinedBody() *gen.CreateRcaAgentReportRequest {
-	return &gen.CreateRcaAgentReportRequest{
-		Project:        "demo-developers-test-13",
-		Component:      "demo-developers-test-13-service1",
-		Title:          "service2 exceeded service1's idle timeout",
-		Summary:        "service1 timed out waiting for service2.",
-		Classification: "none",
-		Diagnosis:      declinedDiagnosis,
+	return &gen.CreateRcaAgentReportRequest{Report: declinedNativeReport()}
+}
+
+func declinedNativeReport() map[string]any {
+	return map[string]any{
+		"summary": "service1 timed out waiting for service2.",
+		"alert_context": map[string]any{
+			"project":    "demo-developers-test-13",
+			"component":  "demo-developers-test-13-service1",
+			"alert_name": "service1 error rate",
+		},
+		"result": map[string]any{
+			"root_causes": []any{
+				map[string]any{
+					"summary":    "service2 exceeded service1's idle timeout",
+					"confidence": "high",
+				},
+			},
+			"recommendations": map[string]any{
+				"recommended_actions": []any{
+					map[string]any{
+						"description": "Update ReleaseBinding `svc1-development` env var " +
+							"`IDLE_TIMEOUT` to at least 15s",
+						"status": "revised",
+					},
+					map[string]any{
+						"description": "Investigate and optimize service2's processing latency",
+						"status":      "suggested",
+					},
+					map[string]any{
+						"description": "Implement retry logic with exponential back-off in service1",
+						"status":      "suggested",
+					},
+				},
+			},
+		},
+		"handoff": map[string]any{"classification": "none"},
 	}
 }
 
@@ -106,10 +138,13 @@ func TestCreateReport_EscalatesHighConfidenceDecline(t *testing.T) {
 func TestCreateReport_DoesNotEscalateWhenTheHandoffFiled(t *testing.T) {
 	repo := &fakeRepo{}
 	filer := &fakeFiler{res: ops.FiledIssue{Number: 99}}
-	body := declinedBody()
-	body.Classification = "code-level"
-	filed := int64(12)
-	body.IssueNumber = &filed
+	report := declinedNativeReport()
+	report["handoff"] = map[string]any{
+		"classification":       "code_level",
+		"created_issue_number": float64(12),
+		"adopted":              true,
+	}
+	body := &gen.CreateRcaAgentReportRequest{Report: report}
 
 	if _, err := New(repo).WithEscalator(filer).CreateRcaAgentReport(ctxWithOrg("acme"),
 		gen.CreateRcaAgentReportRequestObject{Body: body}); err != nil {

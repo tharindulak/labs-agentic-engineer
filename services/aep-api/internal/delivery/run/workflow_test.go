@@ -296,6 +296,64 @@ func (h *harness) planIs(gatesErr, planErr error) {
 		}).Return(planErr)
 }
 
+// planStep names one of the two activities the planning phase drives, for
+// planIsCancelledDuring.
+type planStep int
+
+const (
+	gatesActivity planStep = iota
+	planActivity
+)
+
+// planIsCancelledDuring pins the planning phase's activities and makes a cancel
+// arrive WHILE the named one is running.
+//
+// The signal is sent from inside the activity mock, and that is a necessity
+// rather than a shortcut: the environment auto-advances its clock only when
+// nothing is executing, so a RegisterDelayedCallback scheduled for the window an
+// activity is in flight would never fire. Signalling from the activity puts the
+// cancel in the workflow's channel before the workflow task that reads that
+// activity's result — which is exactly the race the phase has to resolve.
+//
+// failWith, when supplied, is what the named activity ALSO answers, so a test can
+// pin what the run reports when a cancel and a failure land together.
+func (h *harness) planIsCancelledDuring(step planStep, failWith ...error) {
+	h.set["plan"] = true
+	var stepErr error
+	if len(failWith) > 0 {
+		stepErr = failWith[0]
+	}
+	cancel := func() {
+		h.env.SignalWorkflow(delivery.SigRunCancel, delivery.RunSignal{
+			Signal: delivery.SigRunCancel, MilestoneNumber: testMilepost,
+		})
+	}
+	var gatesErr, planTurnErr error
+	if step == gatesActivity {
+		gatesErr = stepErr
+	} else {
+		planTurnErr = stepErr
+	}
+	h.env.OnActivity(h.acts.ProvisionGates, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			h.mu.Lock()
+			h.gateMints = append(h.gateMints, args.Get(1).(PlanMilestoneInput))
+			h.mu.Unlock()
+			if step == gatesActivity {
+				cancel()
+			}
+		}).Return(gatesErr)
+	h.env.OnActivity(h.acts.PlanMilestone, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			h.mu.Lock()
+			h.plans = append(h.plans, args.Get(1).(PlanMilestoneInput))
+			h.mu.Unlock()
+			if step == planActivity {
+				cancel()
+			}
+		}).Return(planTurnErr)
+}
+
 // planCounts reports the two tallies, read safely.
 func (h *harness) planCounts() (gates, plans int) {
 	h.mu.Lock()
@@ -2367,6 +2425,123 @@ func TestPlanningPhase_ARebuildMintsGatesButDoesNotPlan(t *testing.T) {
 	require.Equal(t, 0, plans, "a re-plan over reopened work would mint nothing and settle an unbuilt version")
 	// The reopened work was still worked: skipping the plan is not skipping the run.
 	require.Equal(t, []string{delivery.CycleKindCoding}, h.dispatchKinds())
+}
+
+// ---- cancel reaches the PLANNING phase --------------------------------------
+//
+// The cycle loop asks about cancel at every boundary, but the planning bookend
+// runs BEFORE the first boundary — so for as long as it lasted, a run was blind
+// to a cancel that had already been delivered. It is the phase a person is most
+// likely to be looking at when they press the button, and the one where a stuck
+// activity can hold a run for hours: a version whose gates could not be authored
+// sat re-minting them with six delivered cancel signals unread in the channel.
+//
+// These four pin the four ways the phase can now hear it.
+
+// The row is asked FIRST, before a single gate is minted. It is the only reading
+// that survives a cancel whose SIGNAL never arrived — the cancel surface swallows
+// a failed delivery so a dead engine cannot wedge the console — and planning is
+// the longest stretch a run has to be wrong about.
+func TestPlanningPhase_CancelAlreadyOnTheRowSettlesBeforeMintingGates(t *testing.T) {
+	h := newHarness(t)
+	h.factsAre(CycleFacts{CancelRequested: true})
+	h.milestoneIs(workable(1, 1))
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	gates, plans := h.planCounts()
+	require.Equal(t, 0, gates, "a run cancelled before it started mints no gates")
+	require.Equal(t, 0, plans)
+	require.Equal(t, 0, h.dispatchCount())
+}
+
+// A cancel delivered WHILE the gates are being authored settles the run at once,
+// and the planning turn never runs. This is the case the incident was: the gate
+// activity holding the phase open, cancel unread behind it.
+func TestPlanningPhase_CancelDuringTheGatesSettlesWithoutPlanning(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	// Signalled from inside the activity, which is the only way to place a cancel
+	// in the window this test is about: the environment's clock does not advance
+	// while an activity is in flight, so a delayed callback could not fire there.
+	h.planIsCancelledDuring(gatesActivity)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	gates, plans := h.planCounts()
+	require.Equal(t, 1, gates, "the attempt that was interrupted still happened")
+	require.Equal(t, 0, plans, "the phase ended at the cancel; the planning turn never ran")
+	require.Equal(t, 0, h.dispatchCount(), "a cancelled planning phase dispatches nothing")
+	require.Equal(t, 1, h.closedCount(), "the increment is abandoned, so its milestone closes")
+}
+
+// The same, one activity later: the gates landed, and the cancel arrives during
+// the planning TURN — the 30-minute one, where a person waiting on a spec they
+// have changed their mind about is most likely to press the button.
+func TestPlanningPhase_CancelDuringThePlanningTurnSettles(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.planIsCancelledDuring(planActivity)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	gates, plans := h.planCounts()
+	require.Equal(t, 1, gates)
+	require.Equal(t, 1, plans, "the turn that was interrupted still happened")
+	require.Equal(t, 0, h.dispatchCount())
+}
+
+// A cancel pending in the same workflow task as a FAILED activity is read as a
+// cancel, not as the failure.
+//
+// The selector's registration order is what decides this, and the alternative is
+// actively misleading: the version would settle `plan-failed` — a story about the
+// platform being unable to author the version — for a run a person had
+// deliberately stopped, with their cancel still sitting unread.
+func TestPlanningPhase_CancelWinsOverASimultaneousGateFailure(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.planIsCancelledDuring(gatesActivity, errors.New("openchoreo unreachable"))
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateCancelled, "")
+	require.NotEqual(t, delivery.RunReasonPlanFailed, res.TerminalReason,
+		"a cancelled run reports the cancel, never the failure it raced")
+}
+
+// ---- the gate activity's retries are BOUNDED --------------------------------
+
+// Provisioning has answers that repeating cannot change — a dependency naming a
+// ClusterResourceType nobody installed is the one that taught us — and under
+// Temporal's default unbounded policy such an answer is a permanent, invisible
+// loop rather than a failed build. Worse than invisible: the activity re-mints
+// the version's gate issues on every attempt, so the symptom is a milestone
+// filling with duplicate gates forever.
+//
+// So it gives up, and the run settles `plan-failed` — the reason the phase has
+// always written for a version it could not author.
+func TestPlanningPhase_AnUnsatisfiableGateGivesUpAfterItsAttempts(t *testing.T) {
+	h := newHarness(t)
+	h.milestoneIs(workable(1, 1))
+	h.planIs(errors.New(`resource "x" produced no new ResourceRelease within 1m0s`), nil)
+
+	h.runWith(RunInput{Kind: delivery.RunKindDev, Tag: "v3"})
+	res := h.result(t)
+
+	h.assertSettled(t, res, delivery.RunStateFailed, delivery.RunReasonPlanFailed)
+	gates, plans := h.planCounts()
+	require.Equal(t, gateActivityAttempts, gates,
+		"the gate activity is tried a bounded number of times and then the version fails")
+	require.Equal(t, 0, plans, "a version whose gates could not be authored is never planned")
+	require.Equal(t, 0, h.dispatchCount())
 }
 
 // A run that did NOT plan may not read an empty working set as "delivered".

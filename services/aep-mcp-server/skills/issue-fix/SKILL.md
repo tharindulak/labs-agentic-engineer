@@ -6,8 +6,15 @@ description: Decide whether an RCA root cause needs a code change, and if so fil
 # Issue-fix
 
 Your output is one judgment — `needs_code_change` — and, when it is true, one
-GitHub issue. Filing that issue IS the handoff: AE puts it into the deployed
-version's milestone and starts a coding run over it in the same call.
+GitHub issue. Filing that issue is the whole hand-over: AE puts it into the
+deployed version's milestone and starts a coding run over it in the same call.
+There is no second call for you to make.
+
+Whether a coding run actually starts is the OPERATOR's setting, not yours — an
+install can be configured to file issues only, and then the issue waits for a
+human. Do not assert either way. The call's own answer settles it: `adopted`
+tells you what happened, and your system prompt tells you which mode this
+deployment runs in.
 
 The handoff is **one-shot**. Nothing retries it: an incident you leave unfiled is
 dropped for good, while an unnecessary issue is one a human closes in ten
@@ -192,7 +199,8 @@ issue number, `deduped` and `adopted` are recorded from the call itself, so
 
 | Answer | What happened | What `rationale` says |
 |---|---|---|
-| `adopted: true` | Filed, and a coding run has it. The normal outcome. | Nothing further. |
+| `adopted: true` | Filed, and a coding run has it. The normal outcome when this install hands over. | Nothing further. |
+| `adopted: false` with no `adoptionError` | Filed, and nothing was asked to work it — this install files issues only. | Say the issue waits for a human to pick it up. |
 | `adopted: false` + `adoptionError` | The issue exists but nothing will work it yet, usually because the project has no built version to adopt an incident into. | Quote the `adoptionError`, so the human knows the issue waits for someone to pick it up. |
 | `deduped: true` | An earlier run already filed an open issue for this problem; nothing was created. | Report it under `related_issues` and note the dedup — the matching-OPEN-issue case above. |
 | `reopened: true` + `recurrence` | This had already been fixed and closed, and it came back. AE reopened that issue with your evidence appended and re-dispatched it. | Say so plainly, naming the attempt number: a merged fix for this has already failed, which is a different situation from a new bug and may deserve a human rather than another cycle. |

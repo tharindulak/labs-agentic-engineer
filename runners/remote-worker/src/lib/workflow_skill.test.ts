@@ -227,6 +227,21 @@ test("architecture description still triggers on resolving a dependency", () => 
   assert.match(frontmatter, /resolving\/reconsidering any dependency/);
 });
 
+test("architecture copies platform-resource resourceType from this turn's catalog", () => {
+  const skill = fs.readFileSync(ARCHITECTURE, "utf8");
+  assert.ok(skill.includes("list_platform_resource_types"), "discover types from the live catalog");
+  assert.ok(
+    skill.includes("omit the entry and list the gap under **Needs your input**"),
+    "a missing catalog type is a gap, not a coined resourceType",
+  );
+});
+
+test("cell-design does not teach invented cluster resource types", () => {
+  const cell = fs.readFileSync(path.join(LIBRARY, "cell-design", "SKILL.md"), "utf8");
+  assert.ok(!cell.includes("postgres-cnpg/redis"), "CRT names belong to this turn's catalog list, not the cell table");
+  assert.ok(cell.includes("list_platform_resource_types"), "placement defers resourceType to the catalog");
+});
+
 test("architecture prefers a Registered External resource over a new-name Project External", () => {
   const skill = fs.readFileSync(ARCHITECTURE, "utf8");
   assert.ok(skill.includes("Registered External resource"), "lost Registered External resource");

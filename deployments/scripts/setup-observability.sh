@@ -23,7 +23,7 @@
 #
 # Also wires the SRE (RCA) agent alert→RCA→AEP-handoff pipeline (see
 # docs/developer-guide/sre-handoff-runbook.md): logs-adapter (alert-rule
-# evaluation), observer auto-trigger config, and the RCA agent's AE_HANDOFF
+# evaluation), observer auto-trigger config, and the RCA agent's HANDOFF_ENABLED
 # env so code-level RCA findings become GitHub issues + coding-agent runs.
 #
 # Idempotent: re-running is safe — helm install is gated by helm_install_if_not_exists,
@@ -48,8 +48,9 @@
 #       but were never evaluated).
 #   - ConfigMap patches (post-helm): observer-config auto-trigger keys
 #       (LOGS_ADAPTER_ENABLED / RCA_SERVICE_URL / ALERT_SUPPRESSION_WINDOW)
-#       and rca-agent-config AEP-handoff keys (AE_HANDOFF / AE_AUTO_DISPATCH /
-#       AE_API_URL). Patched after helm so chart upgrades can't silently
+#       and rca-agent-config handoff keys (HANDOFF_ENABLED / HANDOFF_HAND_OVER /
+#       HANDOFF_API_URL / HANDOFF_PROVIDER_FILE). Patched after helm so chart
+#       upgrades can't silently
 #       drop them on re-runs.
 #   - Cross-namespace HTTPRoute on the MAIN kgateway
 #       (openchoreo-control-plane/gateway-default) for observer.openchoreo.localhost
@@ -107,8 +108,8 @@
 #                   That is the silent failure this tag exists to prevent.
 #
 #                   NOT PUBLISHED to Docker Hub yet — build it locally:
-#                     docker build -t tharindulak/sre-agent:recurrence \
-#                       <openchoreo-repo>/agents/sre-agent
+#                     cd <openchoreo-repo>/agents && docker build \
+#                       -t tharindulak/sre-agent:handoff-provider -f sre-agent/Dockerfile .
 #                   Until it is pushed, the registry fallback below cannot find
 #                   it and will degrade (loudly) to hand0ff-new.
 #
@@ -131,7 +132,7 @@
 #                   regress: the EXTERNAL_SKILLS_DIR loader, so the AEP-owned
 #                   issue-fix skill mounted by step 3d below is what actually runs
 #                   (an image with a baked-in copy IGNORES that mount), and a
-#                   configurable AE_MCP_PATH (default /mcp) so the agent reaches
+#                   configurable HANDOFF_MCP_PATH (default /mcp) so the agent reaches
 #                   the standalone aep-mcp-server on :3401 instead of crash-
 #                   looping against a hardcoded /sre-mcp.
 #                   Requires the rca-agent component:create grant in setup-aep.sh
@@ -141,23 +142,28 @@
 #                     recurrence → hand0ff-new (handoff works, recurrence
 #                     reporting ABSENT) → anthropic-patched (RCA works, handoff
 #                     stage ABSENT entirely).
-#   AE_MCP_PATH     path of the handoff MCP endpoint under AE_API_URL
+#   HANDOFF_MCP_PATH path of the handoff MCP endpoint under HANDOFF_API_URL
 #                   (default: /mcp = standalone aep-mcp-server; set /sre-mcp for
 #                   the in-process aep-api surface). Older images than
 #                   hand0ff-new hardcode /sre-mcp and ignore this.
-#   AE_HANDOFF      enable the RCA→AEP coding-agent handoff (default: true).
+#   HANDOFF_ENABLED enable the RCA→platform coding-agent handoff (default: true).
+#                   Legacy AE_HANDOFF is still honoured as a fallback.
 #                   The handoff files ONE issue for code-level work; AEP adopts
 #                   it on creation, which is what puts the coding agent on it.
-#   AE_AUTO_DISPATCH hand the filed issue to the coding agent (AEP adopts it as
+#   HANDOFF_HAND_OVER hand the filed issue to the coding agent (AEP adopts it as
 #                   part of creating it; false files a ledger entry instead)
 #                   (default: true; false = issue-only, a human adopts it later
 #                   from AEP or by adding `aep:codingagent` on GitHub)
-#   AE_PUBLISH_REPORTS publish each completed RCA report to aep-api so it
-#                   shows in the console Alerts bell/list (default: true).
-#                   Needs AEP_API_URL.
-#   AEP_API_URL     aep-api REST base for report publishing
-#                   (default: http://host.k3d.internal:9090). NOT AE_API_URL
-#                   (that is the MCP server on :3401).
+#   REPORT_SINK     where completed RCA reports are published (default:
+#                   webhook; empty = nowhere, which silently empties the
+#                   console Alerts bell/list). Replaced AE_PUBLISH_REPORTS:
+#                   the agent no longer knows anything about aep-api's schema,
+#                   it POSTs its own report and aep-api maps it.
+#   REPORT_SINK_URL FULL URL of the report endpoint, not a base — the sink
+#                   posts exactly here
+#                   (default: http://host.k3d.internal:9090/api/v1/rca-agent/reports).
+#                   Replaced AEP_API_URL. Distinct from HANDOFF_API_URL, which is the
+#                   MCP server on :3401.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -171,17 +177,19 @@ OBS_PLANE_VERSION="1.0.1-hotfix.1"
 OBS_LOGS_VERSION="0.5.1"
 NS="openchoreo-observability-plane"
 
-# SRE-agent handoff knobs (see header). AE_API_URL is how the in-cluster RCA
+# SRE-agent handoff knobs (see header). HANDOFF_API_URL is how the in-cluster RCA
 # agent reaches the docker-compose-hosted aep-mcp-server on the host.
-AE_HANDOFF="${AE_HANDOFF:-true}"
-AE_AUTO_DISPATCH="${AE_AUTO_DISPATCH:-true}"
-AE_API_URL="${AE_API_URL:-http://host.k3d.internal:3401}"
-# Report publishing: POST each completed RCA report to aep-api
-# so it surfaces in the console Alerts bell/list. AEP_API_URL is aep-api's REST
-# base — DISTINCT from AE_API_URL (the MCP server on :3401); reports go to the
-# HTTP API on :9090.
-AE_PUBLISH_REPORTS="${AE_PUBLISH_REPORTS:-true}"
-AEP_API_URL="${AEP_API_URL:-http://host.k3d.internal:9090}"
+HANDOFF_ENABLED="${HANDOFF_ENABLED:-${AE_HANDOFF:-true}}"
+HANDOFF_HAND_OVER="${HANDOFF_HAND_OVER:-${AE_AUTO_DISPATCH:-true}}"
+HANDOFF_API_URL="${HANDOFF_API_URL:-${AE_API_URL:-http://host.k3d.internal:3401}}"
+# Where the receiving platform's provider descriptor is mounted (step 3d).
+HANDOFF_PROVIDER_FILE="${HANDOFF_PROVIDER_FILE:-/etc/rca-agent/handoff/provider.json}"
+# Report publishing: the agent POSTs each completed report to a configured sink
+# and aep-api maps it onto its own row. REPORT_SINK_URL is the FULL endpoint —
+# the sink posts exactly there, it does not append a path — and is distinct from
+# HANDOFF_API_URL (the MCP server on :3401); reports go to the HTTP API on :9090.
+REPORT_SINK="${REPORT_SINK:-webhook}"
+REPORT_SINK_URL="${REPORT_SINK_URL:-http://host.k3d.internal:9090/api/v1/rca-agent/reports}"
 
 echo "=== Installing OpenChoreo Observability Plane ==="
 
@@ -248,7 +256,11 @@ echo "✅ ExternalSecrets applied"
 # loses imported images — this makes the import part of setup). Build once with
 # (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
 # picked up instead of a registry pull):
-#   docker build -t tharindulak/sre-agent:recurrence <openchoreo-repo>/agents/sre-agent
+#   cd <openchoreo-repo>/agents && docker build \
+#     -t tharindulak/sre-agent:handoff-provider -f sre-agent/Dockerfile .
+# The context is agents/, NOT agents/sre-agent: the Dockerfile pulls in the
+# shared agents/common package (openchoreo PR #4372), so building from inside
+# sre-agent/ cannot resolve its COPY paths.
 # `recurrence` additionally reports which attempt an incident is on (ADR-0018):
 # it stamps `reopened` + `recurrence` from ae_create_issue's answer onto the
 # HandoffResult and forwards the count on the RCA report. An older image is
@@ -258,7 +270,7 @@ echo "✅ ExternalSecrets applied"
 # The image must be built from the SRE branch that (a) adds the
 # EXTERNAL_SKILLS_DIR loader (src/agent/skills.py + src/config.py), (b) removes
 # the baked-in src/skills/issue-fix — without both, step 3d's mount is inert —
-# (c) makes the handoff MCP path configurable (AE_MCP_PATH, default /mcp) so the
+# (c) makes the handoff MCP path configurable (HANDOFF_MCP_PATH, default /mcp) so the
 # boot MCP test reaches the standalone aep-mcp-server on :3401, and (d) carries
 # the one-call handoff: ae_create_issue with adopt/componentName, and no
 # ae_dispatch_coding_agent (an older image still calls a tool aep-mcp-server no
@@ -269,22 +281,26 @@ echo "✅ ExternalSecrets applied"
 # by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `recurrence` (= RCA_IMAGE_TAG default below) carries everything
-# `hand0ff-new` did — the Anthropic structured-output fix, the one-call AEP
-# handoff stage (AE_HANDOFF), the EXTERNAL_SKILLS_DIR loader that reads the
-# AEP-mounted issue-fix skill from step 3d, and the configurable AE_MCP_PATH
-# (default /mcp) — plus the recurrence contract: the report can say WHICH
-# ATTEMPT an incident is on, which is what ADR-0021 needs to reopen an issue
-# rather than re-file it.
+# Preferred tag `report-sink` (= RCA_IMAGE_TAG default below) carries everything
+# `recurrence` did — the Anthropic structured-output fix, the one-call AEP
+# handoff stage (HANDOFF_ENABLED), the EXTERNAL_SKILLS_DIR loader that reads the
+# AEP-mounted issue-fix skill from step 3d, the configurable HANDOFF_MCP_PATH
+# (default /mcp), and the recurrence contract (ADR-0021) — plus the report sink:
+# the agent publishes its own report document and aep-api derives every column
+# from it, so the agent holds no aep-api field names, endpoint path or Markdown
+# layout. REQUIRES REPORT_SINK / REPORT_SINK_URL to be set, or reports go
+# nowhere and the console Alerts list stays empty.
 # Resolution order:
-#   1. local build            docker build -t tharindulak/sre-agent:recurrence \
-#                               <openchoreo-repo>/agents/sre-agent
+#   1. local build            cd <openchoreo-repo>/agents && docker build \
+#                       -t tharindulak/sre-agent:handoff-provider -f sre-agent/Dockerfile .
 #      (preferred — developers iterating on the agent aren't surprised by a
 #       stale registry copy, and `recurrence` is local-only today)
 #   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
-#   3. local hand0ff-new      (previous contract: handoff works, but the report
-#                              cannot say WHICH ATTEMPT an incident is on)
-#   4. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
+#   3. local recurrence       (previous contract: handoff works, but publishing
+#                              is REJECTED by current aep-api — no Alerts feed)
+#   4. local hand0ff-new      (older: also cannot say WHICH ATTEMPT an incident
+#                              is on)
+#   5. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
 #
 # RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/sre-agent),
 # not a short local alias — deliberately. An earlier version used a short repo
@@ -298,11 +314,26 @@ echo "1️⃣b RCA agent image + secret"
 # the fully-qualified name everywhere means a cache-evicted image can always
 # be re-pulled from the real registry — no more silent long-term fragility.
 RCA_IMAGE_REPO="tharindulak/sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-recurrence}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-handoff-provider}"
 RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:${RCA_IMAGE_TAG}}"
 # Degradation is EXPLICIT and ordered, because each step down loses something
 # different and a silent step-down is what makes a stale agent hard to spot:
-#   recurrence     — current contract.
+#   handoff-provider — current contract. The handoff's tool and argument names
+#                    come from a provider descriptor this repo ships and step 3d
+#                    mounts (HANDOFF_PROVIDER_FILE); the agent holds none of
+#                    AEP's vocabulary. Config keys are HANDOFF_* (see below).
+#   report-sink    — publishes reports fine, but reads the PRE-RENAME config
+#                    keys (AE_HANDOFF / AE_AUTO_DISPATCH / AE_API_URL). This
+#                    script writes both sets for exactly that reason, so the
+#                    handoff still runs — what it does not have is the provider
+#                    descriptor, which it does not need because its AEP names
+#                    are compiled in.
+#   recurrence     — the PREVIOUS contract, and it can no longer publish: it
+#                    POSTs aep-api's old flat body, which aep-api stopped
+#                    accepting. The handoff still files and dispatches issues
+#                    correctly — what you lose is the console Alerts feed, and
+#                    you lose it QUIETLY, because publishing is best-effort by
+#                    design and a rejected publish only logs.
 #   hand0ff-new    — handoff works; the report/console cannot say which ATTEMPT
 #                    an incident is on. Recurrences are still reopened and worked
 #                    correctly, because AE decides that, not the agent.
@@ -312,14 +343,32 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
         docker tag "$RCA_IMAGE_PULL" "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
         echo "✅ pulled ${RCA_IMAGE_PULL} → retagged as ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
+    elif docker image inspect "${RCA_IMAGE_REPO}:report-sink" >/dev/null 2>&1; then
+        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
+        echo "    falling back to ${RCA_IMAGE_REPO}:report-sink."
+        echo "    Everything works: it reads the AE_* config keys this script also"
+        echo "    writes, and its AEP tool names are compiled in rather than read"
+        echo "    from the provider descriptor. Build the current image to fix:"
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:handoff-provider -f sre-agent/Dockerfile ."
+        RCA_IMAGE_TAG="report-sink"
+    elif docker image inspect "${RCA_IMAGE_REPO}:recurrence" >/dev/null 2>&1; then
+        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
+        echo "    falling back to ${RCA_IMAGE_REPO}:recurrence."
+        echo "    The handoff WORKS — issues are still filed and dispatched. What you"
+        echo "    lose is the console Alerts feed: this image POSTs aep-api's old flat"
+        echo "    report body, which current aep-api rejects, and publishing is"
+        echo "    best-effort so the rejection only shows up in the agent's log."
+        echo "    Build the current image to fix:"
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:handoff-provider -f sre-agent/Dockerfile ."
+        RCA_IMAGE_TAG="recurrence"
     elif docker image inspect "${RCA_IMAGE_REPO}:hand0ff-new" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
         echo "    falling back to ${RCA_IMAGE_REPO}:hand0ff-new."
         echo "    The handoff WORKS and recurrences are still reopened and worked (AE"
-        echo "    decides that). What you lose is the report saying WHICH ATTEMPT an"
-        echo "    incident is on, so the console shows a third attempt as if it were"
-        echo "    the first. Build the current image to fix:"
-        echo "      docker build -t ${RCA_IMAGE_REPO}:recurrence <openchoreo>/agents/sre-agent"
+        echo "    decides that). You lose the console Alerts feed (as above) AND the"
+        echo "    report saying WHICH ATTEMPT an incident is on, so a third attempt"
+        echo "    reads as the first. Build the current image to fix:"
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:handoff-provider -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="hand0ff-new"
     elif docker image inspect "${RCA_IMAGE_REPO}:anthropic-patched" >/dev/null 2>&1; then
         echo "⚠️  registry pull failed — falling back to ${RCA_IMAGE_REPO}:anthropic-patched"
@@ -551,33 +600,43 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #                              search-then-create dedup ⇒ duplicate GitHub
 #                              issues + duplicate coding-agent dispatches.
 #   rca-agent-config:
-#     AE_HANDOFF               enables the RCA→AEP handoff stage (file the issue)
-#     AE_AUTO_DISPATCH         true ⇒ the filed issue is handed to the coding
+#     HANDOFF_ENABLED          enables the RCA→platform handoff stage (file the issue)
+#     HANDOFF_PROVIDER_FILE    the platform's provider descriptor (names its tools
+#                              and arguments); the handoff refuses to run without it
+#     HANDOFF_HAND_OVER        true ⇒ the filed issue is handed to the coding
 #                              agent by AEP as it is created (one call, no
 #                              separate dispatch). false ⇒ issue-only: it is a
 #                              ledger entry until a human adopts it, by clicking
 #                              dispatch in AEP or adding `aep:codingagent` on
 #                              the issue in GitHub.
-#     AE_API_URL               aep-mcp-server base URL (host.k3d.internal:3401)
-#     AE_PUBLISH_REPORTS       publish RCA reports to aep-api (console Alerts)
-#     AEP_API_URL              aep-api REST base (host.k3d.internal:9090)
+#     HANDOFF_API_URL          aep-mcp-server base URL (host.k3d.internal:3401)
+#     REPORT_SINK              publish completed reports downstream (webhook)
+#     REPORT_SINK_URL          full report endpoint on aep-api (:9090/api/v1/...)
 echo ""
 echo "3️⃣b Alert→RCA auto-trigger + AEP handoff wiring"
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=merge -p \
     '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://ai-rca-agent:8080","ALERT_SUPPRESSION_WINDOW":"1h"}}'
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
-if [ "$AE_HANDOFF" = "true" ]; then
+# Both key sets are written on purpose. The agent renamed AE_* to HANDOFF_* when
+# the handoff stopped carrying AEP's vocabulary, and the fallback tags below
+# predate that. An image reads the set it knows and ignores the other
+# (pydantic Settings allows extras), so one ConfigMap serves any tag on the
+# ladder — without this, falling back to report-sink would leave HANDOFF_* set,
+# AE_HANDOFF unset, and the handoff SILENTLY off. Drop the AE_* three once no
+# deployment can roll back past handoff-provider.
+if [ "$HANDOFF_ENABLED" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
-        "{\"data\":{\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${AE_AUTO_DISPATCH}\",\"AE_API_URL\":\"${AE_API_URL}\",\"AE_PUBLISH_REPORTS\":\"${AE_PUBLISH_REPORTS}\",\"AEP_API_URL\":\"${AEP_API_URL}\"}}"
+        "{\"data\":{\"HANDOFF_ENABLED\":\"true\",\"HANDOFF_HAND_OVER\":\"${HANDOFF_HAND_OVER}\",\"HANDOFF_API_URL\":\"${HANDOFF_API_URL}\",\"HANDOFF_PROVIDER_FILE\":\"${HANDOFF_PROVIDER_FILE}\",\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\",\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${HANDOFF_HAND_OVER}\",\"AE_API_URL\":\"${HANDOFF_API_URL}\"}}"
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/ai-rca-agent
-    echo "   AE handoff: enabled (auto-dispatch=${AE_AUTO_DISPATCH}, mcp=${AE_API_URL})"
-    echo "   Report publishing: ${AE_PUBLISH_REPORTS} (aep-api=${AEP_API_URL})"
+    echo "   Handoff: enabled (hand-over=${HANDOFF_HAND_OVER}, mcp=${HANDOFF_API_URL})"
+    echo "   Provider descriptor: ${HANDOFF_PROVIDER_FILE}"
+    echo "   Report sink: ${REPORT_SINK:-<none>} → ${REPORT_SINK_URL}"
 else
-    echo "   AE handoff: disabled (AE_HANDOFF=false)"
+    echo "   Handoff: disabled (HANDOFF_ENABLED=false)"
 fi
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deploy/observer --timeout=300s
-if [ "$AE_HANDOFF" = "true" ]; then
-    # With AE_HANDOFF=true the agent's boot-time MCP test is FATAL: it must
+if [ "$HANDOFF_ENABLED" = "true" ]; then
+    # With HANDOFF_ENABLED=true the agent's boot-time MCP test is FATAL: it must
     # reach aep-mcp-server (docker-compose, started later by start.sh). Only
     # wait for readiness if that server is already up (i.e. setup is being
     # re-run on a live stack); on a fresh setup the crash-loop is expected
@@ -697,15 +756,15 @@ echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 
 # the built-in src/skills library). Same "patch the Deployment so it survives
 # a helm re-run" pattern as step 3c's volume wiring.
 #
-# Only wired when AE_HANDOFF=true — without the handoff stage the agent never
+# Only wired when HANDOFF_ENABLED=true — without the handoff stage the agent never
 # loads a skill, so there's nothing to mount.
-if [ "$AE_HANDOFF" = "true" ]; then
+if [ "$HANDOFF_ENABLED" = "true" ]; then
     echo ""
     echo "3️⃣d Handoff skill (issue-fix) — ConfigMap + mount"
     ISSUE_FIX_SKILL="$SCRIPT_DIR/../../services/aep-mcp-server/skills/issue-fix/SKILL.md"
     if [ ! -f "$ISSUE_FIX_SKILL" ]; then
         echo "⚠️  issue-fix skill not found at $ISSUE_FIX_SKILL — skipping mount."
-        echo "    AE_HANDOFF is on, so ai-rca-agent will error 'Skill issue-fix not found'"
+        echo "    HANDOFF_ENABLED is on, so ai-rca-agent will error 'Skill issue-fix not found'"
         echo "    on the handoff stage (best-effort — RCA analysis still completes)."
     else
         # Render deterministically (create --dry-run) then apply, so re-runs are
@@ -741,6 +800,42 @@ spec:
             - name: EXTERNAL_SKILLS_DIR
               value: /etc/rca-agent/skills
 '
+        # The provider descriptor rides alongside the skill, for the same reason:
+        # both are the receiving platform's, both change without an SRE image
+        # rebuild, and the agent refuses to start the handoff without the
+        # descriptor — its argument names are what make a filed issue dedupe and
+        # get handed over at all.
+        PROVIDER_DESC="$SCRIPT_DIR/../../services/aep-mcp-server/handoff/provider.json"
+        if [ ! -f "$PROVIDER_DESC" ]; then
+            echo "❌ handoff provider descriptor not found at $PROVIDER_DESC"
+            echo "   HANDOFF_ENABLED is on, and the agent refuses to start the handoff"
+            echo "   without it — it would otherwise file issues with no dedupe key."
+            exit 1
+        fi
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-handoff-provider \
+            --from-file=provider.json="$PROVIDER_DESC" \
+            --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
+        echo "✅ rca-agent-handoff-provider ConfigMap applied (from $PROVIDER_DESC)"
+
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
+spec:
+  template:
+    spec:
+      volumes:
+        - name: handoff-provider
+          configMap:
+            name: rca-agent-handoff-provider
+            items:
+              - key: provider.json
+                path: provider.json
+      containers:
+        - name: ai-rca-agent
+          volumeMounts:
+            - name: handoff-provider
+              mountPath: /etc/rca-agent/handoff
+              readOnly: true
+'
+        echo "✅ ai-rca-agent volume wired for the provider descriptor (/etc/rca-agent/handoff)"
         echo "✅ ai-rca-agent volume/env wired for the handoff skill (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
         echo "   Edit the skill in services/aep-mcp-server/skills/issue-fix/, re-run this script"
         echo "   (or re-apply the ConfigMap) and restart the agent — no SRE image rebuild."
@@ -934,7 +1029,7 @@ echo "✅ OpenSearch index-template bootstrap complete"
 echo ""
 echo "✅ Observability Plane installation complete!"
 echo ""
-echo "   Alert→RCA→coding-agent handoff is wired (AE_HANDOFF=${AE_HANDOFF})."
+echo "   Alert→RCA→coding-agent handoff is wired (HANDOFF_ENABLED=${HANDOFF_ENABLED})."
 echo "   One step can't be automated: create an ObservabilityAlertRule per"
 echo "   component you want auto-RCA on (needs the component's UID + name"
 echo "   labels, incident.enabled + triggerAiRca: true)."
