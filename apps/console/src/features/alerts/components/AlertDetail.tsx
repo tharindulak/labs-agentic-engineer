@@ -151,18 +151,18 @@ function IssueCreatedContent({ report }: { report: RcaAgentReport }) {
 
 function CodingHandoverContent({ report }: { report: RcaAgentReport }) {
   const navigate = useNavigate();
-  // Land on the specific Task/build for this alert's issue, not the tasks
-  // list. Guarded below: the buttons only render when issueNumber is set.
+  // The ledger, not a version. Adoption files an incident issue into the
+  // DEPLOYED version's milestone (eventcore/adopt.go), which is not always the
+  // newest row, and nothing on the report names that version: RcaAgentReport
+  // carries an issue number, never a tag. Naming one anyway would mean reading
+  // the version some other run happens to be building — a guess this surface
+  // cannot make honestly (ADR-0021 §6 parks the same read for the same reason).
+  // The ledger tints and pulses its live row for precisely this arrival, so the
+  // moving version stays findable without being claimed here.
   const goToBuild = () =>
     void navigate({
-      to: "/projects/$projectName/tasks/$issueNumber",
-      params: {
-        projectName: report.project!,
-        // A number now: `/tasks/$issueNumber` renders the task itself and parses
-        // its param (ADR-0021 §7). It used to be a bare redirect into
-        // `/builds/$issueNumber`, which typed the param as a string.
-        issueNumber: report.issueNumber!,
-      },
+      to: "/projects/$projectName/builds",
+      params: { projectName: report.project! },
     });
 
   if (!report.issueNumber) {
