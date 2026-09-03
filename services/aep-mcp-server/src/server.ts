@@ -20,6 +20,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { AepApiError, type AepClientOptions, createIssue, listIssues } from "./aepClient.js";
+import {
+  type IncidentIdentity,
+  resolveHandoff,
+} from "./handoffContext.js";
 import { annotatePlatformIssues } from "./platformIssues.js";
 
 function textResult(payload: unknown) {
@@ -44,7 +48,16 @@ function errorResult(err: unknown) {
  * exists is the `aep` arming GitHub label, which AE's event plane watches —
  * a human's route, not this server's.
  */
-export function createAepMcpServer(client: AepClientOptions): McpServer {
+export interface HandoffRequestContext {
+  identity: IncidentIdentity;
+  adopt: boolean;
+}
+
+export function createAepMcpServer(
+  client: AepClientOptions,
+  handoff: HandoffRequestContext,
+  create: typeof createIssue = createIssue,
+): McpServer {
   const server = new McpServer({ name: "aep-mcp-server", version: "0.0.0" });
 
   server.registerTool(
@@ -73,7 +86,8 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
         // destructure to `undefined` when absent, and explicitly assigning
         // `undefined` to an optional field is rejected — omitting the key
         // entirely is not.
-        const issues = await listIssues(client, project, {
+        const scoped = handoff.identity.project ?? project;
+        const issues = await listIssues(client, scoped, {
           ...(query !== undefined ? { query } : {}),
           ...(labels !== undefined ? { labels } : {}),
         });
@@ -94,7 +108,7 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
       description:
         "Create a GitHub issue on a project's repo AND hand it to the AE coding agent. Creating the issue IS the dispatch — there is no second call. " +
         "Use this for a code-level fix; config-level changes do not belong here. " +
-        "Pass a stable dedupeKey so concurrent callers reporting the same incident share one issue: if an OPEN issue with the same key exists, it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). " +
+        "Deduplication is automatic: this server derives a stable key from the incident this request belongs to, so if an OPEN issue for the same incident exists it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). An issue already carrying a no-change verdict for this incident answers `suppressed: true`, and nothing is created. " +
         "If instead a CLOSED issue with that key is found — the same incident recurring after a fix was merged — it is reopened with this call's body appended as a `## Recurrence <n>` section, moved into the currently deployed version's milestone and handed back to the coding agent; the result then carries `reopened: true` and `recurrence` (which attempt this is). " +
         "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked.",
       inputSchema: {
@@ -108,29 +122,29 @@ export function createAepMcpServer(client: AepClientOptions): McpServer {
           .describe(
             "The component this issue is about. AE's design names it unprefixed ('service1'), and a name carrying its project prefix ('myproject-service1') is resolved to the design name for you, so pass whichever your world uses. Checked before the issue is filed — a name the design carries under neither form fails this call rather than surfacing later inside a coding cycle.",
           ),
-        dedupeKey: z
-          .string()
-          .optional()
-          .describe(
-            "Stable idempotency key (e.g. 'sre-rca/<component>'). While an issue created with this key is open, further creates with the same key return that issue (deduped: true) instead of filing a duplicate.",
-          ),
-        adopt: z
-          .boolean()
-          .optional()
-          .describe(
-            "Defaults to TRUE: the issue is handed to the coding agent. Pass false only to file a ledger entry — an issue recorded against the version that nothing will work until a human adopts it.",
-          ),
       },
     },
-    async ({ project, title, body, labels, componentName, dedupeKey, adopt }) => {
+    async ({ project, title, body, labels, componentName }) => {
       try {
-        const issue = await createIssue(client, project, {
+        const resolved = resolveHandoff(
+          handoff.identity,
+          {
+            project,
+            ...(componentName !== undefined ? { componentName } : {}),
+            ...(labels !== undefined ? { labels } : {}),
+          },
+          handoff.adopt,
+        );
+        for (const note of resolved.notes) {
+          process.stderr.write(`handoff resolve: ${note}\n`);
+        }
+        const issue = await create(client, resolved.project, {
           title,
           body,
-          ...(labels !== undefined ? { labels } : {}),
-          ...(componentName !== undefined ? { componentName } : {}),
-          ...(dedupeKey !== undefined ? { dedupeKey } : {}),
-          ...(adopt !== undefined ? { adopt } : {}),
+          labels: resolved.labels,
+          ...(resolved.componentName !== undefined ? { componentName: resolved.componentName } : {}),
+          ...(resolved.dedupeKey !== undefined ? { dedupeKey: resolved.dedupeKey } : {}),
+          adopt: resolved.adopt,
         });
         return textResult(issue);
       } catch (err) {
