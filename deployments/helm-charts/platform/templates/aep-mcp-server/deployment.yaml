@@ -33,3 +33,8 @@ spec:
             # caller's bearer here; aep-api enforces org-scoped auth.
             - name: AEP_API_BASE_URL
               value: "http://aep-api:{{ .Values.aepApi.port }}"
+            # Whether an issue filed through this server is handed to the
+            # coding agent. Operator policy, applied here rather than
+            # accepted as a tool argument.
+            - name: AEP_HANDOFF_ADOPT
+              value: {{ .Values.aepMcpServer.handoffAdopt | quote }}

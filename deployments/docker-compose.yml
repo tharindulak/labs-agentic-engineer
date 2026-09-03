@@ -354,6 +354,10 @@ services:
     environment:
       PORT: "3400"
       AEP_API_BASE_URL: "http://aep-api:9090"
+      # Whether an issue filed through this server is handed to the coding
+      # agent. Operator policy, applied here rather than accepted as a tool
+      # argument. Default true; only "false" disables.
+      AEP_HANDOFF_ADOPT: "${AEP_HANDOFF_ADOPT:-true}"
     depends_on:
       - aep-api
     networks:

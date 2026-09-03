@@ -78,6 +78,9 @@ aepMcpServer:
     tag: latest
     pullPolicy: IfNotPresent
   port: 3400
+  # Hand issues filed through the MCP server to the coding agent. Set false to
+  # file ledger entries a human picks up instead.
+  handoffAdopt: true
   resources:
     requests:
       cpu: "50m"
