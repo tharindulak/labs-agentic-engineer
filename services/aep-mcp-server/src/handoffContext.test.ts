@@ -94,6 +94,25 @@ test("the header wins over the argument, and says so", () => {
   assert.ok(resolved.notes.some((n) => n.includes("argcomp")));
 });
 
+test("a newline in an overridden argument cannot forge a fake stderr line", () => {
+  const { identity } = readIncidentIdentity({
+    [HEADER_PROJECT]: "myproj",
+    [HEADER_COMPONENT]: "service1",
+  });
+
+  const resolved = resolveHandoff(
+    identity,
+    { project: "argproj", componentName: "evil\nHANDOFF_ENABLED=false" },
+    true,
+  );
+
+  for (const note of resolved.notes) {
+    assert.ok(!note.includes("\n"), `note should contain no raw newline: ${JSON.stringify(note)}`);
+  }
+  // The real value used for the API call is untouched by sanitization.
+  assert.equal(resolved.project, "myproj");
+});
+
 test("without headers the caller's own arguments are used", () => {
   const resolved = resolveHandoff({}, ARGS, true);
 
@@ -137,17 +156,28 @@ const LABEL_SRE_AGENT_SOURCE = fileURLToPath(
   new URL("../../aep-api/internal/sourcecontrol/issue_recurrence.go", import.meta.url),
 );
 
-test("HANDOFF_LABELS is pinned to aep-api's LabelSREAgent, not merely a copy of it", () => {
-  const source = readFileSync(LABEL_SRE_AGENT_SOURCE, "utf8");
-  const match = /LabelSREAgent\s*=\s*"([^"]+)"/.exec(source);
+// `bug` is the other half of HANDOFF_LABELS. aep-api's own bare-literal use of
+// "bug" was replaced with this constant (internal/app/eventcore_adapters.go),
+// so this copy can be pinned the same way LabelSREAgent already is, rather
+// than left as an unpinned literal with an apologetic comment.
+const KIND_BUG_SOURCE = fileURLToPath(new URL("../../aep-api/internal/delivery/labels.go", import.meta.url));
 
+function readGoConstant(path: string, name: string): string {
+  const source = readFileSync(path, "utf8");
+  const match = new RegExp(`${name}\\s*=\\s*"([^"]+)"`).exec(source);
   assert.ok(
     match,
-    `could not find the LabelSREAgent declaration in ${LABEL_SRE_AGENT_SOURCE} — ` +
+    `could not find the ${name} declaration in ${path} — ` +
       "it may have moved or been renamed; update this test's path/pattern to match",
   );
-  const labelSREAgent = match[1];
-  assert.ok(labelSREAgent, "the LabelSREAgent pattern matched but captured no value");
+  const value = match?.[1];
+  assert.ok(value, `the ${name} pattern matched but captured no value`);
+  return value as string;
+}
 
-  assert.ok(HANDOFF_LABELS.includes(labelSREAgent));
+test("HANDOFF_LABELS is pinned, element for element and in order, to aep-api's label constants", () => {
+  const kindBug = readGoConstant(KIND_BUG_SOURCE, "KindBug");
+  const labelSREAgent = readGoConstant(LABEL_SRE_AGENT_SOURCE, "LabelSREAgent");
+
+  assert.deepEqual(HANDOFF_LABELS, [kindBug, labelSREAgent]);
 });

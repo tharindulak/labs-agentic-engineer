@@ -54,11 +54,13 @@ from Go, so it is pinned against `LabelSREAgent` by a dedicated test rather
 than left to stay in sync by convention.
 
 The descriptor mounted into the SRE agent's ConfigMap
-(`services/aep-mcp-server/handoff/provider.json`) reflects this: its
-`forced_args` block and standalone `labels` array are gone, replaced by an
-`incident_headers` section naming the three headers by their wire names. The
-agent no longer has fields to populate for any of this; it has headers to
-set once per run.
+(`services/aep-mcp-server/handoff/provider.json`) reflects this: incident
+identity, the dedupe key, the label set and the adoption flag are derived
+server-side rather than accepted as forced tool arguments — this repo never
+had a `forced_args` block or a standalone `labels` array to remove, it went
+straight to an `incident_headers` section naming the three headers by their
+wire names. The agent has no fields to populate for any of this; it has
+headers to set once per run.
 
 ## Known gaps, carried forward
 

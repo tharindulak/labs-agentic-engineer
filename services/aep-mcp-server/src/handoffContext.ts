@@ -117,6 +117,19 @@ function single(
 const asIs = (trimmed: string): string => trimmed;
 const lower = (trimmed: string): string => trimmed.toLowerCase();
 
+/**
+ * Model-supplied tool arguments (unlike the identity headers, never checked
+ * against `IDENTIFIER`) are interpolated verbatim into `notes` for logging.
+ * Strip control characters — newlines above all — before that interpolation
+ * so a value carrying one cannot forge an extra line in whatever ingests this
+ * server's stderr. Only the logged text is sanitized; the real `project` /
+ * `componentName` used for the actual API call are untouched.
+ */
+export function sanitizeForLog(value: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them
+  return value.replace(/[\x00-\x1f\x7f]/g, " ");
+}
+
 export function readIncidentIdentity(headers: NodeJS.Dict<string | string[]>): {
   identity: IncidentIdentity;
   notes: string[];
@@ -143,12 +156,12 @@ export function resolveHandoff(
   if (identity.project !== undefined && args.project !== identity.project) {
     // Worth a line even though the header wins: it is the only visible signal
     // that the caller's prompt-level scoping did not hold.
-    notes.push(`project ${args.project} from the call was overridden by the incident header`);
+    notes.push(`project ${sanitizeForLog(args.project)} from the call was overridden by the incident header`);
   }
 
   const componentName = identity.component ?? args.componentName;
   if (identity.component !== undefined && args.componentName !== undefined && args.componentName !== identity.component) {
-    notes.push(`componentName ${args.componentName} from the call was overridden by the incident header`);
+    notes.push(`componentName ${sanitizeForLog(args.componentName)} from the call was overridden by the incident header`);
   }
 
   const labels = [...(args.labels ?? [])];

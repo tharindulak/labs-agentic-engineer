@@ -459,10 +459,11 @@ func (a opsIssueEscalator) FileAndDispatch(
 		sourcecontrol.CreateIssueRequest{
 			Title: title,
 			Body:  body,
-			// LabelSREAgent, not a literal: aep-api's own recurrence lookup
-			// filters on it, and aep-mcp-server carries the one copy Go cannot
-			// share (its HANDOFF_LABELS). A test pins the set.
-			Labels:    []string{"bug", sourcecontrol.LabelSREAgent},
+			// delivery.KindBug and LabelSREAgent, not literals: aep-api's own
+			// recurrence lookup filters on LabelSREAgent, and aep-mcp-server
+			// carries the one copy Go cannot share (its HANDOFF_LABELS). A
+			// test pins the set.
+			Labels:    []string{delivery.KindBug, sourcecontrol.LabelSREAgent},
 			DedupeKey: dedupeKey,
 		})
 	if err != nil {

@@ -6,11 +6,12 @@
     "does: rendered into a ConfigMap and mounted, with HANDOFF_PROVIDER_FILE",
     "pointing at it.",
     "",
-    "There are no forced_args any more. The dedupe key, the component, the",
-    "project, the label set and the adoption flag are no longer arguments a",
-    "caller pins onto the create call: incident identity arrives as per-run",
-    "headers and AEP derives the rest (services/aep-mcp-server/src/handoffContext.ts).",
-    "A caller that cannot spell an argument therefore cannot get it wrong."
+    "Incident identity is derived server-side, not accepted as forced tool",
+    "arguments: the dedupe key, the component, the project, the label set and",
+    "the adoption flag are not arguments a caller pins onto the create call.",
+    "Incident identity arrives as per-run headers instead, and AEP derives the",
+    "rest (services/aep-mcp-server/src/handoffContext.ts). A caller that cannot",
+    "spell an argument therefore cannot get it wrong."
   ],
   "tools": {
     "create_issue": "ae_create_issue",

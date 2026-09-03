@@ -23,6 +23,7 @@ import { AepApiError, type AepClientOptions, createIssue, listIssues } from "./a
 import {
   type IncidentIdentity,
   resolveHandoff,
+  sanitizeForLog,
 } from "./handoffContext.js";
 import { annotatePlatformIssues } from "./platformIssues.js";
 
@@ -36,6 +37,11 @@ function errorResult(err: unknown) {
 }
 
 
+export interface HandoffRequestContext {
+  identity: IncidentIdentity;
+  adopt: boolean;
+}
+
 /**
  * Builds an McpServer bound to one caller's bearer token. Called once per
  * incoming HTTP request (see main.ts) — this server holds no credentials or
@@ -48,11 +54,6 @@ function errorResult(err: unknown) {
  * exists is the `aep` arming GitHub label, which AE's event plane watches —
  * a human's route, not this server's.
  */
-export interface HandoffRequestContext {
-  identity: IncidentIdentity;
-  adopt: boolean;
-}
-
 export function createAepMcpServer(
   client: AepClientOptions,
   handoff: HandoffRequestContext,
@@ -87,6 +88,14 @@ export function createAepMcpServer(
         // `undefined` to an optional field is rejected — omitting the key
         // entirely is not.
         const scoped = handoff.identity.project ?? project;
+        if (handoff.identity.project !== undefined && handoff.identity.project !== project) {
+          // Same asymmetry the create path already logs (resolveHandoff's
+          // `notes`): a search scoped away from the project the model asked
+          // for should leave a trace too, not just create.
+          process.stderr.write(
+            `handoff resolve: project ${sanitizeForLog(project)} from the call was overridden by the incident header\n`,
+          );
+        }
         const issues = await listIssues(client, scoped, {
           ...(query !== undefined ? { query } : {}),
           ...(labels !== undefined ? { labels } : {}),

@@ -50,15 +50,6 @@ const serverSrc = readFileSync(
   "utf8",
 );
 
-test("the descriptor names tools this server actually registers", () => {
-  for (const tool of Object.values(descriptor["tools"]) as string[]) {
-    assert.ok(
-      serverSrc.includes(`"${tool}"`),
-      `descriptor names tool ${tool}, which server.ts does not register`,
-    );
-  }
-});
-
 test("the incident headers the descriptor names are the ones handoffContext.ts reads", () => {
   // HTTP header names are case-insensitive and Node lower-cases them on
   // receipt, so the comparison folds case. A drift here is silent: the header

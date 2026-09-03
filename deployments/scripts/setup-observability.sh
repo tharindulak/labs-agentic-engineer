@@ -48,8 +48,8 @@
 #       but were never evaluated).
 #   - ConfigMap patches (post-helm): observer-config auto-trigger keys
 #       (LOGS_ADAPTER_ENABLED / RCA_SERVICE_URL / ALERT_SUPPRESSION_WINDOW)
-#       and rca-agent-config handoff keys (HANDOFF_ENABLED / HANDOFF_HAND_OVER /
-#       HANDOFF_API_URL / HANDOFF_PROVIDER_FILE). Patched after helm so chart
+#       and rca-agent-config handoff keys (HANDOFF_ENABLED / HANDOFF_API_URL /
+#       HANDOFF_PROVIDER_FILE). Patched after helm so chart
 #       upgrades can't silently
 #       drop them on re-runs.
 #   - Cross-namespace HTTPRoute on the MAIN kgateway
@@ -150,10 +150,10 @@
 #                   Legacy AE_HANDOFF is still honoured as a fallback.
 #                   The handoff files ONE issue for code-level work; AEP adopts
 #                   it on creation, which is what puts the coding agent on it.
-#   HANDOFF_HAND_OVER hand the filed issue to the coding agent (AEP adopts it as
-#                   part of creating it; false files a ledger entry instead)
-#                   (default: true; false = issue-only, a human adopts it later
-#                   from AEP or by adding `aep:codingagent` on GitHub)
+#   Whether the filed issue is handed to the coding agent (vs. left as a
+#                   ledger entry for a human to adopt) is controlled by
+#                   AEP_HANDOFF_ADOPT on the aep-mcp-server deployment, not by
+#                   anything on the SRE agent side.
 #   REPORT_SINK     where completed RCA reports are published (default:
 #                   webhook; empty = nowhere, which silently empties the
 #                   console Alerts bell/list). Replaced AE_PUBLISH_REPORTS:
@@ -180,7 +180,6 @@ NS="openchoreo-observability-plane"
 # SRE-agent handoff knobs (see header). HANDOFF_API_URL is how the in-cluster RCA
 # agent reaches the docker-compose-hosted aep-mcp-server on the host.
 HANDOFF_ENABLED="${HANDOFF_ENABLED:-${AE_HANDOFF:-true}}"
-HANDOFF_HAND_OVER="${HANDOFF_HAND_OVER:-${AE_AUTO_DISPATCH:-true}}"
 HANDOFF_API_URL="${HANDOFF_API_URL:-${AE_API_URL:-http://host.k3d.internal:3401}}"
 # Where the receiving platform's provider descriptor is mounted (step 3d).
 HANDOFF_PROVIDER_FILE="${HANDOFF_PROVIDER_FILE:-/etc/rca-agent/handoff/provider.json}"
@@ -603,12 +602,10 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #     HANDOFF_ENABLED          enables the RCA→platform handoff stage (file the issue)
 #     HANDOFF_PROVIDER_FILE    the platform's provider descriptor (names its tools
 #                              and arguments); the handoff refuses to run without it
-#     HANDOFF_HAND_OVER        true ⇒ the filed issue is handed to the coding
-#                              agent by AEP as it is created (one call, no
-#                              separate dispatch). false ⇒ issue-only: it is a
-#                              ledger entry until a human adopts it, by clicking
-#                              dispatch in AEP or adding `aep:codingagent` on
-#                              the issue in GitHub.
+#     (Whether the filed issue is handed to the coding agent, vs. left as a
+#      ledger entry for a human to adopt, is AEP_HANDOFF_ADOPT on the
+#      aep-mcp-server deployment — see docker-compose.yml / helm values
+#      aepMcpServer.handoffAdopt. Nothing on the SRE agent side controls it.)
 #     HANDOFF_API_URL          aep-mcp-server base URL (host.k3d.internal:3401)
 #     REPORT_SINK              publish completed reports downstream (webhook)
 #     REPORT_SINK_URL          full report endpoint on aep-api (:9090/api/v1/...)
@@ -624,11 +621,16 @@ kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 # ladder — without this, falling back to report-sink would leave HANDOFF_* set,
 # AE_HANDOFF unset, and the handoff SILENTLY off. Drop the AE_* three once no
 # deployment can roll back past handoff-provider.
+# AE_AUTO_DISPATCH is hardcoded true: it is only read by a pinned report-sink
+# tier image (see the degradation ladder above) and, like the HANDOFF_HAND_OVER
+# key this ConfigMap no longer sets, has no effect on the handoff-provider
+# image this script deploys by default — adoption there is AEP_HANDOFF_ADOPT
+# on aep-mcp-server, not anything in this ConfigMap.
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
-        "{\"data\":{\"HANDOFF_ENABLED\":\"true\",\"HANDOFF_HAND_OVER\":\"${HANDOFF_HAND_OVER}\",\"HANDOFF_API_URL\":\"${HANDOFF_API_URL}\",\"HANDOFF_PROVIDER_FILE\":\"${HANDOFF_PROVIDER_FILE}\",\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\",\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${HANDOFF_HAND_OVER}\",\"AE_API_URL\":\"${HANDOFF_API_URL}\"}}"
+        "{\"data\":{\"HANDOFF_ENABLED\":\"true\",\"HANDOFF_API_URL\":\"${HANDOFF_API_URL}\",\"HANDOFF_PROVIDER_FILE\":\"${HANDOFF_PROVIDER_FILE}\",\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\",\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"true\",\"AE_API_URL\":\"${HANDOFF_API_URL}\"}}"
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/ai-rca-agent
-    echo "   Handoff: enabled (hand-over=${HANDOFF_HAND_OVER}, mcp=${HANDOFF_API_URL})"
+    echo "   Handoff: enabled (mcp=${HANDOFF_API_URL})"
     echo "   Provider descriptor: ${HANDOFF_PROVIDER_FILE}"
     echo "   Report sink: ${REPORT_SINK:-<none>} → ${REPORT_SINK_URL}"
 else
@@ -803,13 +805,17 @@ spec:
         # The provider descriptor rides alongside the skill, for the same reason:
         # both are the receiving platform's, both change without an SRE image
         # rebuild, and the agent refuses to start the handoff without the
-        # descriptor — its argument names are what make a filed issue dedupe and
-        # get handed over at all.
+        # descriptor — its header names are what let the agent's identity
+        # headers reach aep-mcp-server correctly — get one wrong and every
+        # incident falls back to whatever the model supplied.
         PROVIDER_DESC="$SCRIPT_DIR/../../services/aep-mcp-server/handoff/provider.json"
         if [ ! -f "$PROVIDER_DESC" ]; then
             echo "❌ handoff provider descriptor not found at $PROVIDER_DESC"
             echo "   HANDOFF_ENABLED is on, and the agent refuses to start the handoff"
-            echo "   without it — it would otherwise file issues with no dedupe key."
+            echo "   without it — without it the agent cannot name its identity"
+            echo "   headers correctly (a dedupe key is still derived, just from"
+            echo "   whatever componentName the model supplied, not the intended"
+            echo "   identity source)."
             exit 1
         fi
         kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-handoff-provider \

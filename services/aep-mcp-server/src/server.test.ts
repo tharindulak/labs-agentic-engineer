@@ -24,7 +24,7 @@
  */
 
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 
 import { createAepMcpServer } from "./server.js";
 import { HEADER_COMPONENT, HEADER_PROJECT, HEADER_SIGNATURE, readIncidentIdentity } from "./handoffContext.js";
@@ -95,4 +95,54 @@ test("identity headers resolve to the values aep-api is sent", async () => {
       },
     },
   ]);
+});
+
+test("a search scoped away from the model's project by the incident header leaves a trace", async () => {
+  const { identity } = readIncidentIdentity({ [HEADER_PROJECT]: "myproj" });
+  mock.method(globalThis, "fetch", async () => new Response(JSON.stringify([]), { status: 200 }));
+  const written: string[] = [];
+  mock.method(process.stderr, "write", (chunk: string) => {
+    written.push(String(chunk));
+    return true;
+  });
+
+  try {
+    const server = createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, { identity, adopt: false });
+    const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+    const handler = registered["ae_search_related_issues"]!.handler;
+
+    await handler({ project: "wrongproj" });
+
+    assert.ok(
+      written.some((line) => line.includes("wrongproj") && line.includes("overridden by the incident header")),
+      // Same asymmetry the create path already logs via resolveHandoff's
+      // notes — a search scoped away from the model's project should leave
+      // the same kind of trace.
+      `expected a note about the project override, got: ${JSON.stringify(written)}`,
+    );
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("no note is logged when the search project already matches the incident header", async () => {
+  const { identity } = readIncidentIdentity({ [HEADER_PROJECT]: "myproj" });
+  mock.method(globalThis, "fetch", async () => new Response(JSON.stringify([]), { status: 200 }));
+  const written: string[] = [];
+  mock.method(process.stderr, "write", (chunk: string) => {
+    written.push(String(chunk));
+    return true;
+  });
+
+  try {
+    const server = createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, { identity, adopt: false });
+    const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+    const handler = registered["ae_search_related_issues"]!.handler;
+
+    await handler({ project: "myproj" });
+
+    assert.deepEqual(written, []);
+  } finally {
+    mock.restoreAll();
+  }
 });

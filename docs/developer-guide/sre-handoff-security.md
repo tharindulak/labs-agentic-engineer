@@ -28,7 +28,7 @@ flowchart TB
 
   subgraph Z2["Zone 2 — AEP · holds every credential"]
     direction LR
-    MCP["aep-mcp-server<br/>stateless · owns no credential<br/>401 without Authorization"]
+    MCP["aep-mcp-server<br/>stateless · owns no credential<br/>401 without Authorization<br/>reads X-AEP-Incident-* headers"]
     API["aep-api<br/>verify JWT · org from ouHandle<br/>tenant gate = enforce"]
     GHC[("per-org GitHub<br/>App / PAT")]
     MCP --> API --> GHC
@@ -43,7 +43,7 @@ flowchart TB
     CA --- SKL
   end
 
-  RCA == "bearer forwarded<br/>aud=openchoreo-rca-agent" ==> MCP
+  RCA == "bearer forwarded<br/>aud=openchoreo-rca-agent<br/>+ X-AEP-Incident-* headers" ==> MCP
   API == "dispatch + scoped credential" ==> CA
   CA == "push branch · open PR" ==> GH["GitHub"]
   GHC -.-> GH
@@ -142,10 +142,11 @@ mux.Handle("/api/", jwt(ensureOrg(stampGateMode(apiV1))))
 
 ```mermaid
 flowchart LR
-  REQ["SRE agent<br/>Authorization: Bearer"]
+  REQ["SRE agent<br/>Authorization: Bearer<br/>+ X-AEP-Incident-Project/Component/Signature"]
 
   subgraph MCPS["aep-mcp-server :3400<br/>doorman, owns no credential"]
     M1{"header<br/>present?"}
+    M2["incident identity headers<br/>parsed → dedupe namespace<br/>(not an auth check — see §6)"]
   end
 
   subgraph EDGE["aep-api public edge — jwt · ensureOrg · stampGateMode · apiV1"]
@@ -166,6 +167,7 @@ flowchart LR
   REQ --> M1
   M1 -- "no" --> X1
   M1 -- "yes — forward the bearer VERBATIM" --> J1
+  M1 -- "yes" --> M2
   J1 -- "bad signature · expired · wrong iss/aud" --> X2
   T1 -- "no claim, mode = enforce" --> X3
   T1 -- "yes — bind org into context" --> H
@@ -356,9 +358,11 @@ this problem (exfiltration via fetch or search). The inbound half is open.
   GitHub credential.
 - `dedupeKey` is an AEP-internal field and is stripped before the request reaches
   GitHub (`internal/sourcecontrol/issue_service.go:189`).
-- `aep-mcp-server` performs **no logging at all** in its source. The bearer
-  therefore cannot leak through its logs — and equally, it produces no audit
-  trail (see §7).
+- `aep-mcp-server` logs diagnostic notes to stderr (`src/main.ts`,
+  `src/server.ts`) when an identity header is unreadable or overrides a
+  model-supplied argument. That is a real, if thin, audit trail at the
+  boundary — but it is never the bearer: the token itself is never logged,
+  only forwarded (see §7 for what this trail does and does not cover).
 - Coding-agent credentials never appear in a git URL or in `argv`; `redact.go`
   is a shape-based second line for anything forwarded to a console build log.
 
@@ -389,11 +393,17 @@ What is recorded:
 - The `milestone_runs` / `run_cycles` rows for the incident run the adoption started.
 - The console Alerts surface, when `AE_PUBLISH_REPORTS` is on.
 - GitHub's own trail: issue creation, labels, PR, merge commit.
+- `aep-mcp-server` writes stderr notes at the boundary the SRE agent actually
+  crosses: an identity header that was unreadable, or that overrode a
+  model-supplied `project`/`componentName`. This is process stderr, not a
+  structured or persisted log — there is no store, no query surface, and
+  nothing correlates it back to a specific incident after the fact.
 
 Gaps:
 
-- `aep-mcp-server` logs nothing, so there is no record at the boundary the SRE
-  agent actually crosses — only aep-api's own logs downstream of it.
+- `aep-mcp-server`'s stderr notes are not persisted or queryable, so they do
+  not substitute for a real audit trail — only aep-api's logs downstream of it
+  are.
 - The `observer → /analyze` call is unauthenticated, so an analysis cannot be
   attributed to a caller.
 
