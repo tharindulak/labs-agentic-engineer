@@ -18,8 +18,10 @@
 
 /**
  * The handoff provider descriptor is AEP's vocabulary, shipped to the SRE agent
- * so that agent holds none of our names. These tests pin it against the tools
- * this server actually registers.
+ * so that agent holds none of our names. These tests pin its tool names against
+ * what server.ts actually registers, and its incident-header names against what
+ * handoffContext.ts actually reads — two independent artifacts that must agree,
+ * where a drift is otherwise silent.
  *
  * Why here and not in the agent's suite: the agent validates the descriptor's
  * SHAPE, which is its business, but only this repo knows whether the names in it
@@ -27,10 +29,9 @@
  * repo asserting AEP's field names would be the coupling this descriptor exists
  * to remove.
  *
- * The failure it catches is silent by nature. Rename `dedupeKey` in server.ts
- * without editing the descriptor and nothing breaks loudly — the agent stops
- * sending an idempotency key, and every recurrence of every incident files a
- * fresh issue.
+ * The failure it catches is silent by nature. Rename a tool in server.ts
+ * without editing the descriptor and nothing breaks loudly — the SRE agent
+ * keeps calling the old name, and every handoff fails.
  */
 
 import assert from "node:assert/strict";
@@ -38,7 +39,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { HANDOFF_LABELS, HEADER_COMPONENT, HEADER_PROJECT, HEADER_SIGNATURE } from "./handoffContext.js";
+import { HEADER_COMPONENT, HEADER_PROJECT, HEADER_SIGNATURE } from "./handoffContext.js";
 
 const descriptor = JSON.parse(
   readFileSync(new URL("../handoff/provider.json", import.meta.url), "utf8"),
@@ -88,16 +89,37 @@ test("the answer fields the agent reads are ones aep-api returns", () => {
   assert.ok(Array.isArray(answers["facts"]), "answer_fields.facts must be a list");
 });
 
-test("the provenance label is the one AE gates on", () => {
-  // `sre-agent` is load-bearing: aep-api's recurrence lookup queries GitHub
-  // with the dedupe label AND this one together
-  // (internal/sourcecontrol/issue_service.go). It is no longer a descriptor
-  // field — handoffContext.ts derives it server-side for every issue this
-  // server files — so this pins it there instead.
-  assert.ok(
-    HANDOFF_LABELS.includes("sre-agent"),
-    "the sre-agent label gates recurrence handling and must be applied",
+test("the descriptor's tool names are exactly the ones server.ts registers", () => {
+  // Same shape as the incident-headers cross-check above: two independent,
+  // hand-maintained artifacts that must agree, where a drift is silent.
+  // Rename a tool in server.ts without updating the descriptor and nothing
+  // throws — the mounted descriptor still tells the SRE agent to call the old
+  // name, and every handoff fails calling a tool that no longer exists.
+  const registered = [...serverSrc.matchAll(/registerTool\(\s*\n?\s*"([^"]+)"/g)].map(
+    (m) => m[1],
   );
+  assert.ok(
+    registered.length > 0,
+    "found no registerTool(\"...\") calls in server.ts — the pattern this test matches on " +
+      "may have moved; update the regex rather than letting this pass silently",
+  );
+
+  const described = [descriptor["tools"]["create_issue"], descriptor["tools"]["search_related"]];
+
+  for (const tool of described) {
+    assert.ok(
+      registered.includes(tool),
+      `descriptor names tool "${tool}", which server.ts does not register ` +
+        `(server.ts has: ${registered.join(", ")}) — the descriptor is stale`,
+    );
+  }
+  for (const tool of registered) {
+    assert.ok(
+      described.includes(tool),
+      `server.ts registers tool "${tool}", which the descriptor does not name ` +
+        `(descriptor has: ${described.join(", ")}) — the descriptor is stale`,
+    );
+  }
 });
 
 test("the descriptor carries no fields the agent is meant to decide", () => {
