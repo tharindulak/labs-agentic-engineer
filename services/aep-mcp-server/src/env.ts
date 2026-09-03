@@ -50,6 +50,29 @@ export function intEnv(value: string | undefined, fallback: number): number {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
+/**
+ * A boolean env var, tolerant by design: anything that is not a recognised
+ * literal keeps the fallback. A switch that fails closed on a typo would stop
+ * every handover silently, which is worse than the typo.
+ */
+export function boolEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const v = value.trim().toLowerCase();
+  if (v === "false") return false;
+  if (v === "true") return true;
+  return fallback;
+}
+
+/**
+ * AEP_HANDOFF_ADOPT: whether an issue filed through this server is handed to
+ * the coding agent. The operator's switch, applied here rather than accepted as
+ * a tool argument — a flag an LLM can populate is a policy an LLM can flip.
+ */
+export function loadHandoffAdopt(): boolean {
+  if (!process.env.AEP_HANDOFF_ADOPT) loadDotenv();
+  return boolEnv(process.env.AEP_HANDOFF_ADOPT, true);
+}
+
 /** Returns AEP_API_BASE_URL (e.g. http://aep-api:9090). Throws when unset. */
 export function loadAepApiBaseUrl(): string {
   if (!process.env.AEP_API_BASE_URL) loadDotenv();
