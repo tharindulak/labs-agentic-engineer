@@ -457,9 +457,12 @@ func (a opsIssueEscalator) FileAndDispatch(
 ) (ops.FiledIssue, error) {
 	adoption, err := a.adopter.CreateAndAdopt(ctx, orgID, projectID, componentName,
 		sourcecontrol.CreateIssueRequest{
-			Title:     title,
-			Body:      body,
-			Labels:    []string{"bug", "sre-agent"},
+			Title: title,
+			Body:  body,
+			// LabelSREAgent, not a literal: aep-api's own recurrence lookup
+			// filters on it, and aep-mcp-server carries the one copy Go cannot
+			// share (its HANDOFF_LABELS). A test pins the set.
+			Labels:    []string{"bug", sourcecontrol.LabelSREAgent},
 			DedupeKey: dedupeKey,
 		})
 	if err != nil {
