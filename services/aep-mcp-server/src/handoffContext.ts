@@ -47,8 +47,10 @@ export const HEADER_SIGNATURE = "x-aep-incident-signature";
  * lookup queries GitHub with the dedupe label AND this one together
  * (internal/sourcecontrol/issue_service.go), so an issue filed without it drops
  * out of recurrence detection and a real recurrence reads as a first filing.
- * The authoritative name is `LabelSREAgent` in that file; this is the one copy
- * TypeScript cannot import, and a Go test asserts the two agree.
+ * The authoritative name is `LabelSREAgent`, declared in
+ * internal/sourcecontrol/issue_recurrence.go; this is the one copy TypeScript
+ * cannot import, so a test in handoffContext.test.ts reads that declaration
+ * out of the Go source and pins this copy against it.
  */
 export const HANDOFF_LABELS: readonly string[] = ["bug", "sre-agent"];
 

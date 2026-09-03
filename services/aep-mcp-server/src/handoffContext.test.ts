@@ -24,7 +24,9 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   HANDOFF_LABELS,
@@ -125,4 +127,27 @@ test("a mixed-case component header survives with its case intact", () => {
   const { identity } = readIncidentIdentity({ [HEADER_COMPONENT]: "Service1" });
 
   assert.equal(identity.component, "Service1");
+});
+
+// aep-api's recurrence lookup queries GitHub with LabelSREAgent AND the dedupe
+// label together (issue_service.go), so this copy has to keep matching that
+// declaration exactly, not merely resemble it. Resolved relative to this file
+// so the assertion holds regardless of where the suite is invoked from.
+const LABEL_SRE_AGENT_SOURCE = fileURLToPath(
+  new URL("../../aep-api/internal/sourcecontrol/issue_recurrence.go", import.meta.url),
+);
+
+test("HANDOFF_LABELS is pinned to aep-api's LabelSREAgent, not merely a copy of it", () => {
+  const source = readFileSync(LABEL_SRE_AGENT_SOURCE, "utf8");
+  const match = /LabelSREAgent\s*=\s*"([^"]+)"/.exec(source);
+
+  assert.ok(
+    match,
+    `could not find the LabelSREAgent declaration in ${LABEL_SRE_AGENT_SOURCE} — ` +
+      "it may have moved or been renamed; update this test's path/pattern to match",
+  );
+  const labelSREAgent = match[1];
+  assert.ok(labelSREAgent, "the LabelSREAgent pattern matched but captured no value");
+
+  assert.ok(HANDOFF_LABELS.includes(labelSREAgent));
 });
