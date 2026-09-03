@@ -34,8 +34,8 @@ func (f adopterFunc) CreateAndAdopt(
 	return f(ctx, orgID, projectID, componentName, req)
 }
 
-// TestEscalationLabelsMatchTheHandoffSet pins the label set both routes into
-// the adopter must produce.
+// TestFileAndDispatch_LabelsMatchTheHandoffSet pins the label set both routes
+// into the adopter must produce.
 //
 // The two routes are the REST create-issue path (an SRE agent filing through
 // aep-mcp-server) and this escalator. They must be indistinguishable: aep-api's
@@ -43,7 +43,7 @@ func (f adopterFunc) CreateAndAdopt(
 // without it drops out of recurrence detection and a real recurrence reads as a
 // first filing. The MCP server carries the only copy Go cannot share; its
 // HANDOFF_LABELS must equal this.
-func TestEscalationLabelsMatchTheHandoffSet(t *testing.T) {
+func TestFileAndDispatch_LabelsMatchTheHandoffSet(t *testing.T) {
 	var got sourcecontrol.CreateIssueRequest
 	esc := opsIssueEscalator{adopter: adopterFunc(func(
 		_ context.Context, _, _, _ string, req sourcecontrol.CreateIssueRequest,
