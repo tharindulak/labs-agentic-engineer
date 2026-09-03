@@ -43,6 +43,12 @@ export interface IssueResult {
   adopted?: boolean;
   /** Why adoption did not happen, when it was asked for and did not. The issue still exists as a ledger entry. */
   adoptionError?: string;
+  /** True when the dedupe key matched a CLOSED issue: the same incident recurring after a fix was merged. That issue was reopened with this call's body appended. */
+  reopened?: boolean;
+  /** Which attempt this is — 1 on a first filing, 2 on the first recurrence. Present with `reopened`, and on a dedupe onto an issue that already carries recurrences. */
+  recurrence?: number;
+  /** True when nothing was filed because an issue under this key already carries a no-change verdict: somebody with the repo in front of them already decided this signature needs no code change. */
+  suppressed?: boolean;
 }
 
 export interface IssueInfo {
