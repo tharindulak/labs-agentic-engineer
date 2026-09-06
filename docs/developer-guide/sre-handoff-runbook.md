@@ -42,15 +42,19 @@ docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
 ```bash
 # Deploy an RCA-agent image that includes the handoff stage.
 # Use the same repo:tag as RCA_IMAGE_REPO:RCA_IMAGE_TAG in
-# scripts/setup-observability.sh — tharindulak/sre-agent:recurrence — so a later
-# setup-observability.sh re-run picks up this local build instead of pulling.
-# (That script falls back to :hand0ff-new and then :anthropic-patched when the
-# preferred tag is neither built nor pullable, and says so loudly.)
-cd <openchoreo-repo>/agents/sre-agent
-docker build -t tharindulak/sre-agent:recurrence .
-k3d image import tharindulak/sre-agent:recurrence -c <cluster>
+# scripts/setup-observability.sh — tharindulak/sre-agent:handoff-provider — so a
+# later setup-observability.sh re-run picks up this local build instead of
+# pulling. (When the preferred tag is neither built nor pullable that script
+# walks back through :report-sink, :recurrence, :hand0ff-new and finally
+# :anthropic-patched, printing what each one costs you.)
+#
+# Build context is agents/, NOT agents/sre-agent: the Dockerfile pulls in
+# siblings from the parent directory.
+cd <openchoreo-repo>/agents
+docker build -t tharindulak/sre-agent:handoff-provider -f sre-agent/Dockerfile .
+k3d image import tharindulak/sre-agent:handoff-provider -c <cluster>
 kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
-  "*=tharindulak/sre-agent:recurrence"
+  "*=tharindulak/sre-agent:handoff-provider"
 
 # Enable the handoff (AE_AUTO_DISPATCH=false → issue-only; a human adopts it later)
 kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \

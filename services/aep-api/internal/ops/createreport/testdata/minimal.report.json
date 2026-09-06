@@ -1,0 +1,11 @@
+{
+  "alert_context": {
+    "alert_name": "an alert",
+    "component": "c",
+    "project": "p"
+  },
+  "result": {
+    "explanation": "No root cause could be identified."
+  },
+  "summary": "Something happened."
+}

@@ -133,7 +133,7 @@ sequenceDiagram
   alt classification unambiguous from status
     RCA->>RCA: classify_handoff_shortcut → config_level / none<br/>(no LLM call, no issue)
   else judgment needed
-    Note over RCA: HANDOFF_AGENT + issue-fix skill
+    Note over RCA: HANDOFF_AGENT + coding-agent-handoff skill
     RCA->>MCP: ae_search_related_issues(project, query)
     MCP->>API: GET /api/v1/projects/{p}/issues
     API-->>RCA: existing issues (full bodies)
@@ -192,7 +192,7 @@ flowchart TD
   B -- "all revised" --> C["classification = config_level<br/>NO LLM CALL"]
   B -- "any suggested · status missing" --> L["HANDOFF_AGENT (LLM)"]
 
-  L --> S["load_skill('issue-fix')"]
+  L --> S["load_skill('coding-agent-handoff')"]
   S --> T1["ae_search_related_issues<br/>LLM judges relevance,<br/>writes a Related-issues section"]
   T1 --> T2["LLM calls ae_create_issue"]
 
@@ -234,14 +234,14 @@ because a live run got it wrong — the git history is the evidence trail.
 ```mermaid
 flowchart LR
   subgraph AEP["AEP repo — owns the skill"]
-    SK["services/aep-mcp-server/<br/>skills/issue-fix/<br/>SKILL.md"]
+    SK["services/aep-mcp-server/<br/>skills/coding-agent-handoff/<br/>SKILL.md"]
   end
   subgraph SCRIPT["setup-observability.sh step 3d"]
-    CM["ConfigMap<br/>rca-agent-skill-issue-fix"]
+    CM["ConfigMap<br/>rca-agent-skill-coding-agent-handoff"]
     PATCH["patch deploy/ai-rca-agent:<br/>volume + mount + env"]
   end
   subgraph POD["ai-rca-agent pod"]
-    MOUNT["/etc/rca-agent/skills/<br/>issue-fix/SKILL.md"]
+    MOUNT["/etc/rca-agent/skills/<br/>coding-agent-handoff/SKILL.md"]
     ENV["EXTERNAL_SKILLS_DIR=<br/>/etc/rca-agent/skills"]
     LOADER["skills.py — external dir<br/>searched BEFORE<br/>built-in src/skills"]
   end
@@ -255,12 +255,29 @@ flowchart LR
 
 Three coupled preconditions, any one of which fails quietly:
 
-- image tag ≥ `handoff-v15` (has the loader, and has the baked-in copy removed),
-- the ConfigMap exists and its source file was found by the script,
+- the image carries the external-skills loader and no baked-in copy of the skill,
+- the ConfigMap exists and its source files were found by the script,
 - `EXTERNAL_SKILLS_DIR` is set on the deployment.
 
 Get two of three and you get either a stale skill silently winning or
-`Skill 'issue-fix' not found`.
+`Skill 'coding-agent-handoff' not found`.
+
+The first precondition used to read "image tag ≥ `handoff-v15`". That version
+scheme belongs to `tharindulak/openchoreo-sre-agent`, which has not been pushed
+since 2026-07-22; the installer uses `tharindulak/sre-agent`, whose tags are
+feature names (`handoff-provider`) that no `≥` can order. Check the image
+itself. It ships without a shell, so read its filesystem rather than exec into
+it:
+
+```bash
+docker create --name probe tharindulak/sre-agent:<tag>
+docker export probe | tar -tf - | grep -E '^app/src/(agent/skills\.py|skills/)'
+docker rm -f probe
+```
+
+Expect `app/src/agent/skills.py` (the loader) and **no** `app/src/skills/` (the
+baked-in library that would otherwise win over the mount). Both confirmed on
+`handoff-provider`.
 
 ### 2.5 Security
 
@@ -321,7 +338,7 @@ it is the deliverable for this lane
 
 ### L4 — Determinism split
 **Entry:** `handoff_logic.py` (whole file) · `handoff_agent_prompt.j2` ·
-`skills/issue-fix/SKILL.md` · `tests/test_fingerprint.py`, `tests/test_skills.py`
+`skills/coding-agent-handoff/SKILL.md` · `tests/test_fingerprint.py`, `tests/test_skills.py`
 
 - For each wrapper in §2.3's `WC` / `WD` boxes: is it enforced in code, *and* is the
   now-redundant prompt instruction either removed or explicitly kept as
@@ -446,8 +463,8 @@ misleading. Fix the doc as part of the review, and note the flip-flop
 
 ### F3 — Personal Docker Hub images in the default install path
 
-`setup-observability.sh` defaults to `RCA_IMAGE_REPO=tharindulak/openchoreo-sre-agent`
-(`RCA_IMAGE_TAG=handoff-v16`), and pins a patched third-party adapter:
+`setup-observability.sh` defaults to `RCA_IMAGE_REPO=tharindulak/sre-agent`
+(`RCA_IMAGE_TAG=handoff-provider`), and pins a patched third-party adapter:
 `docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive`.
 
 Supply-chain and bus-factor risk in a script anyone on the team runs. The
@@ -569,7 +586,7 @@ Read for the seam, not for the diff. Roughly 90 minutes:
 4. `src/agent/agent.py` `run_analysis()` (from ~line 311) — the stage pipeline.
 5. `src/agent/handoff_logic.py` — **the whole file, closely.** Every function
    here is a scar from a live failure; the docstrings are the incident log.
-6. `src/templates/prompts/handoff_agent_prompt.j2` + `skills/issue-fix/SKILL.md`
+6. `src/templates/prompts/handoff_agent_prompt.j2` + `skills/coding-agent-handoff/SKILL.md`
    — the judgment half, read against (5) for redundancy and contradiction.
 7. `services/aep-mcp-server/src/server.ts` + `aepClient.ts` — the contract.
 8. `delivery/task/commands.go` `PromoteAndExecute` — then ask F10.
@@ -599,7 +616,7 @@ Follow `sre-handoff-runbook.md`, then capture:
 kubectl logs -n openchoreo-observability-plane deploy/ai-rca-agent | grep "MCP connection"
 #    expect the ae_* tools included in the loaded count
 kubectl exec -n openchoreo-observability-plane deploy/ai-rca-agent -- \
-  cat /etc/rca-agent/skills/issue-fix/SKILL.md | head -5   # skill mount is live
+  cat /etc/rca-agent/skills/coding-agent-handoff/SKILL.md | head -5   # skill mount is live
 curl -s localhost:3401/healthz                              # {"status":"ok"}
 docker logs aep-api 2>&1 | grep "Inbound JWT verifier"      # audience includes rca agent
 

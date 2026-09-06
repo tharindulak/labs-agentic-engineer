@@ -332,7 +332,7 @@ agent's prompt. So:
 > agent that holds a write credential.
 
 No delimiting, truncation, or instruction-hierarchy framing was found in
-`skills/issue-fix/SKILL.md` on the reviewed SHAs. Combined with §4's auto-merge,
+`skills/coding-agent-handoff/SKILL.md` on the reviewed SHAs. Combined with §4's auto-merge,
 the worst case is that repository-visible text influences code that deploys
 without review.
 
@@ -412,13 +412,13 @@ Gaps:
 ## 8. Supply chain
 
 - `setup-observability.sh` defaults to a **personal** Docker Hub namespace
-  (`tharindulak/openchoreo-sre-agent:handoff-v16`) and pins a **forked**
+  (`tharindulak/sre-agent:handoff-provider`) and pins a **forked**
   third-party adapter (`tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive`).
   The fork has a legitimate reason (case-insensitive alert matching, pending
   upstream); the namespace is the problem. Both should move to a WSO2/OpenChoreo
   registry, and the fork needs an upstream tracking issue with a drop condition.
   Tracked as **F3**.
-- The `issue-fix` skill is delivered at deploy time from a ConfigMap rendered out
+- The `coding-agent-handoff` skill is delivered at deploy time from a ConfigMap rendered out
   of this repo, and the agent's loader searches the mount **before** its built-in
   copy. Whoever can patch that ConfigMap can change the handoff agent's
   instructions. That is the intended ownership model (AEP owns the skill), but it

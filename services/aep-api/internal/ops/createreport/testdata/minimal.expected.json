@@ -1,0 +1,8 @@
+{
+  "classification": "none",
+  "component": "c",
+  "diagnosis": "Something happened.\n\n## Analysis\nNo root cause could be identified.",
+  "project": "p",
+  "summary": "Something happened.",
+  "title": "an alert"
+}

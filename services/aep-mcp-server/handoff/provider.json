@@ -2,7 +2,7 @@
   "_comment": [
     "AEP's vocabulary for the OpenChoreo SRE agent's handoff stage. The agent",
     "supplies the mechanism — which answers get recorded — and this file supplies",
-    "OUR names for them. It ships to the agent the same way issue-fix/SKILL.md",
+    "OUR names for them. It ships to the agent the same way coding-agent-handoff/SKILL.md",
     "does: rendered into a ConfigMap and mounted, with HANDOFF_PROVIDER_FILE",
     "pointing at it.",
     "",

@@ -31,7 +31,7 @@ import (
 // declined on a high-confidence root cause that still carried code-level actions
 // nobody addressed.
 //
-// Guidance did not hold. The `issue-fix` skill already names that exact scenario
+// Guidance did not hold. The `coding-agent-handoff` skill already names that exact scenario
 // as the likeliest way to get the decision wrong, and c82f1fb8 was declined by an
 // agent running the updated skill. So the rule is enforced HERE instead: this is
 // the one place AEP sees every report, on a path the handoff cannot skip, which
@@ -61,12 +61,12 @@ import (
 // prevent.
 
 // suggestedStatus marks an action the remediation agent could NOT express as an
-// OpenChoreo ReleaseBinding change. Per the skill that is "a strong signal ...
-// it is not a config problem", which is what makes it the code-level marker.
+// OpenChoreo ReleaseBinding change. In the skill's words, remediation could not
+// express it as config — which is what makes it the code-level marker.
 const suggestedStatus = "suggested"
 
-// revisedStatus marks an action already actionable as configuration. Present
-// only so the escalated issue can mention it as context — never as work.
+// revisedStatus marks an action configuration already handled. Present only so
+// the escalated issue can mention it as context — never as work.
 const revisedStatus = "revised"
 
 // escalationDecision is why a report was or was not escalated. The reason is

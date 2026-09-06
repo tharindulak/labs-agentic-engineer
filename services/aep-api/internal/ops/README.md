@@ -52,9 +52,11 @@ nobody is shown is a requirement nobody can correct. The coding agent has the re
 decides; `not_planned` is a first-class answer (ADR-0023).
 
 The rule lives here because this is the only path AEP sees every report on and the handoff cannot
-skip it. Guidance was tried first and did not hold: the `issue-fix` skill already names this exact
-scenario as the likeliest way to get the decision wrong, and a report was still declined by an agent
-running the updated skill.
+skip it. The skill tells the handoff that the classification is *settled* before its stage runs;
+escalation is what makes the filing settled too, rather than merely requested. Guidance was tried
+first and did not hold: the `coding-agent-handoff` skill already names this exact scenario as the
+likeliest way to get the decision wrong, and a report was still declined by an agent running the
+updated skill.
 
 Three properties the escalated issue must keep:
 - **A `## Before you change a default` section** naming `specs/validation/validation-criteria.json`

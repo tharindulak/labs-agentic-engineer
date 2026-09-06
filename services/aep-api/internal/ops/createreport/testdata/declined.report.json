@@ -1,0 +1,84 @@
+{
+  "alert_context": {
+    "alert_id": "alert-9",
+    "alert_name": "service1 p99 latency > 5s",
+    "component": "demohello-service1",
+    "environment": "dev",
+    "project": "demohello"
+  },
+  "handoff": {
+    "adopted": false,
+    "classification": "code_level",
+    "created_issue_number": null,
+    "deduped": false,
+    "rationale": "The delay is deliberate, but making it configurable hardens it.",
+    "recurrence": 0,
+    "related_issues": [
+      {
+        "number": 4,
+        "title": "Implement service2 slow backend",
+        "url": "https://gh/x/4"
+      },
+      {
+        "number": 9,
+        "title": "No URL on this one"
+      }
+    ],
+    "reopened": false,
+    "ruled_out": [
+      {
+        "index": 1,
+        "justification": "Remediation revised it.",
+        "reason": "config_handled"
+      },
+      {
+        "index": 2,
+        "justification": "A dashboard is not a defect.",
+        "reason": "pure_advice"
+      }
+    ]
+  },
+  "result": {
+    "recommendations": {
+      "observability_recommendations": [
+        "raise the log level on service2"
+      ],
+      "recommended_actions": [
+        {
+          "description": "Investigate and remove the artificial delay in service2.",
+          "rationale": "The delay is the proximate cause of every timeout.",
+          "status": "suggested"
+        },
+        {
+          "description": "Increase service1's client timeout via an env var override.",
+          "status": "revised"
+        },
+        {
+          "description": "Consider adding a latency dashboard."
+        }
+      ]
+    },
+    "root_causes": [
+      {
+        "analysis": "Every failing span shows service2 at 7.7-7.9s.",
+        "confidence": "high",
+        "summary": "service2 responds in ~7.8s, past service1's 5s client timeout."
+      },
+      {
+        "summary": "No retry or backoff on the service1 -> service2 call"
+      }
+    ],
+    "timeline": [
+      {
+        "component": "service1",
+        "event": "p99 crosses 5s",
+        "timestamp": "2026-08-30T10:00:00Z"
+      },
+      {
+        "event": "alert fires",
+        "timestamp": "2026-08-30T10:12:00Z"
+      }
+    ]
+  },
+  "summary": "service1 checkout latency breached its 5s SLO for 12 minutes."
+}

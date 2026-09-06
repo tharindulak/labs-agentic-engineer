@@ -130,7 +130,7 @@
 #                       (src/agent/handoff_logic.py), never left to the prompt.
 #                   It also carries the two earlier requirements that are easy to
 #                   regress: the EXTERNAL_SKILLS_DIR loader, so the AEP-owned
-#                   issue-fix skill mounted by step 3d below is what actually runs
+#                   coding-agent-handoff skill mounted by step 3d below is what actually runs
 #                   (an image with a baked-in copy IGNORES that mount), and a
 #                   configurable HANDOFF_MCP_PATH (default /mcp) so the agent reaches
 #                   the standalone aep-mcp-server on :3401 instead of crash-
@@ -268,7 +268,7 @@ echo "✅ ExternalSecrets applied"
 # then show a third attempt as though it were the first.
 # The image must be built from the SRE branch that (a) adds the
 # EXTERNAL_SKILLS_DIR loader (src/agent/skills.py + src/config.py), (b) removes
-# the baked-in src/skills/issue-fix — without both, step 3d's mount is inert —
+# the baked-in src/skills/coding-agent-handoff — without both, step 3d's mount is inert —
 # (c) makes the handoff MCP path configurable (HANDOFF_MCP_PATH, default /mcp) so the
 # boot MCP test reaches the standalone aep-mcp-server on :3401, and (d) carries
 # the one-call handoff: ae_create_issue with adopt/componentName, and no
@@ -283,7 +283,7 @@ echo "1️⃣b RCA agent image + secret"
 # Preferred tag `report-sink` (= RCA_IMAGE_TAG default below) carries everything
 # `recurrence` did — the Anthropic structured-output fix, the one-call AEP
 # handoff stage (HANDOFF_ENABLED), the EXTERNAL_SKILLS_DIR loader that reads the
-# AEP-mounted issue-fix skill from step 3d, the configurable HANDOFF_MCP_PATH
+# AEP-mounted coding-agent-handoff skill from step 3d, the configurable HANDOFF_MCP_PATH
 # (default /mcp), and the recurrence contract (ADR-0021) — plus the report sink:
 # the agent publishes its own report document and aep-api derives every column
 # from it, so the agent holds no aep-api field names, endpoint path or Markdown
@@ -746,13 +746,15 @@ echo "✅ ai-rca-agent volume/env wired for the dynamic Anthropic key"
 echo "   The RCA agent's own ExternalSecret (against the org's Anthropic KV path) fills this mount."
 echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 1b."
 
-# ── 3d. AEP-owned handoff skill (issue-fix) — deploy-time mount ───────────
-# The handoff sub-agent loads the 'issue-fix' skill (classify config-vs-code,
-# dedupe/search related issues, file one issue, dispatch). Its content IS
-# AEP's contract (aep:* / sre-agent labels, taskmeta block, dedupe keys,
-# unprefixed component names, dispatch rules), so AEP owns it — canonical
-# source: services/aep-mcp-server/skills/issue-fix/SKILL.md, right here in
-# this repo. The SRE agent does NOT bake it into its image and does NOT fetch
+# ── 3d. AEP-owned handoff skill (coding-agent-handoff) — deploy-time mount ───────────
+# The handoff sub-agent loads the 'coding-agent-handoff' skill (search related issues,
+# file the one issue that hands a code-level root cause to the coding agent).
+# It neither classifies config-vs-code nor dedupes — the agent derives the
+# classification before the stage runs and AEP derives the dedupe key
+# server-side. Its content IS AEP's contract (aep:* / sre-agent labels,
+# taskmeta block, dedupe keys, unprefixed component names), so AEP owns it —
+# canonical source: services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md, right
+# here in this repo. The SRE agent does NOT bake it into its image and does NOT fetch
 # it at runtime; we materialize it into a ConfigMap and mount it, and the
 # agent's EXTERNAL_SKILLS_DIR points its loader at the mount (searched before
 # the built-in src/skills library). Same "patch the Deployment so it survives
@@ -762,23 +764,37 @@ echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 
 # loads a skill, so there's nothing to mount.
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     echo ""
-    echo "3️⃣d Handoff skill (issue-fix) — ConfigMap + mount"
-    ISSUE_FIX_SKILL="$SCRIPT_DIR/../../services/aep-mcp-server/skills/issue-fix/SKILL.md"
-    if [ ! -f "$ISSUE_FIX_SKILL" ]; then
-        echo "⚠️  issue-fix skill not found at $ISSUE_FIX_SKILL — skipping mount."
-        echo "    HANDOFF_ENABLED is on, so ai-rca-agent will error 'Skill issue-fix not found'"
+    echo "3️⃣d Handoff skill (coding-agent-handoff) — ConfigMap + mount"
+    HANDOFF_SKILL_DIR="$SCRIPT_DIR/../../services/aep-mcp-server/skills/coding-agent-handoff"
+    HANDOFF_SKILL="$HANDOFF_SKILL_DIR/SKILL.md"
+    if [ ! -f "$HANDOFF_SKILL" ]; then
+        echo "⚠️  coding-agent-handoff skill not found at $HANDOFF_SKILL — skipping mount."
+        echo "    HANDOFF_ENABLED is on, so ai-rca-agent will error 'Skill coding-agent-handoff not found'"
         echo "    on the handoff stage (best-effort — RCA analysis still completes)."
     else
         # Render deterministically (create --dry-run) then apply, so re-runs are
-        # idempotent and the ConfigMap can be diffed. Key SKILL.md; ConfigMaps
-        # can't have '/' in keys, so the single file lands directly in the mount
-        # dir via items[].path.
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-skill-issue-fix \
-            --from-file=SKILL.md="$ISSUE_FIX_SKILL" \
+        # idempotent and the ConfigMap can be diffed. One key per MARKDOWN file,
+        # named by basename, so a skill that grows sibling reference files (the
+        # usual cure for a long skill: push reference behind a pointer) reaches
+        # the pod whole.
+        #
+        # *.md rather than the whole directory on purpose: a skill folder may also
+        # hold assets meant for humans (a diagram, say), and --from-file on a
+        # directory would base64 them into the ConfigMap — a 300K image is a third
+        # of the 1MiB object limit spent shipping something the agent cannot see.
+        # ConfigMaps can't have '/' in keys either, so the folder stays flat — a
+        # subdirectory is silently skipped, leaving a pointer resolving to nothing.
+        SKILL_KEYS=()
+        for skill_file in "$HANDOFF_SKILL_DIR"/*.md; do
+            [ -f "$skill_file" ] || continue
+            SKILL_KEYS+=(--from-file="$(basename "$skill_file")=$skill_file")
+        done
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-skill-coding-agent-handoff \
+            "${SKILL_KEYS[@]}" \
             --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
-        echo "✅ rca-agent-skill-issue-fix ConfigMap applied (from $ISSUE_FIX_SKILL)"
+        echo "✅ rca-agent-skill-coding-agent-handoff ConfigMap applied (${#SKILL_KEYS[@]} md file(s) from $HANDOFF_SKILL_DIR)"
 
-        # Patch the Deployment: mount the skill at /etc/rca-agent/skills/issue-fix
+        # Patch the Deployment: mount the skill at /etc/rca-agent/skills/coding-agent-handoff
         # and point the loader at /etc/rca-agent/skills. A podSpec change here
         # triggers a rolling update on its own.
         kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
@@ -786,17 +802,22 @@ spec:
   template:
     spec:
       volumes:
-        - name: issue-fix-skill
+        - name: coding-agent-handoff-skill
           configMap:
-            name: rca-agent-skill-issue-fix
-            items:
-              - key: SKILL.md
-                path: SKILL.md
+            name: rca-agent-skill-coding-agent-handoff
+            # items: null projects EVERY key as a file named by its key, so the
+            # mount mirrors the skill folder and a new sibling file needs no
+            # patch change. The explicit null is load-bearing: an earlier run of
+            # this script wrote items[SKILL.md], and a strategic-merge patch that
+            # merely omits the field would leave that list in place — the new
+            # files would be absent from the pod with nothing in the diff to show
+            # it, which is the silent half-mount this whole step guards against.
+            items: null
       containers:
         - name: ai-rca-agent
           volumeMounts:
-            - name: issue-fix-skill
-              mountPath: /etc/rca-agent/skills/issue-fix
+            - name: coding-agent-handoff-skill
+              mountPath: /etc/rca-agent/skills/coding-agent-handoff
               readOnly: true
           env:
             - name: EXTERNAL_SKILLS_DIR
@@ -843,7 +864,7 @@ spec:
 '
         echo "✅ ai-rca-agent volume wired for the provider descriptor (/etc/rca-agent/handoff)"
         echo "✅ ai-rca-agent volume/env wired for the handoff skill (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
-        echo "   Edit the skill in services/aep-mcp-server/skills/issue-fix/, re-run this script"
+        echo "   Edit the skill in services/aep-mcp-server/skills/coding-agent-handoff/, re-run this script"
         echo "   (or re-apply the ConfigMap) and restart the agent — no SRE image rebuild."
     fi
 fi
