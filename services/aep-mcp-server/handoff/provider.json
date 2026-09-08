@@ -22,7 +22,11 @@
     "component": "X-AEP-Incident-Component",
     "signature": "X-AEP-Incident-Signature"
   },
+  "call_arguments": {
+    "action_statuses": "actionStatuses"
+  },
   "answer_fields": {
+    "classification": "classification",
     "issue_number": "number",
     "issue_url": "url",
     "already_filed": "deduped",

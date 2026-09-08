@@ -49,6 +49,8 @@ export interface IssueResult {
   recurrence?: number;
   /** True when nothing was filed because an issue under this key already carries a no-change verdict: somebody with the repo in front of them already decided this signature needs no code change. */
   suppressed?: boolean;
+  /** The handoff classification aep-api derived from `actionStatuses` — code-level, config-level, mixed, or none. Absent when the call sent no statuses. `config-level` is the one value that files without adopting. */
+  classification?: string;
 }
 
 export interface IssueInfo {
@@ -113,6 +115,8 @@ export function createIssue(
     dedupeKey?: string;
     componentName?: string;
     adopt?: boolean;
+    /** One entry per recommended action on the RCA report, in its order, null where the remediation agent set no status. aep-api derives the classification and the adoption from these; omitting the field entirely leaves both alone. */
+    actionStatuses?: (string | null)[];
   },
 ): Promise<IssueResult> {
   return request<IssueResult>(opts, "POST", `/projects/${encodeURIComponent(project)}/issues`, req);

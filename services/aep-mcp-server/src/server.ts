@@ -116,7 +116,8 @@ export function createAepMcpServer(
       title: "Create a GitHub issue via AE",
       description:
         "Create a GitHub issue on a project's repo AND hand it to the AE coding agent. Creating the issue IS the dispatch — there is no second call. " +
-        "Use this for a code-level fix; config-level changes do not belong here. " +
+        "File every report that reaches you. What the work IS, and whether a coding agent gets it, are not yours to decide: pass `actionStatuses` and the platform derives both, answering the classification it chose. " +
+        "A `config-level` answer means the remediation agent already expressed every action as configuration — the issue is still filed, as a ledger entry, and nothing is dispatched over it. " +
         "Deduplication is automatic: this server derives a stable key from the incident this request belongs to, so if an OPEN issue for the same incident exists it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). An issue already carrying a no-change verdict for this incident answers `suppressed: true`, and nothing is created. " +
         "If instead a CLOSED issue with that key is found — the same incident recurring after a fix was merged — it is reopened with this call's body appended as a `## Recurrence <n>` section, moved into the currently deployed version's milestone and handed back to the coding agent; the result then carries `reopened: true` and `recurrence` (which attempt this is). " +
         "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked.",
@@ -131,9 +132,15 @@ export function createAepMcpServer(
           .describe(
             "The component this issue is about. AE's design names it unprefixed ('service1'), and a name carrying its project prefix ('myproject-service1') is resolved to the design name for you, so pass whichever your world uses. Checked before the issue is filed — a name the design carries under neither form fails this call rather than surfacing later inside a coding cycle.",
           ),
+        actionStatuses: z
+          .array(z.string().nullable())
+          .optional()
+          .describe(
+            "The remediation agent's status for each recommended action on this RCA report — one entry per action, in the report's own order. Send null for an action carrying no status; that means the remediation stage did not run, which is PENDING work, and dropping the entry instead would read as an action-free report. The platform derives the handoff classification and the adoption from these and answers the classification back. Omit the field only when there is no RCA report behind the call.",
+          ),
       },
     },
-    async ({ project, title, body, labels, componentName }) => {
+    async ({ project, title, body, labels, componentName, actionStatuses }) => {
       try {
         const resolved = resolveHandoff(
           handoff.identity,
@@ -154,6 +161,11 @@ export function createAepMcpServer(
           ...(resolved.componentName !== undefined ? { componentName: resolved.componentName } : {}),
           ...(resolved.dedupeKey !== undefined ? { dedupeKey: resolved.dedupeKey } : {}),
           adopt: resolved.adopt,
+          // Forwarded only when sent: an absent field tells aep-api to leave
+          // adoption and the dedupe namespace alone, which is what a caller with
+          // no RCA report behind it needs. An empty array is a different claim —
+          // a report with no recommended actions.
+          ...(actionStatuses !== undefined ? { actionStatuses } : {}),
         });
         return textResult(issue);
       } catch (err) {
