@@ -812,14 +812,31 @@ echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 
 # loads a skill, so there's nothing to mount.
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     echo ""
-    echo "3️⃣d Handoff skill (coding-agent-handoff) — ConfigMap + mount"
-    HANDOFF_SKILL_DIR="$SCRIPT_DIR/../../services/aep-mcp-server/skills/coding-agent-handoff"
-    HANDOFF_SKILL="$HANDOFF_SKILL_DIR/SKILL.md"
-    if [ ! -f "$HANDOFF_SKILL" ]; then
-        echo "⚠️  coding-agent-handoff skill not found at $HANDOFF_SKILL — skipping mount."
-        echo "    HANDOFF_ENABLED is on, so ai-rca-agent will error 'Skill coding-agent-handoff not found'"
-        echo "    on the handoff stage (best-effort — RCA analysis still completes)."
-    else
+    echo "3️⃣d Handoff skills — one ConfigMap + mount per skill"
+    HANDOFF_SKILLS_ROOT="$SCRIPT_DIR/../../services/aep-mcp-server/skills"
+    # Every directory holding a SKILL.md is mounted, so a second skill needs no
+    # edit here. EXTERNAL_SKILLS_DIR already points at the PARENT directory, so
+    # the agent's loader finds whatever appears beside the first one — which is
+    # what OpenChoreo's shared skills directory will land as.
+    HANDOFF_SKILL_NAMES=()
+    for skill_dir in "$HANDOFF_SKILLS_ROOT"/*/; do
+        [ -f "${skill_dir}SKILL.md" ] || continue
+        HANDOFF_SKILL_NAMES+=("$(basename "$skill_dir")")
+    done
+    if [ ${#HANDOFF_SKILL_NAMES[@]} -eq 0 ]; then
+        echo "❌ no skill found under $HANDOFF_SKILLS_ROOT (expected <name>/SKILL.md)"
+        echo "   HANDOFF_ENABLED is on, and the stage's whole playbook IS the mounted"
+        echo "   skill. The agent's config validator refuses to start without"
+        echo "   EXTERNAL_SKILLS_DIR, and an empty mount fails load_skills once per"
+        echo "   incident — the report then records only that the stage failed."
+        echo "   Fatal here for the same reason a missing provider descriptor is."
+        exit 1
+    fi
+
+    SKILL_VOLUMES=""
+    SKILL_MOUNTS=""
+    for skill_name in "${HANDOFF_SKILL_NAMES[@]}"; do
+        skill_dir="$HANDOFF_SKILLS_ROOT/$skill_name"
         # Render deterministically (create --dry-run) then apply, so re-runs are
         # idempotent and the ConfigMap can be diffed. One key per MARKDOWN file,
         # named by basename, so a skill that grows sibling reference files (the
@@ -833,66 +850,75 @@ if [ "$HANDOFF_ENABLED" = "true" ]; then
         # ConfigMaps can't have '/' in keys either, so the folder stays flat — a
         # subdirectory is silently skipped, leaving a pointer resolving to nothing.
         SKILL_KEYS=()
-        for skill_file in "$HANDOFF_SKILL_DIR"/*.md; do
+        for skill_file in "$skill_dir"/*.md; do
             [ -f "$skill_file" ] || continue
             SKILL_KEYS+=(--from-file="$(basename "$skill_file")=$skill_file")
         done
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-skill-coding-agent-handoff \
+        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap "rca-agent-skill-$skill_name" \
             "${SKILL_KEYS[@]}" \
             --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
-        echo "✅ rca-agent-skill-coding-agent-handoff ConfigMap applied (${#SKILL_KEYS[@]} md file(s) from $HANDOFF_SKILL_DIR)"
+        echo "✅ rca-agent-skill-$skill_name ConfigMap applied (${#SKILL_KEYS[@]} md file(s) from $skill_dir)"
 
-        # Patch the Deployment: mount the skill at /etc/rca-agent/skills/coding-agent-handoff
-        # and point the loader at /etc/rca-agent/skills. A podSpec change here
-        # triggers a rolling update on its own.
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
+        # The volume name keeps the <skill>-skill shape an earlier run of this
+        # script already wrote. A strategic-merge patch merges volumes BY NAME,
+        # so renaming would leave the old volume in place beside the new one and
+        # mount two of them on the same path.
+        SKILL_VOLUMES="$SKILL_VOLUMES
+        - name: $skill_name-skill
+          configMap:
+            name: rca-agent-skill-$skill_name
+            items: null"
+        SKILL_MOUNTS="$SKILL_MOUNTS
+            - name: $skill_name-skill
+              mountPath: /etc/rca-agent/skills/$skill_name
+              readOnly: true"
+    done
+
+    # Patch the Deployment: mount every skill under /etc/rca-agent/skills and
+    # point the loader at that parent. A podSpec change here triggers a rolling
+    # update on its own.
+    #
+    # `items: null` projects EVERY key as a file named by its key, so a mount
+    # mirrors its skill folder and a new sibling file needs no patch change. The
+    # explicit null is load-bearing: an earlier run of this script wrote
+    # items[SKILL.md], and a strategic-merge patch that merely omits the field
+    # would leave that list in place — the new files would be absent from the pod
+    # with nothing in the diff to show it, which is the silent half-mount this
+    # whole step guards against.
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p "
 spec:
   template:
     spec:
-      volumes:
-        - name: coding-agent-handoff-skill
-          configMap:
-            name: rca-agent-skill-coding-agent-handoff
-            # items: null projects EVERY key as a file named by its key, so the
-            # mount mirrors the skill folder and a new sibling file needs no
-            # patch change. The explicit null is load-bearing: an earlier run of
-            # this script wrote items[SKILL.md], and a strategic-merge patch that
-            # merely omits the field would leave that list in place — the new
-            # files would be absent from the pod with nothing in the diff to show
-            # it, which is the silent half-mount this whole step guards against.
-            items: null
+      volumes:$SKILL_VOLUMES
       containers:
         - name: ai-rca-agent
-          volumeMounts:
-            - name: coding-agent-handoff-skill
-              mountPath: /etc/rca-agent/skills/coding-agent-handoff
-              readOnly: true
+          volumeMounts:$SKILL_MOUNTS
           env:
             - name: EXTERNAL_SKILLS_DIR
               value: /etc/rca-agent/skills
-'
-        # The provider descriptor rides alongside the skill, for the same reason:
-        # both are the receiving platform's, both change without an SRE image
-        # rebuild, and the agent refuses to start the handoff without the
-        # descriptor — its header names are what let the agent's identity
-        # headers reach aep-mcp-server correctly — get one wrong and every
-        # incident falls back to whatever the model supplied.
-        PROVIDER_DESC="$SCRIPT_DIR/../../services/aep-mcp-server/handoff/provider.json"
-        if [ ! -f "$PROVIDER_DESC" ]; then
-            echo "❌ handoff provider descriptor not found at $PROVIDER_DESC"
-            echo "   HANDOFF_ENABLED is on, and the agent refuses to start the handoff"
-            echo "   without it — without it the agent cannot name its identity"
-            echo "   headers correctly (a dedupe key is still derived, just from"
-            echo "   whatever componentName the model supplied, not the intended"
-            echo "   identity source)."
-            exit 1
-        fi
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-handoff-provider \
-            --from-file=provider.json="$PROVIDER_DESC" \
-            --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
-        echo "✅ rca-agent-handoff-provider ConfigMap applied (from $PROVIDER_DESC)"
+"
+    # The provider descriptor rides alongside the skill, for the same reason:
+    # both are the receiving platform's, both change without an SRE image
+    # rebuild, and the agent refuses to start the handoff without the
+    # descriptor — its header names are what let the agent's identity
+    # headers reach aep-mcp-server correctly — get one wrong and every
+    # incident falls back to whatever the model supplied.
+    PROVIDER_DESC="$SCRIPT_DIR/../../services/aep-mcp-server/handoff/provider.json"
+    if [ ! -f "$PROVIDER_DESC" ]; then
+        echo "❌ handoff provider descriptor not found at $PROVIDER_DESC"
+        echo "   HANDOFF_ENABLED is on, and the agent refuses to start the handoff"
+        echo "   without it — without it the agent cannot name its identity"
+        echo "   headers correctly (a dedupe key is still derived, just from"
+        echo "   whatever componentName the model supplied, not the intended"
+        echo "   identity source)."
+        exit 1
+    fi
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-handoff-provider \
+        --from-file=provider.json="$PROVIDER_DESC" \
+        --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
+    echo "✅ rca-agent-handoff-provider ConfigMap applied (from $PROVIDER_DESC)"
 
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
 spec:
   template:
     spec:
@@ -910,11 +936,11 @@ spec:
               mountPath: /etc/rca-agent/handoff
               readOnly: true
 '
-        echo "✅ ai-rca-agent volume wired for the provider descriptor (/etc/rca-agent/handoff)"
-        echo "✅ ai-rca-agent volume/env wired for the handoff skill (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
-        echo "   Edit the skill in services/aep-mcp-server/skills/coding-agent-handoff/, re-run this script"
-        echo "   (or re-apply the ConfigMap) and restart the agent — no SRE image rebuild."
-    fi
+    echo "✅ ai-rca-agent volume wired for the provider descriptor (/etc/rca-agent/handoff)"
+    echo "✅ ai-rca-agent volumes/env wired for ${#HANDOFF_SKILL_NAMES[@]} skill(s) (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
+    echo "   Edit a skill under services/aep-mcp-server/skills/, or add a sibling directory"
+    echo "   holding its own SKILL.md, then re-run this script and restart the agent —"
+    echo "   no SRE image rebuild, and no edit to this script for a new skill."
 fi
 
 # ── 4. Cross-namespace HTTPRoute on the MAIN kgateway ────────────────────

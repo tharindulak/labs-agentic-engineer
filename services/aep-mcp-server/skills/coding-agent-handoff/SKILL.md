@@ -171,15 +171,19 @@ this incident.
 
 ## WHAT THE FILING CALL ANSWERS
 
-Whether a coding run actually starts is settled by the OPERATOR, and this call's
-answer is where you read it. The issue number, `deduped` and `adopted` are
-recorded from the call itself, so `rationale` carries the consequence rather than
-the values.
+Whether a coding run actually starts is settled by the OPERATOR and by what the
+remediation statuses say, and this call's answer is where you read both. The
+issue number, `classification`, `deduped` and `adopted` are recorded from the
+call itself, so `rationale` carries the consequence rather than the values.
+
+`classification` is the platform's, derived from the statuses it was sent — not
+a judgment of yours to restate or dispute.
 
 | Answer | What it means | What `rationale` says |
 |---|---|---|
 | `adopted: true` | filed, and a coding run has it — the normal hand-over | nothing further |
-| `adopted: false`, no `adoptionError` | filed; this install files issues only | the issue waits for a human to pick it up |
+| `classification: config-level` | filed as a ledger entry, and deliberately not dispatched — the remediation agent already expressed every action as configuration, so a coding agent has nothing to do | say the remaining work is configuration that is already expressed, and that the issue records the incident rather than asking for a code change |
+| `adopted: false`, no `adoptionError`, and not `config-level` | filed; this install files issues only | the issue waits for a human to pick it up |
 | `adopted: false` + `adoptionError` | filed, but nothing will work it yet — usually no built version to adopt into | quote the `adoptionError`, so the human knows it waits for someone |
 | `deduped: true` | an earlier run already filed an open issue for this; nothing created | report it under `related_issues` and note the dedup |
 | `reopened: true` + `recurrence` | a merged fix for this failed and the incident came back; AE reopened that issue with your evidence and re-dispatched it | say so plainly, naming the attempt number — a failed fix is a different situation from a new bug and may deserve a human rather than another cycle |

@@ -233,7 +233,16 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		_ = rolloutRestart(ctx, client, sreObsNamespace, "ai-rca-agent")
-		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s)", sreAEAutoDispatch, p.AEApiURL))
+		// Honest about what this actually achieves. These are the LEGACY AE_*
+		// keys: the agent reads HANDOFF_* now and tolerates unknown keys
+		// silently (its settings allow extras), so handoff_enabled keeps its
+		// False default and the stage never runs. This installer also mounts no
+		// handoff skill, and the agent's own validator refuses to start with
+		// the handoff on and no skills directory — so writing the modern keys
+		// here without the mount would crash-loop it instead.
+		ui.Detail(fmt.Sprintf("AE handoff: legacy AE_* keys written (auto-dispatch=%t, mcp=%s)", sreAEAutoDispatch, p.AEApiURL))
+		ui.Detail("AE handoff: NOT active — no HANDOFF_* keys and no skill mount from this installer.")
+		ui.Detail("            Run deployments/scripts/setup-observability.sh to wire it.")
 	} else {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}
