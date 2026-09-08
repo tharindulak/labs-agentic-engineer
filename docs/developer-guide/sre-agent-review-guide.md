@@ -297,7 +297,7 @@ Seven lanes. Each is independently assignable; each has entry points, the
 questions that actually matter, and a pass bar.
 
 ### L1 — Contract & topology coherence
-**Entry:** `AE-HANDOFF-DESIGN.md` §4, §7, §A2 · `services/aep-mcp-server/src/server.ts`
+**Entry:** `AE-HANDOFF-DESIGN.md` §4, §5, §7 · `services/aep-mcp-server/src/server.ts`
 · `src/config.py` (`ae_api_url`, `ae_mcp_path`, `aep_api_url`) · `deployments/docker-compose.yml`
 
 - Do the three tool contracts in the design table match `server.ts`'s schemas
@@ -393,9 +393,10 @@ defaults, and a status command that proves wiring rather than liveness.
 `issue_service_test.go`, `issue_dedup_test.go`, `issue_search_test.go` ·
 `internal/arch/domain_arch_test.go`
 
-- `AE-HANDOFF-DESIGN.md` §13 is honest that the original test plan was replaced
-  by "existing toolchains plus live checks". Which of those gaps are now closed
-  by the two new Python test files, and which are still open?
+- `AE-HANDOFF-DESIGN.md` §13/§14 (both removed in the 2026-09-08 doc pass — see
+  git history) were honest that the original test plan was replaced by "existing
+  toolchains plus live checks". Which of those gaps are now closed by the two new
+  Python test files, and which are still open?
 - Is there **any** automated test that exercises the SRE↔AEP contract? A
   contract test against a recorded `aep-mcp-server` response would catch F1 and
   F2 mechanically.
@@ -447,9 +448,10 @@ contract, or record why the marker must persist.
 
 ### F2 — Design doc describes a topology that is not deployed
 
-`AE-HANDOFF-DESIGN.md` §A2 and §11 state the standalone TS MCP server was
-**merged into aep-api** and is served in-process at `POST /sre-mcp`, and that
-"the separate container/port are gone". Reality:
+`AE-HANDOFF-DESIGN.md` §A2 and §11, as they read before the 2026-09-08 doc pass
+(see git history), stated the standalone TS MCP server was **merged into aep-api**
+and served in-process at `POST /sre-mcp`, and that "the separate container/port are
+gone". Reality:
 
 - `grep -rn "sre-mcp" services/aep-api --include=*.go` → nothing.
 - `services/aep-mcp-server/` exists, serves `/mcp` on port 3400, published as
@@ -499,10 +501,11 @@ LLM-free? And does §5.3 step 3 actually hold across repeated runs?
 
 ### F7 — Token-fetch resilience and the silent-drop path
 
-`AE-HANDOFF-DESIGN.md` §11 records a live failure: a CPU-starved node made the
-Thunder token POST time out, both in-flight analyses hard-failed, and because
-the observer had *already* recorded suppression, the incident was silently
-dropped for the full window. Commit `768591e8` mentions "enhance MCP client with
+`RCA-AGENT-ENABLEMENT.md` §7 records a live failure (it was `AE-HANDOFF-DESIGN.md`
+§11 before the 2026-09-08 doc pass): a CPU-starved node made the Thunder token POST
+time out, both in-flight analyses hard-failed, and because the observer had
+*already* recorded suppression, the incident was silently dropped for the full
+window. Commit `768591e8` mentions "enhance MCP client with
 retry logic" — verify it actually covers `_fetch_token`, and verify whether the
 observer-side half (record suppression only after `/analyze` completes, not on
 acceptance) was ever addressed. A silently dropped incident is the worst failure
@@ -553,8 +556,9 @@ system" interface with AEP as one implementation?
 
 ### F13 — The human review gate is off on the default stack *(highest priority, tied with F1)*
 
-`AE-HANDOFF-DESIGN.md` §10 rests the whole safety case on "no auto-merge — human
-review/merge is the gate". AEP merges on the **platform** side, independently of
+`AE-HANDOFF-DESIGN.md` §10 rested the whole safety case on "no auto-merge — human
+review/merge is the gate" (the claim is struck as of the 2026-09-08 doc pass, which
+points at AEP's ADR-0018 gate instead). AEP merges on the **platform** side, independently of
 the agent: `decideAutoMerge` → `Merger.MergePullRequest` squash-merges a
 qualifying PR the moment it opens, and `skills/aep/SKILL.md:282` states it plainly
 — *"The platform merges the PR; no human reviews it."*
