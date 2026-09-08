@@ -1,6 +1,6 @@
 ---
 name: coding-agent-handoff
-description: How to hand a code-level RCA root cause to AE's coding agent as one GitHub issue.
+description: Use when a completed RCA report needs a source-code change: how to search related issues and file the one issue that hands it to AE's coding agent.
 ---
 
 # Coding agent handoff

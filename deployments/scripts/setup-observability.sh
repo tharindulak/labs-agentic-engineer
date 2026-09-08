@@ -73,8 +73,31 @@
 #       patterns then match analysed lowercase tokens — "ERROR" never matches).
 #
 # Knobs (env):
-#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: recurrence).
-#                   `recurrence` is the image for the CURRENT handoff contract.
+#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: skill-loader).
+#                   `skill-loader` is the image for the CURRENT handoff contract.
+#                   It is `handoff-provider` plus the prompt/skill split: the
+#                   agent's handoff prompt is now only a SKILL LOADER — the
+#                   run-time scope values and the skill catalog, nothing else.
+#                   Every rule the stage follows (how to search, what the issue
+#                   must say, what each answer means) comes from the
+#                   coding-agent-handoff skill THIS repo owns and step 3d mounts,
+#                   so changing the handoff's behaviour no longer needs an SRE
+#                   image at all. It also stops the model-visible text naming a
+#                   receiver: no persona sentence, and no "GitHub" in the
+#                   structured-output schema either.
+#                   Published: docker.io/tharindulak/sre-agent:skill-loader
+#                   (linux/arm64, as every tag in this ladder is).
+#
+#                   `handoff-provider` is the PREVIOUS tier and still works: it
+#                   reads the same descriptor and the same mounted skill, and its
+#                   prompt additionally carries a persona plus its own copy of
+#                   what the skill already says. Nothing breaks on it — the
+#                   duplication is simply back, and a skill edit no longer fully
+#                   determines the stage's behaviour.
+#
+#                   Older tiers, kept for the record:
+#                   `recurrence` was the image for the handoff contract before
+#                   the provider descriptor.
 #                   It is `hand0ff-new` plus the recurrence half of AEP ADR-0018
 #                   ("a merged fix is not a resolved incident"):
 #                     * the handoff still makes ONE ae_create_issue call with the
@@ -107,11 +130,13 @@
 #                   and the console shows attempt 3 as if it were attempt 1.
 #                   That is the silent failure this tag exists to prevent.
 #
-#                   NOT PUBLISHED to Docker Hub yet — build it locally:
+#                   Both `skill-loader` and `handoff-provider` ARE published, so
+#                   the registry fallback below can find them. To build either
+#                   locally instead (the local copy wins over the registry):
 #                     cd <openchoreo-repo>/agents && docker build \
-#                       -t tharindulak/sre-agent:handoff-provider -f sre-agent/Dockerfile .
-#                   Until it is pushed, the registry fallback below cannot find
-#                   it and will degrade (loudly) to hand0ff-new.
+#                       -t tharindulak/sre-agent:skill-loader -f sre-agent/Dockerfile .
+#                   The context is agents/, NOT agents/sre-agent — the Dockerfile
+#                   pulls in the shared agents/common package.
 #
 #                   hand0ff-new is the PREVIOUS contract, in
 #                   which FILING the issue IS the handoff:
@@ -256,7 +281,7 @@ echo "✅ ExternalSecrets applied"
 # (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
 # picked up instead of a registry pull):
 #   cd <openchoreo-repo>/agents && docker build \
-#     -t tharindulak/sre-agent:handoff-provider -f sre-agent/Dockerfile .
+#     -t tharindulak/sre-agent:skill-loader -f sre-agent/Dockerfile .
 # The context is agents/, NOT agents/sre-agent: the Dockerfile pulls in the
 # shared agents/common package (openchoreo PR #4372), so building from inside
 # sre-agent/ cannot resolve its COPY paths.
@@ -280,26 +305,33 @@ echo "✅ ExternalSecrets applied"
 # by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `report-sink` (= RCA_IMAGE_TAG default below) carries everything
-# `recurrence` did — the Anthropic structured-output fix, the one-call AEP
+# Preferred tag `skill-loader` (= RCA_IMAGE_TAG default below) carries everything
+# `handoff-provider` did — the Anthropic structured-output fix, the one-call
 # handoff stage (HANDOFF_ENABLED), the EXTERNAL_SKILLS_DIR loader that reads the
 # AEP-mounted coding-agent-handoff skill from step 3d, the configurable HANDOFF_MCP_PATH
-# (default /mcp), and the recurrence contract (ADR-0021) — plus the report sink:
-# the agent publishes its own report document and aep-api derives every column
-# from it, so the agent holds no aep-api field names, endpoint path or Markdown
-# layout. REQUIRES REPORT_SINK / REPORT_SINK_URL to be set, or reports go
-# nowhere and the console Alerts list stays empty.
+# (default /mcp), the recurrence contract (ADR-0021), the provider descriptor
+# (HANDOFF_PROVIDER_FILE) and the report sink — plus the prompt/skill split: the
+# handoff prompt is a loader, and the mounted skill is the whole playbook. That
+# is why it matters here: with this image, editing
+# services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md and re-running
+# step 3d changes the stage's behaviour completely, with no SRE image rebuild.
+# STILL REQUIRES REPORT_SINK / REPORT_SINK_URL, or reports go nowhere and the
+# console Alerts list stays empty.
 # Resolution order:
 #   1. local build            cd <openchoreo-repo>/agents && docker build \
-#                       -t tharindulak/sre-agent:handoff-provider -f sre-agent/Dockerfile .
+#                       -t tharindulak/sre-agent:skill-loader -f sre-agent/Dockerfile .
 #      (preferred — developers iterating on the agent aren't surprised by a
-#       stale registry copy, and `recurrence` is local-only today)
+#       stale registry copy)
 #   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
-#   3. local recurrence       (previous contract: handoff works, but publishing
+#   3. local handoff-provider (previous tier: everything works; the prompt
+#                              duplicates the skill, so a skill edit no longer
+#                              fully determines the stage's behaviour)
+#   4. local report-sink      (older: reads the PRE-RENAME AE_* config keys)
+#   5. local recurrence       (older contract: handoff works, but publishing
 #                              is REJECTED by current aep-api — no Alerts feed)
-#   4. local hand0ff-new      (older: also cannot say WHICH ATTEMPT an incident
+#   6. local hand0ff-new      (older: also cannot say WHICH ATTEMPT an incident
 #                              is on)
-#   5. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
+#   7. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
 #
 # RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/sre-agent),
 # not a short local alias — deliberately. An earlier version used a short repo
@@ -313,14 +345,21 @@ echo "1️⃣b RCA agent image + secret"
 # the fully-qualified name everywhere means a cache-evicted image can always
 # be re-pulled from the real registry — no more silent long-term fragility.
 RCA_IMAGE_REPO="tharindulak/sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-handoff-provider}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-skill-loader}"
 RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:${RCA_IMAGE_TAG}}"
 # Degradation is EXPLICIT and ordered, because each step down loses something
 # different and a silent step-down is what makes a stale agent hard to spot:
-#   handoff-provider — current contract. The handoff's tool and argument names
-#                    come from a provider descriptor this repo ships and step 3d
-#                    mounts (HANDOFF_PROVIDER_FILE); the agent holds none of
-#                    AEP's vocabulary. Config keys are HANDOFF_* (see below).
+#   skill-loader   — current contract. The handoff prompt is a LOADER: the
+#                    mounted coding-agent-handoff skill is the stage's entire
+#                    playbook, so this repo owns the handoff's behaviour outright
+#                    and a skill edit needs no SRE image. Tool and argument names
+#                    still come from the provider descriptor this repo ships and
+#                    step 3d mounts (HANDOFF_PROVIDER_FILE). Config keys are
+#                    HANDOFF_* (see below).
+#   handoff-provider — descriptor-driven, same as above, but its prompt also
+#                    carries a persona and its own copy of the skill's rules.
+#                    Nothing breaks; the duplication is back, and the prompt can
+#                    disagree with the skill you mounted.
 #   report-sink    — publishes reports fine, but reads the PRE-RENAME config
 #                    keys (AE_HANDOFF / AE_AUTO_DISPATCH / AE_API_URL). This
 #                    script writes both sets for exactly that reason, so the
@@ -342,13 +381,22 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
         docker tag "$RCA_IMAGE_PULL" "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
         echo "✅ pulled ${RCA_IMAGE_PULL} → retagged as ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
+    elif docker image inspect "${RCA_IMAGE_REPO}:handoff-provider" >/dev/null 2>&1; then
+        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
+        echo "    falling back to ${RCA_IMAGE_REPO}:handoff-provider."
+        echo "    Everything works: same descriptor, same mounted skill. What you lose"
+        echo "    is the prompt/skill split — its prompt repeats the skill's rules, so"
+        echo "    an edit to SKILL.md no longer fully determines what the stage does."
+        echo "    Build the current image to fix:"
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:skill-loader -f sre-agent/Dockerfile ."
+        RCA_IMAGE_TAG="handoff-provider"
     elif docker image inspect "${RCA_IMAGE_REPO}:report-sink" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
         echo "    falling back to ${RCA_IMAGE_REPO}:report-sink."
         echo "    Everything works: it reads the AE_* config keys this script also"
         echo "    writes, and its AEP tool names are compiled in rather than read"
         echo "    from the provider descriptor. Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:handoff-provider -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:skill-loader -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="report-sink"
     elif docker image inspect "${RCA_IMAGE_REPO}:recurrence" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
@@ -358,7 +406,7 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
         echo "    report body, which current aep-api rejects, and publishing is"
         echo "    best-effort so the rejection only shows up in the agent's log."
         echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:handoff-provider -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:skill-loader -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="recurrence"
     elif docker image inspect "${RCA_IMAGE_REPO}:hand0ff-new" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
@@ -367,7 +415,7 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
         echo "    decides that). You lose the console Alerts feed (as above) AND the"
         echo "    report saying WHICH ATTEMPT an incident is on, so a third attempt"
         echo "    reads as the first. Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:handoff-provider -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:skill-loader -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="hand0ff-new"
     elif docker image inspect "${RCA_IMAGE_REPO}:anthropic-patched" >/dev/null 2>&1; then
         echo "⚠️  registry pull failed — falling back to ${RCA_IMAGE_REPO}:anthropic-patched"
