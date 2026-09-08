@@ -271,3 +271,23 @@ func TestEscalationDedupeKey_IsStablePerComponent(t *testing.T) {
 		t.Fatalf("dedupe key should be scoped to the component, got %q", a)
 	}
 }
+
+// The two rules over remediation statuses disagree ON PURPOSE, and collapsing
+// them would silence the loop on any install where the remediation stage is off
+// — which is the default. ClassifyActions runs BEFORE the handoff and reads an
+// absent status as pending code work, because an unfiled defect is dropped for
+// good. splitActions runs AFTER as a backstop and drops it, because escalating
+// on an action nobody classified would file work off a status the remediation
+// agent never asserted.
+func TestClassifyActionsDisagreesWithSplitActionsOnAbsentStatus(t *testing.T) {
+	actions := []nativeAction{{Description: "fix the parser", Status: ""}}
+
+	code, config := splitActions(actions)
+	if len(code) != 0 || len(config) != 0 {
+		t.Errorf("splitActions must drop an unasserted status, got code=%v config=%v", code, config)
+	}
+
+	if got := ops.ClassifyActions([]*string{nil}); got != ops.ClassificationCodeLevel {
+		t.Errorf("ClassifyActions must read an absent status as pending, got %q", got)
+	}
+}

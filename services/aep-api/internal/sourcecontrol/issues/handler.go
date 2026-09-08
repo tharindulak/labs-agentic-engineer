@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/ops"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -59,18 +60,38 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 	}
 	org := tenant.BoundOrgFromContext(ctx)
 
+	// Only a caller that sent statuses gets classified. A nil slice is a caller
+	// that never had an RCA report — a person, or an agent filing ordinary work —
+	// and classifying it would move their adoption and their dedupe namespace on
+	// the strength of a default.
+	classification := ""
+	if request.Body.ActionStatuses != nil {
+		classification = ops.ClassifyActions(request.Body.ActionStatuses)
+	}
+
 	req := sourcecontrol.CreateIssueRequest{
 		Title:     request.Body.Title,
 		Body:      request.Body.Body,
 		Labels:    request.Body.Labels,
-		DedupeKey: request.Body.DedupeKey,
+		DedupeKey: ops.NamespaceDedupeKey(request.Body.DedupeKey, classification),
 	}
 
 	// Absent means adopt: the pointer exists in the generated type precisely so
 	// this default cannot be confused with an explicit false (contract note on
 	// x-go-type-skip-optional-pointer).
-	if h.adopter != nil && (request.Body.Adopt == nil || *request.Body.Adopt) {
-		return h.createAdopted(ctx, org, request.ProjectName, request.Body.ComponentName, req)
+	//
+	// The classification narrows that, it never widens it: configuration
+	// already expressed every action, so the issue is still FILED as a ledger
+	// entry and only the hand-over is withheld. The caller does not decide
+	// this — a model asked to weigh it would be restating data it was handed.
+	adoptRequested := request.Body.Adopt == nil || *request.Body.Adopt
+	if classification != "" && !ops.AdoptableClassification(classification) {
+		adoptRequested = false
+	}
+	if h.adopter != nil && adoptRequested {
+		return h.createAdopted(
+			ctx, org, request.ProjectName, request.Body.ComponentName, req, classification,
+		)
 	}
 
 	issue, err := h.issues.CreateIssue(ctx, org, request.ProjectName, req)
@@ -78,13 +99,14 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 		return nil, mapCreateError(err, "")
 	}
 	return gen.CreateIssue200JSONResponse(gen.IssueResult{
-		Number:     int64(issue.Number),
-		URL:        issue.URL,
-		NodeID:     issue.NodeID,
-		Deduped:    issue.Deduped,
-		Reopened:   issue.Reopened,
-		Suppressed: issue.Suppressed,
-		Recurrence: int64(issue.Recurrence),
+		Number:         int64(issue.Number),
+		URL:            issue.URL,
+		NodeID:         issue.NodeID,
+		Deduped:        issue.Deduped,
+		Reopened:       issue.Reopened,
+		Suppressed:     issue.Suppressed,
+		Recurrence:     int64(issue.Recurrence),
+		Classification: gen.IssueResultClassification(classification),
 	}), nil
 }
 
@@ -94,21 +116,23 @@ func (h *Handler) createAdopted(
 	ctx context.Context,
 	org, project, componentName string,
 	req sourcecontrol.CreateIssueRequest,
+	classification string,
 ) (gen.CreateIssueResponseObject, error) {
 	adoption, err := h.adopter.CreateAndAdopt(ctx, org, project, componentName, req)
 	if err != nil {
 		return nil, mapCreateError(err, componentName)
 	}
 	return gen.CreateIssue200JSONResponse(gen.IssueResult{
-		Number:        int64(adoption.Issue.Number),
-		URL:           adoption.Issue.URL,
-		NodeID:        adoption.Issue.NodeID,
-		Deduped:       adoption.Issue.Deduped,
-		Reopened:      adoption.Issue.Reopened,
-		Suppressed:    adoption.Issue.Suppressed,
-		Recurrence:    int64(adoption.Issue.Recurrence),
-		Adopted:       adoption.Adopted,
-		AdoptionError: adoption.Reason,
+		Number:         int64(adoption.Issue.Number),
+		URL:            adoption.Issue.URL,
+		NodeID:         adoption.Issue.NodeID,
+		Deduped:        adoption.Issue.Deduped,
+		Reopened:       adoption.Issue.Reopened,
+		Suppressed:     adoption.Issue.Suppressed,
+		Recurrence:     int64(adoption.Issue.Recurrence),
+		Adopted:        adoption.Adopted,
+		AdoptionError:  adoption.Reason,
+		Classification: gen.IssueResultClassification(classification),
 	}), nil
 }
 

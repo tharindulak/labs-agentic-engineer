@@ -220,6 +220,30 @@ func (e ExternalDependencyValueState) Valid() bool {
 	}
 }
 
+// Defines values for IssueResultClassification.
+const (
+	CodeLevel   IssueResultClassification = "code-level"
+	ConfigLevel IssueResultClassification = "config-level"
+	Mixed       IssueResultClassification = "mixed"
+	None        IssueResultClassification = "none"
+)
+
+// Valid indicates whether the value is a known member of the IssueResultClassification enum.
+func (e IssueResultClassification) Valid() bool {
+	switch e {
+	case CodeLevel:
+		return true
+	case ConfigLevel:
+		return true
+	case Mixed:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for MilestoneRunViewKind.
 const (
 	MilestoneRunViewKindDev        MilestoneRunViewKind = "dev"
@@ -1156,6 +1180,9 @@ type ConversationMessageAuthor struct {
 
 // CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers. Adoption is the DEFAULT — an issue filed here is agent work unless the caller opts out with adopt=false.
 type CreateIssueRequest struct {
+	// ActionStatuses The remediation agent's status for each recommended action on the RCA report this issue hands over, one entry per action and in the report's own order. The platform derives the handoff classification from these and answers it as `classification`, and it derives adoption from that — so a caller does not decide either. Send null for an action carrying no status, which means the remediation stage did not run, which is PENDING work rather than none, and dropping the entry instead would read as an action-free report. Omitted entirely means the same as an empty list — no actions.
+	ActionStatuses []*string `json:"actionStatuses,omitempty"`
+
 	// Adopt Whether to hand the issue to the coding agent. OMITTED MEANS TRUE — the issue joins the deployed version's milestone as agent work and a run picks it up. false files a ledger issue instead — recorded against the version, never worked until somebody adopts it.
 	Adopt *bool  `json:"adopt,omitempty"`
 	Body  string `json:"body"`
@@ -1448,9 +1475,12 @@ type IssueResult struct {
 
 	// AdoptionError Why adoption did not happen, when it was asked for and did not. The issue still exists — it is a ledger entry, and adding the `aep` arming label hands it to the coding agent later.
 	AdoptionError string `json:"adoptionError,omitempty"`
-	Deduped       bool   `json:"deduped,omitempty"`
-	NodeID        string `json:"nodeId"`
-	Number        int64  `json:"number"`
+
+	// Classification The handoff classification the platform derived from actionStatuses — code-level, config-level, mixed, or none. Answered so the caller records what the platform decided rather than deriving it a second time; two derivations of one fact are two things that can disagree. config-level is the one value that files without adopting. Omitted when the call carried no actionStatuses.
+	Classification IssueResultClassification `json:"classification,omitempty"`
+	Deduped        bool                      `json:"deduped,omitempty"`
+	NodeID         string                    `json:"nodeId"`
+	Number         int64                     `json:"number"`
 
 	// Recurrence Which attempt this is — 1 for a first filing, 2 for the first recurrence, and so on. Reported so a human triaging sees "attempt 3" rather than a bare "issue created". Omitted when the call could not establish it.
 	Recurrence int64 `json:"recurrence,omitempty"`
@@ -1462,6 +1492,9 @@ type IssueResult struct {
 	Suppressed bool   `json:"suppressed,omitempty"`
 	URL        string `json:"url"`
 }
+
+// IssueResultClassification The handoff classification the platform derived from actionStatuses — code-level, config-level, mixed, or none. Answered so the caller records what the platform decided rather than deriving it a second time; two derivations of one fact are two things that can disagree. config-level is the one value that files without adopting. Omitted when the call carried no actionStatuses.
+type IssueResultClassification string
 
 // LLMProjection defines model for LLMProjection.
 type LLMProjection = orgconfig.LLMProjection

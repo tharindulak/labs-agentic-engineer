@@ -4808,6 +4808,21 @@ components:
             neither form fails THIS call instead of surfacing later inside a
             cycle. Omit it and adoption proceeds without the check.
           type: string
+        actionStatuses:
+          description: The remediation agent's status for each recommended action
+            on the RCA report this issue hands over, one entry per action and in
+            the report's own order. The platform derives the handoff
+            classification from these and answers it as `classification`, and it
+            derives adoption from that — so a caller does not decide either. Send
+            null for an action carrying no status, which means the remediation
+            stage did not run, which is PENDING work rather than none, and
+            dropping the entry instead would read as an action-free report.
+            Omitted entirely means the same as an empty list — no actions.
+          items:
+            nullable: true
+            type: string
+          type: array
+          nullable: true
       required:
       - title
       - body
@@ -4897,6 +4912,19 @@ components:
           description: Why adoption did not happen, when it was asked for and
             did not. The issue still exists — it is a ledger entry, and adding
             the `aep` arming label hands it to the coding agent later.
+          type: string
+        classification:
+          description: The handoff classification the platform derived from
+            actionStatuses — code-level, config-level, mixed, or none. Answered
+            so the caller records what the platform decided rather than deriving
+            it a second time; two derivations of one fact are two things that can
+            disagree. config-level is the one value that files without adopting.
+            Omitted when the call carried no actionStatuses.
+          enum:
+          - code-level
+          - config-level
+          - mixed
+          - none
           type: string
       required:
       - number
