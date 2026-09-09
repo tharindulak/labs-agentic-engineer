@@ -42,21 +42,22 @@ docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
 ```bash
 # Deploy an RCA-agent image that includes the handoff stage.
 # Use the same repo:tag as RCA_IMAGE_REPO:RCA_IMAGE_TAG in
-# scripts/setup-observability.sh — tharindulak/sre-agent:skill-loader — so a
+# scripts/setup-observability.sh — tharindulak/sre-agent:fingerprint-fix — so a
 # later setup-observability.sh re-run picks up this local build instead of
 # pulling. (When the preferred tag is neither built nor pullable that script
-# walks back through :handoff-provider, :report-sink, :recurrence, :hand0ff-new
-# and finally :anthropic-patched, printing what each one costs you.)
-# skill-loader and handoff-provider are both published, so the pull path works;
-# a local build just takes precedence over it.
+# walks back through :skill-loader, :handoff-provider, :report-sink,
+# :recurrence, :hand0ff-new and finally :anthropic-patched, printing what each
+# one costs you.)
+# fingerprint-fix, skill-loader and handoff-provider are all published, so the
+# pull path works; a local build just takes precedence over it.
 #
 # Build context is agents/, NOT agents/sre-agent: the Dockerfile pulls in
 # siblings from the parent directory.
 cd <openchoreo-repo>/agents
-docker build -t tharindulak/sre-agent:skill-loader -f sre-agent/Dockerfile .
-k3d image import tharindulak/sre-agent:skill-loader -c <cluster>
+docker build -t tharindulak/sre-agent:fingerprint-fix -f sre-agent/Dockerfile .
+k3d image import tharindulak/sre-agent:fingerprint-fix -c <cluster>
 kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
-  "*=tharindulak/sre-agent:skill-loader"
+  "*=tharindulak/sre-agent:fingerprint-fix"
 
 # Enable the handoff. There is no auto-dispatch switch any more: filing IS the
 # hand-over, and whether a coding run starts is what the create call answers
@@ -64,8 +65,9 @@ kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
 kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \
   '{"data":{"HANDOFF_ENABLED":"true","HANDOFF_API_URL":"http://host.k3d.internal:3401","HANDOFF_PROVIDER_FILE":"/etc/rca-agent/handoff/provider.json"}}'
 # The descriptor and the skill are mounted by setup-observability.sh step 3d
-# (ConfigMaps + EXTERNAL_SKILLS_DIR). On :skill-loader the mounted skill is the
-# stage's entire playbook, so a SKILL.md edit + re-apply needs no image rebuild.
+# (ConfigMaps + EXTERNAL_SKILLS_DIR). On :fingerprint-fix (as on :skill-loader)
+# the mounted skill is the stage's entire playbook, so a SKILL.md edit +
+# re-apply needs no image rebuild.
 kubectl rollout restart deploy/ai-rca-agent -n openchoreo-observability-plane
 kubectl logs -n openchoreo-observability-plane deploy/ai-rca-agent | grep -E "MCP connection|Handoff provider"
 # expect: the base tools + the 2 handoff tools the descriptor names, and

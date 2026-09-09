@@ -251,7 +251,7 @@ fi
 #     Best-effort: a rebuilt cluster loses the locally-imported RCA image and
 #     the pod sits in ImagePullBackOff; re-running setup-observability.sh
 #     fixes it (it re-imports the tag it defaults to, currently
-#     tharindulak/sre-agent:handoff-provider — published on Docker Hub, so a
+#     tharindulak/sre-agent:fingerprint-fix — published on Docker Hub, so a
 #     machine with no local build falls back to a registry pull automatically;
 #     see that script's RCA_IMAGE_TAG notes for the degradation chain).
 if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/dev/null; then
