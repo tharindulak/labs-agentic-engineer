@@ -100,15 +100,17 @@ var _ delivery.BuildTerminalObserver = (*Events)(nil)
 // that push is the only signal that the conflict is resolved. ready_for_review
 // and reopened are the same decision arriving by another route.
 //
-// issues covers the six actions that can change a milestone's membership or an
-// issue's state, which is what the dispatch predicate is computed over.
+// issues covers the seven actions that can change a milestone's membership or
+// an issue's state, which is what the dispatch predicate is computed over.
+// `opened` is there only for ADR-0029's self-arm check below — a label picked
+// at creation time never fires a separate `labeled` delivery.
 func (e *Events) RegisterHandlers(register RegisterFunc) {
 	register("pull_request", "opened", e.OnPullRequest)
 	register("pull_request", "synchronize", e.OnPullRequest)
 	register("pull_request", "ready_for_review", e.OnPullRequest)
 	register("pull_request", "reopened", e.OnPullRequest)
 	register("pull_request", "closed", e.OnPullRequestClosed)
-	for _, action := range []string{"closed", "reopened", "milestoned", "demilestoned", "labeled", "unlabeled"} {
+	for _, action := range []string{"opened", "closed", "reopened", "milestoned", "demilestoned", "labeled", "unlabeled"} {
 		register("issues", action, e.OnIssues)
 	}
 }
@@ -411,6 +413,25 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 				"issue", p.Issue.Number, "error", aerr)
 			return nil
 		}
+	}
+
+	// ADR-0029: a `bug` issue sourced `src/user` (or unsourced) self-arms on
+	// the `bug` label alone — at CREATION (`opened`, the whole label set) or
+	// later (`labeled`, only when `bug` itself is what just fired).
+	//
+	// Gating `labeled` on the FIRED label — not just the issue's current set —
+	// is what keeps this forward-only: a pre-existing unarmed bug must not
+	// self-arm because some unrelated label was added to it after this
+	// shipped. `opened` has no such distinction to make; the whole label set
+	// IS what just landed.
+	firedBug := action == "opened" ||
+		(action == "labeled" && strings.EqualFold(p.Label.Name, delivery.KindBug))
+	if firedBug && eligibleForAutoAdopt(p.issueLabels()) {
+		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels()}
+		if ms, ok := p.milestone(); ok {
+			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
+		}
+		e.AutoAdoptUserBug(ctx, orgID, projectID, target)
 	}
 
 	ms, ok := p.milestone()

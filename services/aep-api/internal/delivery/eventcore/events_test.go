@@ -837,6 +837,8 @@ func TestNoRunRow_EveryHandlerIsInert(t *testing.T) {
 		{"issues", issueBody("closed", 12, 7, "aep", "human", false)},
 		{"issues", issueBody("milestoned", 12, 7, "aep", "human", true)},
 		{"issues", issueBody("labeled", 12, 0, delivery.LabelAgentWork, "human", false)},
+		{"issues", issueBodyWithLabels("opened", 12, 0, "priority:high",
+			[]string{"priority:high"}, "external-reporter")},
 	}
 	for _, d := range deliveries {
 		if err := h.deliver(t, d.event, d.payload); err != nil {
@@ -930,5 +932,112 @@ func TestAdoption_StillAdoptsARealDefect(t *testing.T) {
 	}
 	if len(h.sup.started) != 1 || h.sup.started[0].Kind != delivery.RunKindTask {
 		t.Fatalf("a real defect must still start a task run, got %+v", h.sup.started)
+	}
+}
+
+// ---- ADR-0029: a src/user bug self-arms on the `bug` label alone ---------
+
+func TestAutoAdopt_BugLabelAddedLaterSelfArms(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	body := issueBodyWithLabels("labeled", 31, 0, delivery.KindBug,
+		[]string{delivery.KindBug}, "external-reporter")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.issues.assigned) != 1 || h.issues.assigned[0] != "31->5" {
+		t.Fatalf("must join the deployed version's milestone, got %v", h.issues.assigned)
+	}
+	if len(h.sup.started) != 1 || h.sup.started[0].Kind != delivery.RunKindTask {
+		t.Fatalf("must start a task run, got %+v", h.sup.started)
+	}
+	if got := h.issues.commentBodies[31]; got != autoAdoptedComment {
+		t.Fatalf("must leave the auto-adopted comment, got %q", got)
+	}
+}
+
+func TestAutoAdopt_BugLabelAtCreationSelfArms(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	// GitHub sends "opened" with the whole label set already attached — no
+	// separate "labeled" delivery follows for a label picked at creation time.
+	body := issueBodyWithLabels("opened", 31, 0, delivery.KindBug,
+		[]string{delivery.KindBug}, "external-reporter")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.issues.assigned) != 1 || h.issues.assigned[0] != "31->5" {
+		t.Fatalf("must join the deployed version's milestone, got %v", h.issues.assigned)
+	}
+	if len(h.sup.started) != 1 || h.sup.started[0].Kind != delivery.RunKindTask {
+		t.Fatalf("must start a task run, got %+v", h.sup.started)
+	}
+}
+
+func TestAutoAdopt_AlreadyArmedIssueIsLeftToTheOrdinaryPath(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	// A human already stamped `aep`; adding `bug` afterward must not post a
+	// second, contradictory "a rule armed this" comment onto a human's own act.
+	body := issueBodyWithLabels("labeled", 31, 0, delivery.KindBug,
+		[]string{delivery.LabelAgentWork, delivery.KindBug}, "a-human")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 {
+		t.Fatalf("an already-armed issue must not be double-adopted here, got assigned=%v started=%+v",
+			h.issues.assigned, h.sup.started)
+	}
+	if _, ok := h.issues.commentBodies[31]; ok {
+		t.Fatalf("must not comment on an issue a human already armed, got %q", h.issues.commentBodies[31])
+	}
+}
+
+func TestAutoAdopt_IncidentSourcedBugIsNotSelfArmed(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	body := issueBodyWithLabels("labeled", 31, 0, delivery.KindBug,
+		[]string{delivery.KindBug, delivery.SrcIncident}, "sre-agent")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 {
+		t.Fatalf("an incident-sourced bug keeps its own separate adoption path, got assigned=%v started=%+v",
+			h.issues.assigned, h.sup.started)
+	}
+}
+
+func TestAutoAdopt_UnrelatedRelabelOfAnExistingBugDoesNotSelfArm(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	// A pre-existing unarmed bug (as if filed before this feature shipped).
+	// Some OTHER label is what fires this delivery — the forward-only rule is
+	// about the `bug` label LANDING, not about re-evaluating an issue's
+	// already-settled set on every unrelated webhook.
+	body := issueBodyWithLabels("labeled", 31, 0, "priority:high",
+		[]string{delivery.KindBug, "priority:high"}, "a-human")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 {
+		t.Fatalf("relabeling a pre-existing bug with something else must not self-arm it, got assigned=%v started=%+v",
+			h.issues.assigned, h.sup.started)
+	}
+}
+
+func TestAutoAdopt_NoDeployedVersionLeavesAnExplanationOverTheWebhook(t *testing.T) {
+	h := newHarness(t) // no runs at all — nothing has ever deployed
+
+	body := issueBodyWithLabels("labeled", 31, 0, delivery.KindBug,
+		[]string{delivery.KindBug}, "external-reporter")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 {
+		t.Fatalf("must adopt nothing without a deployed version, got assigned=%v started=%+v",
+			h.issues.assigned, h.sup.started)
+	}
+	if got := h.issues.commentBodies[31]; got != autoAdoptNoDeployedVersionComment {
+		t.Fatalf("must explain why it did not adopt, got %q", got)
 	}
 }
