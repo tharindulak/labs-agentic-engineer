@@ -4,7 +4,7 @@ Requirement sets for demonstrating the log-based loop end to end: an ERROR in a
 running service becomes an alert, an RCA, a GitHub issue, and a coding-agent PR.
 
 - **How to wire the loop**: [`sre-handoff-runbook.md`](./sre-handoff-runbook.md)
-- **What the handoff decides, and how**: `services/aep-mcp-server/skills/issue-fix/SKILL.md`
+- **What the handoff decides, and how**: `services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md`
 - **Why filing an issue dispatches the agent**: [`ADR-0017`](../decisions/ADR-0017-filing-an-issue-is-the-dispatch.md)
 
 ---
@@ -816,10 +816,27 @@ harmless.
 
 ```bash
 kubectl -n <dp-namespace> port-forward deploy/<project>-service2 19095:9090
-curl -s -X PUT http://localhost:19095/mode -H 'Content-Type: application/json' \
+curl -s -X POST http://localhost:19095/operations/mode -H 'Content-Type: application/json' \
   -d '{"mode":"degraded"}'
 curl -s "http://development-default.openchoreoapis.localhost:19080/<project>-service1-http/catalog-total"
 ```
+
+**Confirm the ops path before you probe for it.** The spec asks for "an internal
+operations endpoint" and leaves the shape to the generator, so the path and verb
+vary between builds — `POST /operations/mode` on the run of 2026-09-05, `PUT /mode`
+on the run of 2026-08-27. Read it off the component's OpenAPI, or make ONE probe:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:19095/operations/mode
+# 405 = route exists, wrong verb (try POST, then PUT) · 404 = wrong path
+```
+
+Do not sweep a list of candidate paths. A burst of 404s and 405s against a
+monitored component is itself an alertable event: on 2026-09-05 a path sweep
+looking for this endpoint raised its own RCA run and filed a real issue
+("automated validation agent probed service2 … burst of routing errors"),
+which then had to be closed as `not_planned`. The demo's own alerting does not
+distinguish your probing from a defect.
 
 **Expected log** — verified on a deployed AE service, and note it quotes the
 offending value, which is the best RCA evidence any scenario here produces:
@@ -1109,7 +1126,7 @@ judgment; scenario 7 proves the loop notices its own fix failed.
 For a single demo to an audience: **10 then 1 then 3** — the loop exists, it finds
 a genuine defect, and it decides rather than pattern-matches.
 
-As regression tests: scenario 3 after any change to the `issue-fix` skill, because
+As regression tests: scenario 3 after any change to the `coding-agent-handoff` skill, because
 it is the one an over-eager decline would drop; scenario 7 after any change to
 dedupe or recurrence handling.
 

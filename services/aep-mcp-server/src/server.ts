@@ -115,12 +115,12 @@ export function createAepMcpServer(
     {
       title: "Create a GitHub issue via AE",
       description:
-        "Create a GitHub issue on a project's repo AND hand it to the AE coding agent. Creating the issue IS the dispatch — there is no second call. " +
+        "Create a GitHub issue on a project's repo and hand it to AE for downstream handling. Creating the issue IS the hand-off — there is no second call. " +
         "File every report that reaches you. What the work IS, and whether a coding agent gets it, are not yours to decide: pass `actionStatuses` and the platform derives both, answering the classification it chose. " +
         "A `config-level` answer means the remediation agent already expressed every action as configuration — the issue is still filed, as a ledger entry, and nothing is dispatched over it. " +
         "Deduplication is automatic: this server derives a stable key from the incident this request belongs to, so if an OPEN issue for the same incident exists it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). An issue already carrying a no-change verdict for this incident answers `suppressed: true`, and nothing is created. " +
         "If instead a CLOSED issue with that key is found — the same incident recurring after a fix was merged — it is reopened with this call's body appended as a `## Recurrence <n>` section, moved into the currently deployed version's milestone and handed back to the coding agent; the result then carries `reopened: true` and `recurrence` (which attempt this is). " +
-        "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked.",
+        "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked. Those outcomes are decided here and in aep-api code, not by the caller's skill.",
       inputSchema: {
         project: z.string().describe("OpenChoreo/AE project name"),
         title: z.string().describe("Issue title"),

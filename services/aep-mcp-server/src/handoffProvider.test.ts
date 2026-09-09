@@ -116,8 +116,10 @@ test("the descriptor's tool names are exactly the ones server.ts registers", () 
 test("the descriptor carries no fields the agent is meant to decide", () => {
   // A descriptor renames things. It must never grow a knob that changes what the
   // handoff concludes — that judgment is the agent's, and moving it here would
-  // put AEP in charge of another repo's decisions.
-  const allowed = new Set(["tools", "incident_headers", "answer_fields"]);
+  // put AEP in charge of another repo's decisions. Renaming a caller-process
+  // argument that middleware forces onto the create call is still vocabulary,
+  // not a decision.
+  const allowed = new Set(["tools", "incident_headers", "call_arguments", "answer_fields"]);
   const unexpected = Object.keys(descriptor).filter(
     (k) => !k.startsWith("_") && !allowed.has(k),
   );

@@ -28,8 +28,9 @@
  * headers, out of the model's reach, and win over the tool arguments.
  *
  * What this module DERIVES from them is AE's own contract: the dedupe key's
- * shape, the label set every SRE-filed issue carries, and whether the issue is
- * adopted. None of those belong in a caller's prompt space.
+ * shape and the label set every SRE-filed issue carries. Whether the issue is
+ * adopted is decided later by AE's create/adopt path, not by the caller's
+ * prompt space.
  *
  * Nothing here fails a call. A handoff is one-shot — nothing retries it — so an
  * unreadable header costs a narrower dedupe key, never the incident.

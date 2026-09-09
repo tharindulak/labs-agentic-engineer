@@ -17,11 +17,11 @@ classify the incident — code-level / config-level / mixed is derived in the ag
 from the remediation agent's action statuses before the stage runs, so the model
 is never asked to restate data it was handed, nor to re-decide whether it belongs
 here. Deduplication is likewise not the model's: AEP derives the key
-server-side, so the skill's rule is to file and read the answer. Filing the issue
-IS the handoff — AEP adopts what it files — so there is no dispatch step to
-describe. Its content is AEP's contract (the `sre-agent` label, dedupe keys, and
-what `ae_create_issue` answers back: `deduped`, `adopted`, `adoptionError`), so
-it belongs with AEP.
+server-side, so the skill's rule is to file and let the receiver decide what
+happens next. Filing the issue IS the handoff, but adoption, suppression,
+recurrence reopening and any later issue activity are AE's code paths, not the
+skill's. Its content is AEP's contract (the `sre-agent` label, dedupe keys, and
+what `ae_create_issue` answers back), so it belongs with AEP.
 
 ## How it reaches the SRE agent (deploy-time mount)
 
