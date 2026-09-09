@@ -73,7 +73,7 @@ type ConfigKeyView struct {
 //
 // Two families, with very different urgency:
 //
-//   - RESOLUTION blockers — external-ambiguous, external-unresolved,
+//   - RESOLUTION blockers — external-unresolved,
 //     external-spec, org-service — are things the design itself cannot
 //     answer. They gate the version cut: nothing downstream can be authored
 //     while the dependency has no identity.
@@ -83,7 +83,7 @@ type ConfigKeyView struct {
 type PreflightItem struct {
 	Component   string `json:"component" doc:"Owning component name"`
 	Dependency  string `json:"dependency" doc:"Dependency name"`
-	Kind        string `json:"kind" enum:"external-config,external-spec,external-ambiguous,external-unresolved,platform-resource,org-service"`
+	Kind        string `json:"kind" enum:"external-config,external-spec,external-unresolved,platform-resource,org-service"`
 	Description string `json:"description"`
 	// external-config only: the key/secret schema whose values are collected
 	// while the build runs — views only, never values.
@@ -112,7 +112,6 @@ type BuildPreflight struct {
 // design cannot name the dependency yet, so nothing downstream can be authored
 // for it. Every other kind is collected-later, deploy-gated work.
 var resolutionBlockerKinds = map[string]bool{
-	"external-ambiguous":  true,
 	"external-unresolved": true,
 	"external-spec":       true,
 	"org-service":         true,
@@ -148,8 +147,8 @@ func NewPreflightService(d PreflightDeps) *PreflightService {
 // emits consumed-spec instructions for it) — and emits an item for each
 // dependency that is not yet settled and not already provisioned or in-flight:
 //
-//   - external: a blocker item — "external-ambiguous" (2+ candidates),
-//     "external-unresolved" (needs information only the user can supply), or
+//   - external: a blocker item — "external-unresolved" (the user has not
+//     chosen a service, or must accept an assumption), or
 //     "external-spec" (no API spec yet) — when the dependency's already
 //     computed Status/Reason (spec.ComputeDependencyStatus, via
 //     dependencyBlocker) says so; this is the dependency-management proceed
@@ -159,7 +158,7 @@ func NewPreflightService(d PreflightDeps) *PreflightService {
 //     should re-collect secrets that live on the org record).
 //   - platform-resource: a "platform-resource" item when not yet Ready.
 //   - org-service: an "org-service" item when Status is one of the three
-//     non-resolved resolution states (unresolved | blocked | ambiguous);
+//     non-resolved resolution states (unresolved | blocked);
 //     resolved dependencies never surface here.
 //   - component (sibling components): never emitted — not provisioned per
 //     project.
@@ -216,11 +215,11 @@ func (s *PreflightService) itemsFor(ctx context.Context, orgID, projectID, compo
 
 // externalItems computes the preflight item(s) for one external dependency.
 // dependencyBlocker (the single mapping the build hard-gate also uses) checks
-// FIRST: an ambiguous/unresolved dependency raises exactly one blocker item
-// (external-ambiguous / external-unresolved / external-spec) with a
+// FIRST: an unresolved dependency raises exactly one blocker item
+// (external-unresolved / external-spec) with a
 // plain-language Description, and config collection is skipped — there is
 // nothing meaningful to collect until the dependency itself resolves (a
-// still-ambiguous/unresolved dependency has no derived config keys yet). Once
+// still-unresolved dependency has no derived config keys yet). Once
 // resolved (or when no resolver was ever wired — the fail-open empty Status),
 // the pre-existing external-config item (key/secret views only) is emitted
 // when the dependency is not yet Ready and is not Registered (org catalog
@@ -277,7 +276,7 @@ func (s *PreflightService) platformResourceItems(ctx context.Context, orgID, pro
 
 func orgServiceItems(componentName string, d spec.Dependency) []PreflightItem {
 	switch d.Status {
-	case spec.DependencyStatusUnresolved, spec.DependencyStatusBlocked, spec.DependencyStatusAmbiguous:
+	case spec.DependencyStatusUnresolved, spec.DependencyStatusBlocked:
 		return []PreflightItem{{
 			Kind:        "org-service",
 			Component:   componentName,

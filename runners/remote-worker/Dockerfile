@@ -22,6 +22,16 @@
 # What each layer is for:
 #   - git / gh / curl / bash / python3 — workspace provisioning, the git
 #     credential helper + `gh` wrapper, and the agent's Bash tool.
+#   - procps (`ps`, `pkill`) — a backstop. The walk's own script reaps its dev
+#     server by process group and needs neither, but an agent improvising a
+#     cleanup reaches for `pkill` first, and on the image without it every such
+#     call was a silenced "command not found" that left the server running.
+#   - file (libmagic) — the same backstop reasoning, for identification rather
+#     than cleanup: it is the first command an agent runs on a binary it finds
+#     in the workspace and did not write. One run found a 26MB `core` in the
+#     clone, reached for `file` unprompted, got "command not found", and could
+#     not say what it was looking at. ~5MB for the one question that turns an
+#     unknown artefact in a customer's repository into a named one.
 #   - Go and Ballerina (pinned archives, not distro packages) + node/npm
 #     from the base — the agent's compile-level build verification
 #     (`go build`, `bal build`, `tsc --noEmit`, lockfile resolution) before
@@ -30,6 +40,9 @@
 #   - Playwright + a baked chromium — validation runs author and execute
 #     e2e specs against the deployed system and must never download a
 #     browser at task time.
+#   - agent-browser — the browser CLI a CODING run drives a page with. It
+#     adds a binary, not a browser: it is pointed at the chromium the line
+#     above already baked.
 
 # ─── Stage 1: the `bal library` tool jar ────────────────────────────────────
 # BUILT here rather than committed. The tool's source is in this monorepo
@@ -92,6 +105,8 @@ RUN apt-get update \
         curl \
         bash \
         python3 \
+        procps \
+        file \
         unzip \
         ca-certificates \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -140,6 +155,13 @@ RUN case "$(dpkg --print-architecture)" in \
     && chmod -R a+rX /usr/lib/ballerina
 ENV PATH="/usr/lib/ballerina/bin:${PATH}"
 
+# The runtime user, created BEFORE the Playwright install below so that install
+# can write its ownership directly into its own layer.
+RUN groupadd -r aep \
+    && useradd -r -g aep -m -d /home/aep aep \
+    && mkdir -p /home/aep/aep-workspace \
+    && chown -R aep:aep /home/aep
+
 # Playwright toolchain, pinned as a pair: AEP_PLAYWRIGHT_VERSION is the
 # contract the aep-validation skill pins tests/e2e/package.json to, so
 # the browsers baked here always match the version the specs run with.
@@ -167,12 +189,171 @@ RUN npm install -g "@playwright/test@${PLAYWRIGHT_VERSION}" "@playwright/cli@${P
     # installs, so they could be downloaded but never launched. Non-fatal:
     # worst case it downloads at runtime.
     && (playwright-cli install-browser chromium || true) \
-    && chmod -R a+rX /ms-playwright
+    # OWNED by the runtime user, not merely readable by it. `playwright install`
+    # takes a LOCK in this directory before it can decide there is nothing to
+    # download, so a read-only tree does not make the command a no-op — it makes
+    # it BLOCK, silently, until the caller's timeout severs it. A validation run
+    # reached for it (the two clients pin different revisions, so asking is
+    # reasonable) and lost two hours to the hang. Owned, the same command exits 0
+    # immediately.
+    #
+    # In THIS layer, beside the download, for the reason the `--chown` on the
+    # app COPY below records: a trailing `chown -R` rewrites every file it
+    # touches into a fresh layer, and this tree is two chromium revisions.
+    && chown -R aep:aep /ms-playwright
 
-RUN groupadd -r aep \
-    && useradd -r -g aep -m -d /home/aep aep \
-    && mkdir -p /home/aep/aep-workspace \
-    && chown -R aep:aep /home/aep
+# The agent-browser CLI — what a CODING run opens a page with and reads the
+# accessibility tree of, driven by the `agent-browser` platform skill. Pinned
+# exactly, like the Playwright pair above: the skill tells the agent to take its
+# verbs and output formats from `agent-browser skills get core`, so an unpinned
+# CLI would move that contract under it between rebuilds. The npm tarball ships
+# every platform's prebuilt binary, so this install fetches nothing further.
+#
+# npm warns EBADENGINE here (the package declares node >=24, this image is node
+# 22) and that is left alone rather than worked around: the published bin is a
+# static Rust binary and postinstall repoints npm's symlink straight at it, so
+# no node ever runs the CLI. The engines field describes the project's own
+# toolchain, not its runtime — verified: `agent-browser --version` answers.
+#
+# NO THIRD BROWSER IS DOWNLOADED. The CLI's own `agent-browser install` would
+# fetch one; instead AGENT_BROWSER_EXECUTABLE_PATH names a chromium that is
+# already in this image — the image deciding which binary launches, for the same
+# reason ADR-0007 has the image and not the skill name playwright-cli's browser.
+#
+# WHICH of the two baked revisions: @playwright/test's, not playwright-cli's.
+# Three reasons that agree — it is the only chromium this build REQUIRES (the
+# `playwright-cli install-browser` above is `|| true`, so naming its revision
+# would make this variable a promise the build does not keep); it is the one
+# whose system libraries `--with-deps` installed; and it is the build the e2e
+# specs are later asserted in, so a locator the agent reads while coding is read
+# in the chromium that will assert it. Left unset the CLI's own discovery picks
+# the OTHER one — it takes the highest version it finds under /ms-playwright —
+# which is the drift this line closes.
+#
+# Resolved FROM playwright through a fixed symlink rather than spelled out: the
+# revision is decided by PLAYWRIGHT_VERSION above, and a literal `chromium-1228`
+# here would be a second copy of that number to keep in step by hand.
+#
+# ASKED OF playwright, not assembled from an install location plus a guessed
+# directory name: the layout under a chromium revision is PER-ARCH, because
+# playwright ships Google's Chrome-for-Testing build on linux-x64
+# (`chrome-linux64/chrome`) and its own build on linux-arm64
+# (`chrome-linux/chrome`). Either name hardcoded here builds green on one half
+# of the release matrix and red on the other, and `executablePath()` is the
+# same call playwright launches through. The `test -d` pins WHOSE core answers
+# — `require.resolve` walks up to the global root, so a renamed
+# @playwright/test would silently hand back another package's copy at another
+# revision — and the SYMLINK IS THE DIRECTORY, so the binary keeps the resource
+# files (icudtl.dat, the .pak set, the crashpad handler) beside it.
+ARG AGENT_BROWSER_VERSION=0.35.2
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/share/aep-chromium/chrome
+
+# `--no-sandbox` IS THE IMAGE'S, for every run. This reverses an earlier call
+# recorded here — that the flag was a build-time concession only, because a
+# `docker run` of this image launched chromium sandboxed as `aep` — and the
+# reversal is what a live run measured: inside a dispatched coding-agent Job the
+# walk's first two `agent-browser open` calls failed at launch, and the agent
+# only got a page by discovering this variable for itself. Four failed
+# background tasks and several minutes of trial and error, on a fact the image
+# knows and the agent cannot.
+#
+# WHY chromium cannot start sandboxed HERE, when it can under `docker run`:
+# its layer-1 sandbox needs one of two things, and the pod has neither. The
+# setuid helper (`chrome_sandbox`) is not installed setuid-root — playwright
+# ships it but nothing in this image chowns and chmods it, and a pod's
+# filesystem is not writable enough to fix that at task time. The fallback is
+# an unprivileged user namespace, which is a `clone(CLONE_NEWUSER)` the
+# container runtime's default seccomp profile denies. That is the same "No
+# usable sandbox!" BuildKit's own RUN container produces, which is why the
+# smoke test below needed the flag long before a run did — the build was
+# telling us about the runtime and it was read as a quirk of the builder.
+#
+# WHY DROPPING IT IS ACCEPTABLE — chromium's sandbox contains a browser that
+# renders the open web for a person; neither half describes this pod. THE POD
+# IS THE BOUNDARY: one-shot, unprivileged (`USER aep`, no securityContext
+# raising it), its whole filesystem an emptyDir discarded with the Job, and the
+# page it opens is the app THIS RUN just wrote, served by a dev server on
+# loopback. The flag does not widen what the container can reach; it removes a
+# second boundary inside one that already holds. A run that needs to browse the
+# real internet is not a shape this image supports, and the day it is, this
+# variable is where that argument gets re-opened.
+#
+# AN ENV RATHER THAN THE `--args` FLAG THE CLI ALSO ACCEPTS: `--args
+# "--no-sandbox"` works (verified against 0.35.2 — it reaches the launch both
+# before and after the subcommand), but it is per-invocation, and a browser job
+# is dozens of invocations against a DAEMON that outlives each one. One
+# forgotten flag is a launch that fails or, worse, a session that quietly keeps
+# whatever args launched it. The environment is the only form that is true for
+# every call the agent will make, including the ones inside a script it writes.
+ENV AGENT_BROWSER_ARGS=--no-sandbox
+# BuildKit predefines both; a stage has to redeclare them to read them in a RUN.
+# Equal on a native build, different on the emulated half of the release matrix.
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+RUN npm install -g "agent-browser@${AGENT_BROWSER_VERSION}" \
+    && test -d "$(npm root -g)/@playwright/test" \
+    && CHROME="$(node -p "require(require.resolve('playwright-core', { paths: ['$(npm root -g)/@playwright/test'] })).chromium.executablePath()")" \
+    && ln -sfn "$(dirname "$CHROME")" /usr/local/share/aep-chromium \
+    && test -x "${AGENT_BROWSER_EXECUTABLE_PATH}" \
+    # A smoke test, earning its line the way `bal library --help` does at the
+    # bottom of this file: it drives a real page through the variable set
+    # above, so a missing CLI, a symlink resolving to nothing, and a chromium
+    # that cannot start all fail THIS BUILD rather than a customer's run.
+    # `--version` would not — it answers from a binary that never launches a
+    # browser. Opening and then READING the page is the round trip: the
+    # launch, the CDP connection and the render all have to work for `ok` to
+    # come back.
+    #
+    # NOT `agent-browser doctor`, which is the obvious-looking choice: its
+    # launch test is the only check that touches the browser, and it ignores
+    # both AGENT_BROWSER_ARGS (so it cannot be made to pass here — see the
+    # AGENT_BROWSER_ARGS block above) and — measured —
+    # AGENT_BROWSER_EXECUTABLE_PATH in its "Chrome" line, which reports whatever
+    # the CLI's own discovery finds. `doctor --quick` passes with this variable
+    # pointing at nothing at all.
+    #
+    # NO `export AGENT_BROWSER_ARGS` HERE ANY MORE, and its absence is the
+    # point: the flag is now an ENV above, so this test launches through
+    # EXACTLY the configuration a task launches through. It used to be exported
+    # inline, which made the build pass on a setting no run had — the gap that
+    # let a shipped image reach a live run with no working browser command.
+    #
+    # Run as `aep` because that is who runs a task: a chromium that starts for
+    # root and not for an unprivileged user is the class of bug ADR-0007
+    # records. `su` without `-` keeps the environment, so the variables set
+    # above are the ones under test.
+    #
+    # NATIVE BUILDS ONLY. The release builds both platforms on one amd64
+    # runner, so its arm64 half runs under QEMU user-mode emulation, and
+    # chromium does not run there: the browser process dies at launch and the
+    # CLI reports "CDP response channel closed". Nothing about that half of the
+    # IMAGE is wrong — the same layer, built natively on an arm64 host, passes
+    # this test — so the launch is asserted on every native build (the
+    # release's amd64 half, every developer's host-arch `docker build`) and
+    # skipped on any cross-platform one. The gate is the platform pair, not a
+    # probe for emulation, so a foreign-arch build that COULD launch (amd64
+    # under Rosetta on a Mac) skips it too; that costs nothing the native
+    # builds do not already cover. The skipped half keeps everything above the
+    # `if`: the install, the symlink and the `test -x` need no browser process.
+    #
+    # The alternative is a release that builds its arm64 half on an arm64
+    # runner, where this test would run natively on both halves. That is a
+    # release-workflow change (per-platform jobs, a manifest merge) and is
+    # not what fixes this; the gate stays correct under it, since a native
+    # build takes the `then` branch.
+    && if [ "$TARGETPLATFORM" = "$BUILDPLATFORM" ]; then \
+        printf '<h1>agent-browser-ok</h1>' > /tmp/ab-smoke.html \
+        && chmod a+r /tmp/ab-smoke.html \
+        && su aep -s /bin/bash -c 'set -e; \
+            agent-browser open file:///tmp/ab-smoke.html; \
+            agent-browser get text h1 | grep agent-browser-ok; \
+            agent-browser close --all' \
+        # The smoke test leaves a state directory behind; a socket and pid file
+        # baked into the image would be stale in every pod started from it.
+        && rm -rf /tmp/ab-smoke.html /home/aep/.agent-browser; \
+    else \
+        echo "agent-browser smoke test skipped: ${TARGETPLATFORM} is being built on ${BUILDPLATFORM}, and chromium does not run under emulation"; \
+    fi
 
 WORKDIR /app
 
@@ -193,6 +374,20 @@ RUN npm ci --include=optional \
 # `chown -R /app` (which would rewrite every file as a fresh layer and
 # roughly double the image size).
 COPY --chown=aep:aep . .
+
+# The process ancestor of everything a task runs. It sets `ulimit -c 0` and
+# execs the CMD below; the reasoning is in the file, and the reason it exists at
+# all is that nothing else in the stack can set an rlimit — Kubernetes has no
+# `ulimit` field, so `docker run --ulimit` has no cluster equivalent and the
+# coding-agent Job template renders a container with image/env/resources and
+# nothing that reaches one. It has to be here, and a wrapper is the only shape
+# that covers BOTH the exec-form default below and any command a caller passes
+# instead (the playground's local entrypoint, a `docker run … bash` for triage).
+#
+# --chmod rather than relying on the mode bit in git: a build from a checkout
+# that lost the executable bit would otherwise produce an image whose ENTRYPOINT
+# is not executable, which fails at `docker run`, long after the build.
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/aep-runner-entrypoint
 
 # The authored skill library. A session's base plugin is ASSEMBLED from it at
 # startup (lib/base_plugin.ts selects the runner's skills and applies the mode
@@ -244,4 +439,10 @@ RUN HOME=/home/aep bash /tmp/bal-library-tool/install.sh \
     && bal library --help > /dev/null \
     && rm -rf /tmp/bal-library-tool
 
-ENTRYPOINT ["npx", "tsx", "src/oneshot.ts"]
+# ENTRYPOINT + CMD, not one exec-form ENTRYPOINT. The wrapper is the entrypoint
+# so its limits cannot be bypassed, and the real command is the CMD so it can
+# still be replaced — `docker run <image> npx tsx src/local.ts` and a triage
+# shell both go through the wrapper and keep `ulimit -c 0`, which an argument
+# appended to a single ENTRYPOINT would not.
+ENTRYPOINT ["/usr/local/bin/aep-runner-entrypoint"]
+CMD ["npx", "tsx", "src/oneshot.ts"]

@@ -32,15 +32,19 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import {
+  Boxes,
   Check,
   ChevronDown,
   ChevronRight,
+  Database,
   FileText,
   RefreshCw,
   Network,
   LayoutDashboard,
+  Plug,
   ShieldCheck,
   TriangleAlert,
+  Workflow,
 } from "@wso2/oxygen-ui-icons-react";
 import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
 import { PRD_PATH, type SpecFileEntry } from "../api/mapping";
@@ -53,10 +57,12 @@ import {
   type SectionReason,
 } from "../lib/railSections";
 import { ProblemsDialog } from "./ProblemsDialog";
+import type { DependencyState } from "../lib/dependencyStates";
 import {
   buildDesignSection,
   selectionKey,
   DESIGN_CELL_PATH,
+  DOMAIN_MODEL_PATH,
   SECURITY_JSON_PATH,
   type SpecSelection,
 } from "../api/designTree";
@@ -74,10 +80,17 @@ export function SpecFileList({
   sections,
   plan,
   onReason,
+  dependencyStates,
 }: {
   files: SpecFileEntry[];
   selection: SpecSelection | null;
   onSelect: (sel: SpecSelection) => void;
+  /**
+   * One state per external dependency (name → folded read model), so a row
+   * can say what the user must do without opening the page. Absent while the
+   * read model has not loaded; the rows then carry no chip.
+   */
+  dependencyStates?: Record<string, DependencyState> | undefined;
   /** Re-generate the design (#159) — shown in the Designs header once a design
    *  exists; fires the same design-generation room turn as the header CTA. */
   onRegenerateDesign: () => void;
@@ -150,6 +163,28 @@ export function SpecFileList({
       return next;
     });
   };
+  // A dependency's group collapses like a component's, remembered by name.
+  const [collapsedDependencies, setCollapsedDependencies] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleDependency = (name: string) => {
+    setCollapsedDependencies((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+  // The Flows group collapses like a component group; both start open.
+  const [flowsCollapsed, setFlowsCollapsed] = useState(false);
+
+  // The design section has content to show (and a design to re-generate)
+  // once any of its documents, flows or components exist.
+  const hasDesign =
+    design.hasCellDsl ||
+    design.overview.length > 0 ||
+    design.flows.length > 0 ||
+    design.hasComponents;
 
   // "Not created yet" — flat, and true. The old note claimed agents were
   // "being derived…" over sections nobody had asked for yet, which stated
@@ -317,6 +352,70 @@ export function SpecFileList({
     );
   };
 
+  // A collapsible group's header — Flows, every component and every
+  // dependency share it, so the three kinds of group read the same: chevron,
+  // glyph, name. The glyph is what tells them apart at a glance (#686). A
+  // dependency's header also carries where it stands (`trailing`), so the
+  // rail says what the build waits on before the drawer does.
+  const groupHeader = (
+    label: string,
+    icon: React.ReactNode,
+    collapsed: boolean,
+    onToggle: () => void,
+    trailing?: React.ReactNode,
+  ) => (
+    <ListItemButton
+      onClick={onToggle}
+      sx={{ px: 2, py: 0.25, minHeight: 0 }}
+      aria-expanded={!collapsed}
+      aria-label={`${collapsed ? "Expand" : "Collapse"} ${label}`}
+    >
+      <ListItemIcon sx={{ minWidth: 20 }}>
+        {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+      </ListItemIcon>
+      <ListItemIcon sx={{ minWidth: 24, color: "text.secondary" }}>{icon}</ListItemIcon>
+      <ListItemText
+        primary={label}
+        slotProps={{
+          primary: {
+            variant: "body2",
+            fontWeight: 600,
+            color: "text.secondary",
+            noWrap: true,
+          },
+        }}
+      />
+      {trailing}
+    </ListItemButton>
+  );
+
+  // What a dependency's header says after its name: the one thing the user
+  // must do as an amber mark (the words on hover and as its label), or the
+  // qualifier on a resolved one as quiet text. Nothing while the read model
+  // has not loaded.
+  const dependencyMark = (name: string) => {
+    const state = dependencyStates?.[name];
+    if (!state) return null;
+    if (state.blocking) {
+      return (
+        <Tooltip title={state.todo}>
+          <Box
+            sx={{ display: "flex", flexShrink: 0, color: "warning.main" }}
+            aria-label={`${name}: ${state.todo}`}
+          >
+            <TriangleAlert size={14} />
+          </Box>
+        </Tooltip>
+      );
+    }
+    if (state.flags.length === 0) return null;
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0, ml: 1 }}>
+        {state.flags.join(", ")}
+      </Typography>
+    );
+  };
+
   const flatGroup = (section: RailSection, groupFiles: SpecFileEntry[]) => (
     <Box sx={{ mb: 1 }}>
       {sectionHeader(section)}
@@ -342,11 +441,12 @@ export function SpecFileList({
     <Box component="nav" aria-label="Spec files" sx={{ py: 1 }}>
       {flatGroup(sectionOf("requirements"), requirements)}
 
-      {/* Design — grouped by component, with synthetic diagram entries. */}
+      {/* Design — the documents as rows (Architecture, Domain model, Security),
+          then the groups: Flows first, then one per component. */}
       <Box sx={{ mb: 1 }}>
         {sectionHeader(
           sectionOf("design"),
-          (design.hasComponents || design.overview.length > 0) && (
+          hasDesign && (
             <Tooltip
               title={
                 regenerateDisabled
@@ -368,7 +468,7 @@ export function SpecFileList({
             </Tooltip>
           ),
         )}
-        {design.hasComponents || design.hasCellDsl || design.overview.length > 0 ? (
+        {hasDesign ? (
           <List dense disablePadding>
             {design.hasCellDsl &&
               row(
@@ -379,7 +479,11 @@ export function SpecFileList({
                 DESIGN_CELL_PATH,
               )}
             {design.overview.map((f) =>
-              row(fileSel(f.path), fileLabel(f.path), <LayoutDashboard size={16} />),
+              row(
+                fileSel(f.path),
+                fileLabel(f.path),
+                f.path === DOMAIN_MODEL_PATH ? <Database size={16} /> : <FileText size={16} />,
+              ),
             )}
             {/* ONE rail entry for security.json — present file shows the row;
                 missing file hides it. */}
@@ -391,34 +495,51 @@ export function SpecFileList({
                 false,
                 SECURITY_JSON_PATH,
               )}
+            {/* The key flows — one group, one row per flow, shown only once a
+                flow exists or a turn has planned one (a planned flow rides in
+                as a ghost like any other declared path). */}
+            {design.flows.length > 0 && (
+              <Box sx={{ mt: 0.5 }}>
+                {groupHeader("Flows", <Workflow size={14} />, flowsCollapsed, () =>
+                  setFlowsCollapsed((v) => !v),
+                )}
+                <Collapse in={!flowsCollapsed} unmountOnExit>
+                  {design.flows.map((f) =>
+                    row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),
+                  )}
+                </Collapse>
+              </Box>
+            )}
+            {/* The external dependencies — one directory each, grouped like a
+                component: the definition, the interface it exposes, an SDK
+                manifest. They sit between the flows and the components,
+                the plug glyph telling them apart. */}
+            {design.dependencies.map((d) => {
+              const collapsed = collapsedDependencies.has(d.name);
+              return (
+                <Box key={`dependency:${d.name}`} sx={{ mt: 0.5 }}>
+                  {groupHeader(
+                    d.name,
+                    <Plug size={14} />,
+                    collapsed,
+                    () => toggleDependency(d.name),
+                    dependencyMark(d.name),
+                  )}
+                  <Collapse in={!collapsed} unmountOnExit>
+                    {d.files.map((f) =>
+                      row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),
+                    )}
+                  </Collapse>
+                </Box>
+              );
+            })}
             {design.components.map((c) => {
               const collapsed = collapsedComponents.has(c.name);
               return (
                 <Box key={c.name} sx={{ mt: 0.5 }}>
-                  <ListItemButton
-                    onClick={() => toggleComponent(c.name)}
-                    sx={{ px: 2, py: 0.25, minHeight: 0 }}
-                    aria-expanded={!collapsed}
-                    aria-label={`${collapsed ? "Expand" : "Collapse"} ${c.name}`}
-                  >
-                    <ListItemIcon sx={{ minWidth: 20 }}>
-                      {collapsed ? (
-                        <ChevronRight size={14} />
-                      ) : (
-                        <ChevronDown size={14} />
-                      )}
-                    </ListItemIcon>
-                    <ListItemText
-                      primary={c.name}
-                      slotProps={{
-                        primary: {
-                          variant: "body2",
-                          fontWeight: 600,
-                          color: "text.secondary",
-                        },
-                      }}
-                    />
-                  </ListItemButton>
+                  {groupHeader(c.name, <Boxes size={14} />, collapsed, () =>
+                    toggleComponent(c.name),
+                  )}
                   <Collapse in={!collapsed} unmountOnExit>
                     {c.files.map((f) =>
                       row(fileSel(f.path), fileLabel(f.path), <FileText size={16} />, true),

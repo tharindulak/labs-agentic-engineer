@@ -175,8 +175,8 @@ func (l *loop) fillMilestone(ctx workflow.Context) (settled bool, res RunResult,
 	return false, RunResult{}, nil
 }
 
-// deliverVersion is the dev run's onEmpty bookend: the version is deployed-green,
-// so file its validation task and settle.
+// deliverVersion is the dev run's onEmpty bookend: the milestone has no work
+// left, so — IF the version is serving — file its validation task and settle.
 //
 // Minting HERE, and not at plan time, is load-bearing twice over. An issue
 // nothing can work until every component deploys would sit in the working set and
@@ -195,7 +195,32 @@ func (l *loop) fillMilestone(ctx workflow.Context) (settled bool, res RunResult,
 // EnsureValidationIssue answers 0, so no validation task exists, so nothing will
 // ever judge this version — and an empty verdict would read as "any moment now"
 // forever. `skipped` says what is true.
+//
+// # The gate: serving(V), asserted rather than inferred
+//
+// "Deployed-green" used to be INFERRED from a sequence of correct cycles — the
+// working set emptied and the last cycle ended green, so everything must be up.
+// That is the same class of predicate ADR-0017 removed from validation, and it
+// failed the same way: a component the cycles never promoted was never
+// contradicted by any of them, so a version shipped with an API nothing had
+// bound, its validation task filed against software that was not running.
+//
+// So the version is READ here (ADR-0026) and every component in the DESIGN must
+// be serving. Anything else settles `version-incomplete` naming what was not,
+// which by the loop's invariants should be unreachable — a behind component
+// whose providers are met is promoted by the cycle's reconcile, and a failed
+// deployment mints a fix issue that keeps the working set non-empty. It is the
+// case that survives being unreachable that this exists for.
 func (l *loop) deliverVersion(ctx workflow.Context) (RunResult, error) {
+	version, err := l.readVersionState(ctx)
+	if err != nil {
+		return l.result(), err
+	}
+	if !version.Serving() {
+		workflow.GetLogger(ctx).Error("the milestone has no work left and the version is not serving",
+			"milestone", l.in.MilestoneNumber, "tag", l.in.Tag, "notServing", version.Describe())
+		return l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonVersionIncomplete)
+	}
 	issue, err := l.ensureValidationIssue(ctx)
 	if err != nil {
 		return l.result(), err

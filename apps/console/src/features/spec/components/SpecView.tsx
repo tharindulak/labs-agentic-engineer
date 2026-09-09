@@ -65,6 +65,7 @@ import { CollabTextArea } from "../collab/CollabTextArea";
 import { SpecMdEditor } from "../collab/SpecMdEditor";
 import { useYTextString } from "../collab/useYTextString";
 import { useTurnEndFlush } from "../collab/useTurnEndFlush";
+import { refreshRoomCopy } from "../collab/refreshRoomCopy";
 import { START_COMMAND } from "@aep/contracts/commands";
 import { fragmentToMarkdown } from "@aep/collab-doc";
 import { prdUnsettled } from "../lib/prdUnsettled";
@@ -91,6 +92,9 @@ import type { DependencyResolutionIntent } from "../../projects/lib/dependencyRe
 import { usePlan } from "../../agent-chat/usePlan";
 import { approvalInputsFor } from "../lib/buildInputs";
 import { BuildDependencyDrawer } from "./BuildDependencyDrawer";
+import { DependencyView } from "./DependencyView";
+import { computeDependencyStates } from "../lib/dependencyStates";
+import { RESOLVE_ALL_DEPENDENCIES_COMMAND } from "../../projects/lib/dependencyResolutionMessage";
 import { SpecFileList } from "./SpecFileList";
 import { CellDiagramPanel } from "./CellDiagramPanel";
 import { WireframePanel } from "./WireframePanel";
@@ -98,8 +102,15 @@ import { OpenApiView } from "@aep/ui-openapi-view";
 import { DesignView } from "@aep/ui-design-view";
 import type { DependencyStatusInfo } from "@aep/ui-design-view";
 import { ValidationView } from "@aep/ui-validation-view";
-import { type SpecSelection } from "../api/designTree";
-import { DESIGN_CELL_PATH, componentOf, followSelection } from "../api/designTree";
+import {
+  type SpecSelection,
+  DESIGN_CELL_PATH,
+  componentOf,
+  dependencyDefinitionPath,
+  dependencyOf,
+  followSelection,
+  isDependencyDefinition,
+} from "../api/designTree";
 import { useSession } from "../../../auth/SessionContext";
 
 type PreflightItem = components["schemas"]["PreflightItem"];
@@ -285,7 +296,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   const search = useSearch({ strict: false }) as {
     generate?: "design";
     view?: "architecture";
-  };
+    file?: string;
+};
   const generate = search.generate;
   const agentInRoom = collab.peers.some((p) => p.kind === "agent");
   const hasDesignCell = files.some((f) => f.path === DESIGN_CELL_PATH);
@@ -303,6 +315,22 @@ export function SpecView({ projectName }: { projectName: string }) {
   useEffect(() => {
     if (search.view === "architecture") setSelection({ kind: "cell-diagram" });
   }, [search.view]);
+
+  // `?file=` — a click on a document link in the chat (the design turn's
+  // closing list of open dependencies). Select it as a manual choice, then
+  // strip the param so a rail click afterwards is never undone by a reload.
+  const linkedFile = search.file;
+  useEffect(() => {
+    if (!linkedFile) return;
+    setSelection({ kind: "file", path: linkedFile });
+    void navigate({
+      to: "/projects/$projectName/spec",
+      params: { projectName },
+      search: (prev: Record<string, unknown>) =>
+        Object.fromEntries(Object.entries(prev).filter(([k]) => k !== "file")),
+      replace: true,
+    });
+  }, [linkedFile, navigate, projectName]);
 
   // Follow the write (#576, ADR-0026): while a turn runs, the editor selects
   // each artifact as its write starts, so the passive watcher — the default
@@ -391,7 +419,7 @@ export function SpecView({ projectName }: { projectName: string }) {
     [dependencies.data, selectedComponentName],
   );
   // Keyed by dependency name for DesignView's optional dependencyStatus prop
-  // — status/reason are the ONLY fields this map carries. candidates/config
+  // — status/reason are the ONLY fields this map carries. suggestions/config
   // are already in the raw design.json DesignView parses itself; see
   // DesignViewProps.dependencyStatus's comment for why status/reason can't
   // join them.
@@ -424,7 +452,7 @@ export function SpecView({ projectName }: { projectName: string }) {
     [dependencies.data, selectedComponentName],
   );
   // Fires Task 5's seeded chat message with the dependency's FULL endpoint
-  // entry (status/reason/candidates/config included) — never the
+  // entry (status/reason/suggestions/config included) — never the
   // locally parsed one, which deliberately drops status/reason. `intent`
   // (#252 Task 17) is "resolve" from the design-view card's chat button on a
   // non-resolved dependency, or "reconsider" from its hamburger's "Discuss in
@@ -439,36 +467,34 @@ export function SpecView({ projectName }: { projectName: string }) {
     resolveDependencyViaChat(selectedComponentName, dep, intent);
   };
 
-  // #252 Task 10: the build dependency drawer's "Resolve via chat" — same
-  // seeded-message flow as handleResolveDependency above, but keyed off a
-  // PreflightItem (component/dependency name) rather than the currently
-  // selected component's design.json, since the drawer's items can span
-  // ANY of the project's service components, not just the one selected in
-  // the file tree. `intent` (#252 Task 17) is "resolve" from a blocker/
-  // external-spec panel's chat button, or "reconsider" from an
-  // external-config/platform-resource/org-service panel's hamburger.
-  //
-  // #252 Task 15: also closes the drawer, for BOTH intents. The drawer is a
-  // MUI overlay Drawer (unlike the side-by-side chat panel AppLayout mounts —
-  // see its own comment above `chatOpen`), so left open it covers the chat
-  // panel the seeded message just opened and the user can't see what they're
-  // supposed to respond to. Closing only happens here, on the explicit click —
-  // NOT on turn-end (the useEffect above deliberately leaves the drawer open
-  // and just refreshes its items; re-opening mid-resolution is out of scope,
-  // matching Task 10's "do not auto-reopen" decision). The design-view
-  // "Resolve in chat" cards (handleResolveDependency above) have no
-  // equivalent occlusion: they render in the main content pane, which the
-  // chat panel opens BESIDE (Collapse in AppLayout), never over.
-  const handleResolveDrawerDependency = (
-    item: PreflightItem,
-    intent: DependencyResolutionIntent,
-  ) => {
-    const dep = (
-      dependencies.data?.find((c) => c.componentName === item.component)
-        ?.dependencies ?? []
-    ).find((d) => d.name === item.dependency);
-    if (!dep) return;
-    resolveDependencyViaChat(item.component, dep, intent);
+  // One state per external dependency (its definition is one file, so its
+  // state is one answer): the rail's marks, the definition view and the Build
+  // drawer all read this fold of the per-component read model.
+  const dependencyStates = useMemo(
+    () => computeDependencyStates(dependencies.data ?? []),
+    [dependencies.data],
+  );
+  // The definition view's Resolve / Reconsider. The component is context for
+  // the reconsider's prose only; the resolve is the skill command.
+  const handleResolveFromDefinition = (name: string, intent: DependencyResolutionIntent) => {
+    const state = dependencyStates[name];
+    resolveDependencyViaChat(state?.usedBy[0] ?? "", state?.dependency ?? { kind: "external", name }, intent);
+  };
+  // The definition view's two writes land in git outside the room; the room's
+  // copy of the definition is brought up to date here, so the pane — which
+  // reads the room first — shows the interface the moment it is on file.
+  const handleDependencyCommitted = (name: string) =>
+    refreshRoomCopy(projectName, collab.getFileText, dependencyDefinitionPath(name)).then(() => undefined);
+  // The Build drawer hands off to the dependency's definition — a file,
+  // rendered by DependencyView like a component's design.json — and closes,
+  // since as an overlay it would cover what it just opened; or it runs the
+  // batch flow.
+  const handleOpenDependencyFromDrawer = (name: string) => {
+    setDependencyDrawerOpen(false);
+    selectManually({ kind: "file", path: dependencyDefinitionPath(name) });
+  };
+  const handleResolveAllDependencies = () => {
+    setPendingSeed(chatKeyFor(orgHandle ?? "default", projectName), RESOLVE_ALL_DEPENDENCIES_COMMAND);
     setDependencyDrawerOpen(false);
   };
 
@@ -490,10 +516,13 @@ export function SpecView({ projectName }: { projectName: string }) {
     /^specs\/validation\/validation-criteria\.json$/.test(
       selectedFile?.path ?? "",
     );
+  // A dependency's definition renders as its own structured view (ADR-0028)
+  // — the same path a component's design.json takes.
+  const isDependencyDefinitionFile = isDependencyDefinition(selectedFile?.path ?? "");
   // The structured files share the read-only render path (no collab editor,
   // sourced from the live doc or the committed fetch).
   const isStructuredFile =
-    isOpenApiFile || isComponentDesignFile || isValidationCriteriaFile;
+    isOpenApiFile || isComponentDesignFile || isValidationCriteriaFile || isDependencyDefinitionFile;
   // Canvas-based views (cell diagram, Excalidraw) need a flex-column,
   // overflow-hidden ancestor so their own `flex: 1` roots get a real
   // measured height to stretch into — a plain overflow:auto block (used for
@@ -1341,6 +1370,7 @@ export function SpecView({ projectName }: { projectName: string }) {
             entry={roomQuestion}
             org={orgHandle ?? "default"}
             projectName={projectName}
+            onDependencyCommitted={handleDependencyCommitted}
           />
         ) : (
           <Box sx={{ flexGrow: 1, minHeight: 0, display: "flex" }}>
@@ -1362,6 +1392,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                 sections={railSections}
                 plan={planEntries}
                 onReason={onRailReason}
+                dependencyStates={dependencyStates}
               />
             </Box>
             <Box
@@ -1412,6 +1443,17 @@ export function SpecView({ projectName }: { projectName: string }) {
                       <OpenApiView spec={structuredLive} />
                     ) : isValidationCriteriaFile ? (
                       <ValidationView criteria={structuredLive} />
+                    ) : isDependencyDefinitionFile ? (
+                      <DependencyView
+                        projectName={projectName}
+                        name={dependencyOf(selectedFile.path) ?? ""}
+                        definition={structuredLive}
+                        state={dependencyStates[dependencyOf(selectedFile.path) ?? ""]}
+                        onOpenFile={(path) => selectManually({ kind: "file", path })}
+                        onResolve={(name) => handleResolveFromDefinition(name, "resolve")}
+                        onReconsider={(name) => handleResolveFromDefinition(name, "reconsider")}
+                        onCommitted={handleDependencyCommitted}
+                      />
                     ) : (
                       <DesignView
                         design={structuredLive}
@@ -1430,6 +1472,18 @@ export function SpecView({ projectName }: { projectName: string }) {
                       <ValidationView
                         key={content.data.sha}
                         criteria={content.data.content}
+                      />
+                    ) : isDependencyDefinitionFile ? (
+                      <DependencyView
+                        key={content.data.sha}
+                        projectName={projectName}
+                        name={dependencyOf(selectedFile.path) ?? ""}
+                        definition={content.data.content}
+                        state={dependencyStates[dependencyOf(selectedFile.path) ?? ""]}
+                        onOpenFile={(path) => selectManually({ kind: "file", path })}
+                        onResolve={(name) => handleResolveFromDefinition(name, "resolve")}
+                        onReconsider={(name) => handleResolveFromDefinition(name, "reconsider")}
+                        onCommitted={handleDependencyCommitted}
                       />
                     ) : (
                       <DesignView
@@ -1640,7 +1694,8 @@ export function SpecView({ projectName }: { projectName: string }) {
         submitting={dependencyDrawerOpen && buildPhase === "building"}
         onClose={() => setDependencyDrawerOpen(false)}
         onContinue={(inputs) => void onContinueBuild(inputs)}
-        onResolveDependency={handleResolveDrawerDependency}
+        onOpenDependency={handleOpenDependencyFromDrawer}
+        onResolveAll={handleResolveAllDependencies}
       />
     </PageContent>
   );

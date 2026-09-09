@@ -139,12 +139,25 @@ const (
 	// two send a human to different places: a red build is code that did not
 	// compile, while this is code that compiled and would not run — a bad image,
 	// an unrenderable trait, a missing dependency at runtime.
-	RunReasonDeployBudget     = "deploy-budget"
-	RunReasonFixChainBudget   = "fix-chain-budget"
-	RunReasonConflictBudget   = "conflict-budget"
-	RunReasonNoProgress       = "no-progress"
-	RunReasonCycleCeiling     = "cycle-ceiling"
-	RunReasonValidationFailed = "validation-failed"
+	RunReasonDeployBudget = "deploy-budget"
+	// RunReasonVersionIncomplete — the milestone has no work left, and the
+	// version is still not serving. Every component that is not serving is named
+	// in the settle log and on the run's live status (ADR-0026).
+	//
+	// By the loop's own invariants it should be unreachable: a component that is
+	// behind and whose providers are met is promoted by the cycle's reconcile,
+	// and one whose deployment failed mints a fix issue that keeps the working
+	// set non-empty. It exists because the alternative to being unreachable is
+	// being SILENT — the shape it replaces settled such a version `succeeded`,
+	// minted its validation task and closed the increment with an API nothing had
+	// ever bound. A gate that should never fire is worth having when the thing it
+	// catches is indistinguishable from success.
+	RunReasonVersionIncomplete = "version-incomplete"
+	RunReasonFixChainBudget    = "fix-chain-budget"
+	RunReasonConflictBudget    = "conflict-budget"
+	RunReasonNoProgress        = "no-progress"
+	RunReasonCycleCeiling      = "cycle-ceiling"
+	RunReasonValidationFailed  = "validation-failed"
 	// RunReasonValidationUnreported is its own failure class, distinct from
 	// validation-failed: the suite going red and the agent delivering no report at
 	// all are different explanations, and a terminal reason exists to explain.

@@ -16,30 +16,61 @@
  * under the License.
  */
 
-import { Typography } from "@wso2/oxygen-ui";
+import { alpha, Box, Stack, Typography } from "@wso2/oxygen-ui";
+import { WorkingPulse } from "../../agent-chat/components/WorkingIndicator";
+import type { StatusLine } from "../../tasks/lib/statusLine";
 
 /**
- * What the run is doing right now, said once above the criterion rows.
- *
- * Shared by both tiles because both can be on screen while a cycle is in flight:
- * a first attempt renders PendingTile, a repeat renders VerdictTile over the
- * previous attempt's verdict. A note that appeared on only one of them would go
- * missing exactly when a reader is most anxious about a run — the repeat.
- *
- * It renders ONLY in the windows where the rows below have nothing to say (see
- * liveLine.ts), so it never competes with them. That is why it is set quietly:
- * when it is on screen it is the only thing moving, and when the rows are moving
- * it is not on screen at all.
+ * MUI sizes an Alert's message column to fit-content, so a tinted child stops
+ * short of the tile's edge. Both tiles spread this to let the note span.
  */
-export function LiveNote({ note }: { note: string }) {
-  if (!note) return null;
+export const FULL_WIDTH_ALERT_MESSAGE = {
+  "& .MuiAlert-message": { width: "100%" },
+} as const;
+
+/**
+ * What the run is doing right now, above the criterion rows. Shared by both
+ * tiles — a first attempt renders PendingTile, a repeat renders VerdictTile.
+ *
+ * Rendered ONLY while validation is running (see ValidationPage): the pulse
+ * claims an agent is working, and it would be a lie over a settled verdict.
+ *
+ * The note may be a plain sentence the console derived from the rows, or one
+ * POSTED on the run's issue — and a posted one carries who wrote it. Only the
+ * agent's is labelled. Most posted lines are the platform reporting a tool call
+ * it watched, which is what the pulse beside them already means; the agent
+ * speaks between them for what no command can show, and that line is worth more
+ * than the one before it. Labelling the common case would spend the reader's
+ * attention on the case that needs none.
+ */
+export function LiveNote({ note }: { note: string | StatusLine }) {
+  const text = typeof note === "string" ? note : note.text;
+  const fromAgent = typeof note !== "string" && note.writer === "agent";
+  if (!text) return null;
   return (
-    <Typography
-      variant="body2"
-      color="text.secondary"
-      sx={{ mt: 0.5, fontStyle: "italic" }}
+    <Stack
+      direction="row"
+      spacing={1}
+      sx={{
+        // Centred with no offset, as WorkingIndicator pairs this dot with a label.
+        alignItems: "center",
+        mt: 1,
+        p: 1.25,
+        borderRadius: 1.5,
+        // From text.primary so it inverts with the theme: action.hover is ~4%
+        // black in light mode, which vanished on the Alert's own info tint.
+        bgcolor: (t) => alpha(t.palette.text.primary, 0.08),
+      }}
     >
-      {note}
-    </Typography>
+      <WorkingPulse />
+      <Typography variant="body2" sx={{ minWidth: 0 }}>
+        {fromAgent && (
+          <Box component="span" sx={{ color: "text.secondary" }}>
+            The agent:{" "}
+          </Box>
+        )}
+        {text}
+      </Typography>
+    </Stack>
   );
 }

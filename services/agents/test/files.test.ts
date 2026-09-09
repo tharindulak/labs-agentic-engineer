@@ -24,7 +24,7 @@ import { SkillReadError, type SkillSource } from "../src/agents/main/skill-sourc
 import { testSkillSource, type TestSkill } from "./skill-source.js";
 
 const SKILL_LIST: TestSkill[] = [
-  { name: "component-architecture", description: "deriving components", content: "Components live at specs/design/components/<name>/design.md." },
+  { name: "component-architecture", description: "deriving components", content: "Components live at specs/design/components/<name>/design.json." },
   { name: "openapi-conventions", description: "openapi", content: "operationId is lowerCamelCase" },
 ];
 const SKILLS = testSkillSource(SKILL_LIST);
@@ -183,8 +183,8 @@ test("loadSkill I/O fault returns could-not-read — never unknown skills", asyn
 });
 
 // #576: declaring a plan must NOT end the turn — the agent says what it is
-// about to write and then writes it. The call site pairs `hasToolCall` stop
-// conditions with the question tools only; here we hold the other half of that
+// about to write and then writes it. The call site's stop condition names the
+// question tools only; here we hold the other half of that
 // contract: the tool resolves immediately rather than parking on the user.
 test("declare_plan acknowledges and resolves — it never awaits a human", async () => {
   const tools = buildFileToolSet(new FileBundle({})).tools;

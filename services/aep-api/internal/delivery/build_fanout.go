@@ -193,12 +193,20 @@ var ErrProvisionPermanent = errors.New("permanent provision failure")
 type ComponentDeploy struct {
 	Component   string `json:"component"`
 	Environment string `json:"environment"`
-	// Release is the ComponentRelease this deployment pinned. Empty on a read
-	// that only observed the binding.
+	// Release is the ComponentRelease this deployment pins — the release a
+	// promote just wrote, or the one a READ found on the binding. Empty when the
+	// binding does not exist yet, and on a converge, which deliberately moves no
+	// pin.
 	Release string `json:"release,omitempty"`
 	// Ready is the binding's aggregate Ready condition being True (or the
 	// component being deliberately undeployed).
 	Ready bool `json:"ready"`
+	// Undeploy is spec.state == Undeploy: somebody took this component out of
+	// the environment on purpose. It rides beside Ready, which it also sets,
+	// because the two mean opposite things to a RECONCILE — "it is up" versus
+	// "nothing is owed here" — and a pass that could not tell them apart would
+	// promote a release over a deliberate withdrawal.
+	Undeploy bool `json:"undeploy,omitempty"`
 	// Failed is Ready=False — a verdict, not a wait.
 	Failed bool `json:"failed,omitempty"`
 	// Reason is OpenChoreo's own condition reason, carried verbatim for the

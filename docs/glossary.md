@@ -129,7 +129,7 @@ ephemeral Component of this type in the **milestone's own project**, so OC
 renders the cycle's `batch/v1 Job` into the project's release NS and materialises
 its ExternalSecrets from the org's secret store (refs only; the BFF writes no
 secret material). The type pins the cost envelope: `backoffLimit: 0`,
-`activeDeadlineSeconds` (1h default, 2h for a validation cycle),
+`activeDeadlineSeconds` (3h for a coding cycle, 2h for a validation cycle),
 `ttlSecondsAfterFinished`, and schema-bounded CPU/memory requests and limits.
 The type name is also the key wso2cloud's entitlement gate reads
 (`job/coding-agent`, `coding-agent`): a create over the org's cap answers `402`,
@@ -388,6 +388,33 @@ durable answer to "what did this cycle work", since the boundary read the
 supervisor dispatches on returns counts), and `mergeVerdict` +`mergeReason` when
 something decided against merging (`declined` by the policy, `refused` by the
 host).
+
+### Crew
+The agents of ONE cycle, arranged as the tree the runtime declared, each carrying
+how long it has been going and how long it has been quiet. Built by
+`buildCrew(events, now)` in `@aep/progress-view` and rendered by the console's
+crew view (`apps/console/design/crew-view.md`); the playground reads the same
+model, so a run looks the same wherever it is watched.
+
+A crew is not a log. The feed answers *what happened*; the crew answers *who is
+doing what, and is anything stuck* — which a flat log cannot, because a stall on
+a log surface is indistinguishable from a log that has scrolled. Every member
+carries a **state**: `working` while events arrive, `waiting` while it is blocked
+inside a FOREGROUND agent it spawned (never idle, and never a warning — the
+silence is explained by a row one level down), `stalled` after 60 seconds of
+silence with a tool call still unanswered, and `done | failed | cancelled` once
+the runtime says so. **Silence is never a verdict**: an agent quiet for ten
+minutes with nothing outstanding is still `working`, with the age stated beside
+it.
+
+The counterpart view over the same model is the **timeline** — one lane per
+agent on the cycle's own time axis, each lane split into the stretches its agent
+worked and the stretches it spent blocked. That split is the point: a lead that
+took 55 minutes is not slow if 41 of them were one spawned agent.
+
+A **crew of one** is not a crew, and gets neither tree nor lanes — a validation
+cycle runs a single validator, and the tree would be chrome around a fact
+already on screen.
 
 ### Arming label
 `aep`, and it says one thing: something may work this issue. It carries no

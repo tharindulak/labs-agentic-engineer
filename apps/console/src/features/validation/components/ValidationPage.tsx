@@ -54,6 +54,7 @@ import {
   type StageTone,
 } from "../../projects/lib/pipeline";
 import { useTask } from "../../tasks/api/queries";
+import { statusLine, type StatusLine } from "../../tasks/lib/statusLine";
 import { useValidationCriteria, useValidationReport } from "../api/queries";
 import {
   answeredRun,
@@ -306,8 +307,22 @@ export function ValidationPage({
   // that is a clone url. get-task serves this issue even though list-tasks hides it
   // — a detail read by number deliberately skips the population filter — and answers
   // with GitHub's own url. The hook is a no-op while the number is 0.
-  const issue = useTask(projectName, issueNumber);
+  //
+  // VALIDATION itself is running, not merely the loop: under `awaiting-fix` the
+  // cycle in flight is coding, so the issue's newest comment is a finished
+  // attempt's last words. Not `live.active` — that fold is off in the log body.
+  const validating = state === "running";
+  // Polled only while validating: its newest comment is the agent's status line,
+  // and a GitHub-backed read must cost nothing when there is nothing to show.
+  const issue = useTask(projectName, issueNumber, { live: validating });
   const issueUrl = issue.data?.issueUrl;
+  // The issue's own words — durable, so intact for a reader who joins an hour in,
+  // where the progress stream's replay window has dropped the early events. Most
+  // of them are the PLATFORM's, posted from what it watched the run do; the
+  // agent's are the ends and its judgements. Gated here because a comment
+  // outlives its run: ungated, the closing summary sat under a settled verdict
+  // forever.
+  const postedLine = validating && issue.data ? statusLine(issue.data) : null;
 
   // The run reached an ANSWER — which is not the same as "everything passed", and
   // not the same as "there is a report". Hooks stay unconditional; `enabled` gates
@@ -318,15 +333,11 @@ export function ValidationPage({
   // it is worth showing, because it says what is being checked and what will never be
   // checked by an agent at all.
   //
-  // Deliberately not every `running` state. A repeat attempt has the previous
-  // attempt's verdict and report, which the page renders with its numbers marked as
-  // the last attempt's; replacing that with a page of Pending chips would throw away
-  // the only results anyone has.
-  //
-  // This gates the PENDING fallback only. A criterion the current attempt is
-  // actually working on gets a live status regardless (see `live` below), which is
-  // what un-freezes a repeat attempt without inventing a row that says nothing:
-  // "Pending" is a guess about every criterion, `Authoring…` is a fact about one.
+  // Gates the pending TILE and the reads behind it, NOT the criterion rows: those
+  // take `validating`, because a row's fallback has to know whether ANY attempt is
+  // in flight. Safe for them, because the report outranks that fallback (see
+  // CriterionChip) — a row the report covers keeps its verdict either way, and only
+  // uncovered rows move.
   const awaitingFirstVerdict = state === "running" && rawVerdict === "";
   // `unreported` MEANS no report was committed at that commit, and the server
   // omits reportPath for it. Requesting the file anyway would 404 to rediscover
@@ -438,9 +449,16 @@ export function ValidationPage({
   // fetched) and a repair cycle busy writing code both look identical to a run
   // that has not started, and the tile announced "Setting up the test harness…"
   // over a run that had finished or was doing something else entirely.
-  const liveNote = live.active
-    ? validationLiveLine(oracle, live.statuses, report.data !== undefined)
-    : "";
+  //
+  // A posted line WINS when there is one. It is strictly better evidence: it comes
+  // from inside the run, it names what is happening rather than inferring it from
+  // which rows have moved, and it survives both a reload and the stream's replay
+  // window. The derived line stays as the fallback for the window before the first
+  // comment lands, and for a run whose posts failed — a `gh` that could not reach
+  // GitHub costs the line, never the run.
+  const liveNote: StatusLine | string =
+    postedLine ??
+    (live.active ? validationLiveLine(oracle, live.statuses, report.data !== undefined) : "");
 
   // The tile stays visible in BOTH bodies — a verdict does not stop being true
   // because the reader switched to the log, and neither does an attempt still being
@@ -611,7 +629,7 @@ export function ValidationPage({
         {headerWithCancelError}
         <EmptyState
           compact
-          description="Nothing validated yet. After a build, your software is checked against the validation criteria in your spec; results appear here."
+          description="Nothing validated yet. After a deployment, the deployed system is checked against the validation criteria in your spec. Results appear here."
         />
       </>
     );
@@ -713,9 +731,11 @@ export function ValidationPage({
         noPadding
         fullWidth
         hideDescription
-        // A first attempt in flight has no report by definition, so every row says
-        // what is ABOUT to happen to it instead of nothing at all.
-        awaitingReport={awaitingFirstVerdict}
+        // `validating`, not `awaitingFirstVerdict`: a row with no result yet waits
+        // on whichever attempt is in flight, first or repeat. Narrow it to the first
+        // and a criterion authored since the last run reads as out of that run while
+        // the current one is on its way to answering it.
+        awaitingReport={validating}
         criteria={criteria.data.content}
         {...(report.data ? { report: report.data.content } : {})}
         live={live.statuses}

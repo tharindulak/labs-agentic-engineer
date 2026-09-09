@@ -1,9 +1,9 @@
 # Implementing wireframes (coding agent)
 
 The companion to the `wireframes` skill for the coding run: how a
-`wireframes.dsl` becomes routes, pages, elements and navigation, and the
-fidelity checklist the PR carries. The grammar you are reading is in
-`SKILL.md`; this file is about honouring it.
+`wireframes.dsl` becomes routes, pages, elements and navigation, and how that
+is evidenced. The grammar you are reading is in `SKILL.md`; this file is about
+honouring it.
 
 The wireframe is the **screen contract** for a `web-application` component.
 The reviewer who validates the deployed app compares the rendered wireframe
@@ -49,10 +49,10 @@ in that order, with that literal content:
 
 | DSL | Build |
 |---|---|
-| `navbar "App \| Nav -> S"` / `sidebar "…"` | the app's real navigation chrome, identical on every screen of a role; each item that carries `-> S` links there |
+| `navbar "App"` / `sidebar "A -> S \| B"` | the pinned design system's canonical app shell — the brand in the top bar, the `sidebar` items as the navigation rail — identical on every screen of a role; each item that carries `-> S` links there. Navigation stays in the rail even if a wireframe put a link in the `navbar` |
 | `heading`, `text`, `link`, `breadcrumb` | the same words on the page |
 | `card "Label \| Value \| Caption"` | a stat tile with that label, that value bound to live data, that caption |
-| `table "A \| B \| C"` + `row` lines | a data table with exactly those columns; the `row`s are example data, so bind the table to the real list |
+| `table "A \| B \| C"` + `row` lines | a data table with exactly those columns, bound to the real list. A column the list endpoint does not return is filled from **one** more request to another list operation of the contract (a name joined on id from the entity list; a count from the child list filtered once and grouped) — never one request per row, and never dropped while some list operation can supply it. Only a column no list can supply is left out, with the gap named in your report |
 | `list`, `tabs`, `badge`, `progress`, `avatar`, `chart`, `image` | the matching UI primitive — a status is a badge, not a paragraph |
 | `input`, `textarea`, `select`, `search`, `checkbox`, `radio`, `toggle` | a real form control whose placeholder/label is the DSL label, wired to submit |
 | `button "X" primary` | a primary-styled button; every button the DSL marks `primary` is primary on the page, and only those. Unmarked buttons take a non-primary style (destructive where the DSL says `danger`) |
@@ -68,6 +68,23 @@ wrong for the data the API actually returns, and say so in the PR.
 and when the request fails. A wireframe shows the happy path; the page
 must not break off it.
 
+**The example data is the mock's seed.** The reviewer compares the running
+page against the rendered wireframe, so mock mode should show the `row`s the
+DSL draws, and a stat `card`'s value should agree with the rows it counts.
+Print them instead of retyping them:
+
+```bash
+node "${AEP_SKILLS_DIR:-.claude/skills}/wireframes/scripts/seed.mjs" specs/design/components/<name>/wireframes.dsl
+```
+
+That prints, per screen, every `table` (columns and its `row`s as records),
+stat `card` (label, value, caption), `list`, `select` (label and preselected
+value) and `badge` as JSON. Map each record onto the provider's schema in the
+mock handlers and derive the stat values from those records. `AEP_SKILLS_DIR`
+is where a run finds the skill library; the fallback is `.claude/skills/`, the
+mirror the platform writes into every project, where this skill's `scripts/`
+also live.
+
 ## Arrow for arrow
 
 Every `-> Screen` — on a button, a link, a table, a navbar or sidebar item —
@@ -80,28 +97,46 @@ Every `flow` block is a journey a role must be able to walk end to end by
 clicking: entry screen first, each screen reachable from the one before. A
 screen you cannot reach from its flow is a broken page, even if it renders.
 
-## The fidelity checklist
+## The evidence
 
-Before the PR, walk the DSL once more and put this in the PR body — one line
-per screen, then one per `flow` — with any gap named beside it:
+Two lists, one pair. The **Task** carries a `Screens:` line and a `Flows:`
+checklist with every box unchecked — that is what must be built, and it is
+what you work from. The **PR body** carries the same two lists with the boxes
+earned ticked. You never tick the Task's copy; re-planning rewrites that body.
+
+The ticks are **evidence, not a claim**, and they come from the walk. Once the
+build is clean, `mock-verification` opens the app in a browser, reaches every
+screen, uses every drawn control and follows every arrow, and reports one line
+per flow and per screen; the lead ticks the PR's lists from that report when it
+opens the PR. You write no checklist of your own — a screen you could not build
+as drawn is a gap you name in your report to the lead, and the walk records it.
 
 ```text
 Wireframe fidelity (specs/design/components/<name>/wireframes.dsl)
 
 Screens
-- [x] RiskQueue → /risk-queue — all elements; "Review next" → QueueRiskDetail
-- [x] MyRisks → /my-risks — all elements; table → RiskDetail
+- [x] RiskQueue → /risk-queue
+- [x] MyRisks → /my-risks
 - [ ] NewRisk → /risks/new — "Register" select not built: no registers endpoint
 
 Flows
-- [x] "Approval queue" (Manager) — RiskQueue → QueueRiskDetail walks by clicking
-- [ ] "Log a risk" (Risk owner) — MyRisks → NewRisk walks; NewRisk → RiskDetail
-      blocked on the missing select
+- [x] F1 · Approval queue — stories 2, 5
+- [ ] F2 · Log a risk — stories 1, 3 — breaks at NewRisk → RiskDetail: the
+      "Register" select is not built
 ```
 
-A screen is ticked only when every element in its block exists on the page
-and every arrow it carries navigates. A flow is ticked only when you can walk
-it end to end by clicking, entry screen first — an unwalkable flow strands the
-screens behind it, so the e2e test written against the acceptance criteria
-cannot reach them either. An unticked line with its reason is fine — it tells
-the reviewer exactly where to look.
+**Screens** come from the Task's `Screens:` line, one line each, naming the
+route built. A screen is ticked when the walk reached it, every drawn control
+acted and every arrow navigated.
+
+**Flows** carry over from the Task's `Flows:` checklist, keeping each one's
+number, name and story set — one line each here, not the Task's labelled
+block, since its persona and `Walk:` chain are recorded there. A flow is ticked
+when the walk went through its chain end to end by clicking, entry screen
+first; otherwise the line names the step it broke at. A flow the Task lists
+appears here even when it could not be built: dropping the line is how a
+missing journey goes unnoticed, and an unwalkable flow strands the stories it
+carries.
+
+Layout and copy are outside the walk. They stay the reviewer's comparison of
+the rendered wireframe against the running page.

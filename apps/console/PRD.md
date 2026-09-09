@@ -92,6 +92,17 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Spec view — the design reads as its parts: the rail's **DESIGN** section
+  lists *Architecture · Domain model · Security* as documents, then a
+  collapsible **Flows** group — one row per key flow, a ghost row while the
+  turn is still planning it — and one group per component, every group header
+  carrying a glyph and every component holding *Design · API · Wireframe*.
+  Presents the bundle shape the platform now writes
+  ([ADR-0020, repo-wide](../../docs/decisions/ADR-0020-design-cell-is-the-design-root.md)):
+  the cell is the design root, the domain model and each key flow are one
+  diagram per file, and *Design overview* retires with the file it named —
+  [#686](https://github.com/wso2/labs-agentic-engineer/issues/686)
+  (no contract change)
 - Point at a passage, say what should change — **any** markdown spec document,
   not just the PRD's lensed lines. A drag snaps to whole blocks on release
   (a partial paragraph becomes the paragraph, a heading takes its section) and
@@ -146,6 +157,23 @@ here: they're the open `console` + `feature` issues.
   once the last value is saved. A Registered External is outside the gate — its
   values live on the org record, which no project surface can clear —
   [ADR-0023](../../docs/decisions/ADR-0023-external-dependency-values-are-a-deploy-gate.md)
+- Every external dependency is a group in the spec rail, shaped like a
+  component's, since its definition is one file in its own directory (repo
+  ADR-0027): the header carries the one thing the user must do, and the rows
+  are its files — the definition, the interface (an OpenAPI document or a
+  GraphQL schema), an SDK manifest. The definition renders as its own view,
+  the way a component's design does: the provider, the interface on file with
+  its provenance, the config keys and who uses it, and every way forward —
+  **Select a provider** (or **Resolve** once one is chosen) runs the guided
+  `/resolve-dependency` flow, whose cards ask which provider and, when neither
+  a published document nor the provider's own documentation exists, how to
+  get its interface; an interface the agent derives from that documentation
+  needs no consent and reads *Derived from docs*, and choosing *proceed on
+  your assumption* on the card is the whole consent for a guess. **Provide interface** opens a modal that lands a
+  document straight in the directory. The design turn's closing list links
+  each open definition. The Build drawer lists what blocks the cut, opens each
+  row's definition, and offers one **Resolve all in chat** —
+  [ADR-0028](design/decisions/ADR-0028-a-dependency-is-a-directory-in-the-rail.md)
 - Empty states teach *what*, never narrate the *how* — the five flow-narrating
   empty states (Builds, Deployments, Validations, Components, Recent activity —
   the last retired with the feed itself, #662)
@@ -274,6 +302,23 @@ here: they're the open `console` + `feature` issues.
   favour of **Agentic Engineer**. First feature to draw on the console lexicon
   (ADR-0019) —
   [#561](https://github.com/wso2/labs-agentic-engineer/issues/561)
+- Deployments, rebuilt as an environment board — a **card per environment**
+  (Development: running version, rollout count, the validation verdict and
+  the promotion; Production: the promotion gate and how much live
+  configuration is set), then a **ledger with one row per environment that
+  runs something** (Version · Milestone · Environment · Status · Validation ·
+  Deployed, the Builds ledger's own table), each row opening the
+  environment's page at `/deployments/$environment`: a summary card
+  (Deployed, Milestone, Validation, the commit that shipped it, a link to the
+  build) and the components running there with **Visit** / **Try API** and
+  their URLs. Connections keep their Configure surface on a card under the
+  ledger. A row is what the environment runs NOW — the platform keeps no
+  deployment record, so the design's past deployments, Duration, Redeploy and
+  runtime log wait on a backend read. The Development card names how many
+  **test users** the project has, one per role, and opens them in a dialog —
+  a table of username, masked password with reveal and copy, role, and the
+  cold-start account — so the card holds one height whatever the design
+  declares. **No contract change** (ADR-0027, amending ADR-0021)
 - Deployments page — one-story rail + environment panel: Development /
   Validation / Production as one numbered rail (Builds-spine vocabulary,
   ADR-0014) with a side panel (version, rollout, endpoints, production

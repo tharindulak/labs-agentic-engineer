@@ -50,7 +50,7 @@ const HEADER_PATTERNS: ReadonlyArray<RegExp> = [
   // — so running this first is what actually redacts the credential in an
   // `Authorization: Bearer <token>` string. Ordering matters now that the
   // entropy backstop (which used to catch the leaked token) is disabled.
-  /(bearer\s+)([A-Za-z0-9._\-]{16,})/gi,
+  /(bearer\s+)([A-Za-z0-9._-]{16,})/gi,
   /(authorization\s*:\s*)(\S+)/gi,
   /(x-api-key\s*:\s*)(\S+)/gi,
 ];

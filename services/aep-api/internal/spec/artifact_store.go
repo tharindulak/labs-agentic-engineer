@@ -28,9 +28,9 @@ import (
 )
 
 // ArtifactStore wraps the GitHub-direct ArtifactService to add value beyond raw
-// file reads: the typed `DesignFile` shape (design.json decode + YAML overview
-// assemble). It is a read + assemble surface — mutations happen via the Files
-// API and are committed straight to `main`.
+// file reads: the typed `DesignFile` shape (design.json decode + root
+// frontmatter assemble). It is a read + assemble surface — mutations happen via
+// the Files API and are committed straight to `main`.
 //
 // Dependency resolution (the old static ExternalAPICatalog) is gone: every
 // dependency's Status/Reason is computed at READ time (AssembleDesignFrom) by
@@ -109,27 +109,47 @@ func (s *ArtifactStore) SetExternalResourceResolver(r ExternalResourceResolver) 
 // DesignFile is the BFF's in-memory representation of the multi-file design
 // artifact. It assembles from the repo layout under `specs/design/`:
 //
-//	design.md                              # overview prose + sourceSpec frontmatter
-//	components/<name>/design.md            # frontmatter (type, language, dependsOn,
-//	                                       # buildpack, appPath, entrypoint) + body
-//	                                       # (componentAgentInstructions)
+//	design.cell                            # the root: cell DSL + optional sourceSpec frontmatter
+//	domain-model.md                        # the ER diagram (entities become the API schemas)
+//	flows/<slug>.md                        # one key flow per file (sequence diagram)
+//	components/<name>/design.json          # the authored component model
 //	components/<name>/openapi.yaml         # OpenAPI 3.0.3 (service components only)
+//
+// Only the structured facts are assembled (components + the root frontmatter);
+// the diagram documents are read as plain bundle files by whoever needs them.
 type DesignFile struct {
-	Overview   string            `json:"overview"`
 	Components []DesignComponent `json:"components"`
-	SourceSpec string            `json:"sourceSpec,omitempty"`
+	// Dependencies are the external dependency definitions on disk
+	// (specs/design/dependencies/<name>/dependency.json), one per name,
+	// sorted. Every component's external edge is hydrated from the matching
+	// entry at assembly; SplitDesign writes them back.
+	Dependencies []DependencyDefinition `json:"dependencies,omitempty"`
+	// LegacyCarriers are the components whose design.json still carries an
+	// external dependency's definition fields (a design from before the
+	// dependency file existed). The next save re-renders them as bare
+	// references and writes the lifted definitions — see derive.go.
+	LegacyCarriers []string `json:"-"`
+	SourceSpec     string   `json:"sourceSpec,omitempty"`
 }
 
-// DesignRootFile is the canonical root design document.
-const DesignRootFile = "design.md"
+// DesignRootFile is the canonical root design document: the cell. Its presence
+// is the design-exists marker, and it carries the optional `sourceSpec` YAML
+// frontmatter (the spec version the design derived from). Both cell parsers
+// (parseCellFacts here, the TS grammar in @aep/cell-diagram-react) skip the
+// frontmatter block.
+const DesignRootFile = "design.cell"
 
 // componentDirPrefix is the path prefix under specs/design/ for per-component
 // directories.
 const componentDirPrefix = "components/"
 
+// dependencyDirPrefix is the path prefix under specs/design/ for per-dependency
+// directories — one external dependency, one definition (dependency_json.go).
+const dependencyDirPrefix = "dependencies/"
+
 // ListDesignFiles returns the design file map at HEAD, under `specs/design/`.
 // Keys are paths relative to that directory, using forward slashes (e.g.
-// `design.md`, `components/user-api/design.md`).
+// `design.cell`, `components/user-api/design.json`).
 func (s *ArtifactStore) ListDesignFiles(ctx context.Context, orgID, projectID string) (map[string]string, error) {
 	files, err := s.artifactSvc.ListDesignFiles(ctx, orgID, projectID)
 	if err != nil {
@@ -280,7 +300,7 @@ func (s *ArtifactStore) resolveExternalDependencies(ctx context.Context, orgID s
 					hits[dep.Name] = registryHit
 				}
 			}
-			dep.Status, dep.Reason = ComputeDependencyStatus(*dep, registryHit, OrgServiceHit{})
+			ApplyDependencyStatus(dep, registryHit, OrgServiceHit{})
 		}
 	}
 }
@@ -291,7 +311,7 @@ func (s *ArtifactStore) resolveExternalDependencies(ctx context.Context, orgID s
 // from a real error.
 func IsNotFound(err error) bool { return errors.Is(err, ErrArtifactNotFound) }
 
-// rootFrontmatter is the YAML frontmatter we accept on the root `design.md`.
+// rootFrontmatter is the YAML frontmatter we accept on the root `design.cell`.
 type rootFrontmatter struct {
 	SourceSpec string `yaml:"sourceSpec,omitempty"`
 }
@@ -324,25 +344,24 @@ func SplitFrontmatter(content string) (fm string, body string, err error) {
 
 // AssembleDesign reconstructs a flat DesignFile from the multi-file map (keys
 // relative to specs/design/, forward slashes). Returns an error if the root
-// `design.md` is missing (callers handle that as "no design yet").
+// `design.cell` is missing (callers handle that as "no design yet").
 func AssembleDesign(files map[string]string) (*DesignFile, error) {
 	root, ok := files[DesignRootFile]
 	if !ok {
-		return nil, fmt.Errorf("design.md missing")
+		return nil, fmt.Errorf("design.cell missing")
 	}
 
-	fm, body, err := SplitFrontmatter(root)
+	fm, _, err := SplitFrontmatter(root)
 	if err != nil {
-		return nil, fmt.Errorf("parse design.md frontmatter: %w", err)
+		return nil, fmt.Errorf("parse design.cell frontmatter: %w", err)
 	}
 	var rfm rootFrontmatter
 	if fm != "" {
 		if err := yaml.Unmarshal([]byte(fm), &rfm); err != nil {
-			return nil, fmt.Errorf("decode design.md frontmatter: %w", err)
+			return nil, fmt.Errorf("decode design.cell frontmatter: %w", err)
 		}
 	}
 	out := &DesignFile{
-		Overview:   strings.TrimSpace(body),
 		SourceSpec: rfm.SourceSpec,
 	}
 
@@ -369,40 +388,30 @@ func AssembleDesign(files map[string]string) (*DesignFile, error) {
 		comp.OpenAPISpec = openapi
 		out.Components = append(out.Components, comp)
 	}
+
+	defs, err := assembleDependencyDefinitions(files)
+	if err != nil {
+		return nil, err
+	}
+	out.Dependencies, out.LegacyCarriers = liftLegacyDefinitions(defs, out.Components)
+	hydrateExternalDependencies(out, files)
 	return out, nil
 }
 
-// SplitDesign marshals a DesignFile back into the multi-file map (keys relative
-// to specs/design/, forward slashes) — the inverse of AssembleDesign:
+// SplitDesign marshals a DesignFile's COMPONENTS back into the multi-file map
+// (keys relative to specs/design/, forward slashes):
 //
-//	design.md                       # root overview + {sourceSpec} frontmatter
 //	components/<name>/design.json    # the authored component model (design_json.go codec)
 //	components/<name>/openapi.yaml    # the sibling spec (service components), when present
 //
-// The per-component design.md is NOT emitted — it was retired with the
-// dependency-management migration (design.json is the sole authored component model).
+// The root `design.cell` is never emitted here: the cell (and its sourceSpec
+// frontmatter) is authored, not rendered — SplitDesign is a per-component
+// render surface (derive.go, design_service.go), not AssembleDesign's inverse.
 func SplitDesign(d *DesignFile) (map[string]string, error) {
 	if d == nil {
 		return nil, fmt.Errorf("nil design")
 	}
-	files := make(map[string]string, 1+2*len(d.Components))
-
-	// Root design.md: optional YAML frontmatter (sourceSpec) + overview.
-	var root strings.Builder
-	if d.SourceSpec != "" {
-		fm, err := yaml.Marshal(rootFrontmatter{SourceSpec: d.SourceSpec})
-		if err != nil {
-			return nil, fmt.Errorf("encode design.md frontmatter: %w", err)
-		}
-		root.WriteString("---\n")
-		root.Write(fm)
-		root.WriteString("---\n\n")
-	}
-	root.WriteString(d.Overview)
-	if !strings.HasSuffix(d.Overview, "\n") {
-		root.WriteString("\n")
-	}
-	files[DesignRootFile] = root.String()
+	files := make(map[string]string, 2*len(d.Components)+len(d.Dependencies))
 
 	for _, comp := range d.Components {
 		body, err := marshalComponentDesignJSON(comp.Name, comp)
@@ -414,18 +423,35 @@ func SplitDesign(d *DesignFile) (map[string]string, error) {
 			files[componentDirPrefix+comp.Name+"/openapi.yaml"] = comp.OpenAPISpec
 		}
 	}
+	for _, def := range d.Dependencies {
+		body, err := marshalDependencyDefinitionJSON(def.Name, def)
+		if err != nil {
+			return nil, fmt.Errorf("marshal dependency %q: %w", def.Name, err)
+		}
+		files[dependencyDesignKey(def.Name)] = string(body)
+	}
 	return files, nil
 }
 
 // ComponentNamesIn walks the file map and returns the unique component
 // directory names found under `components/`, sorted alphabetically.
 func ComponentNamesIn(files map[string]string) []string {
+	return dirNamesUnder(files, componentDirPrefix)
+}
+
+// DependencyNamesIn returns the sorted names of every dependency directory in
+// the design file map (`dependencies/<name>/…`).
+func DependencyNamesIn(files map[string]string) []string {
+	return dirNamesUnder(files, dependencyDirPrefix)
+}
+
+func dirNamesUnder(files map[string]string, prefix string) []string {
 	seen := make(map[string]struct{})
 	for p := range files {
-		if !strings.HasPrefix(p, componentDirPrefix) {
+		if !strings.HasPrefix(p, prefix) {
 			continue
 		}
-		rest := p[len(componentDirPrefix):]
+		rest := p[len(prefix):]
 		slash := strings.IndexByte(rest, '/')
 		if slash <= 0 {
 			continue

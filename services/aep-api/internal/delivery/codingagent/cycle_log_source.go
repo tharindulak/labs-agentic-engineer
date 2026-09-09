@@ -55,6 +55,26 @@ func NewOCLogSource(runtime openchoreo.RuntimeClient) *OCLogSource {
 
 // Tail reads at most maxBytes of the newest pod output for a cycle Component.
 func (s *OCLogSource) Tail(ctx context.Context, orgName, projectName, componentName string, maxBytes int) (LiveTail, error) {
+	return s.read(ctx, orgName, projectName, componentName, 0, maxBytes)
+}
+
+// ReadSince is the RECORDER's read: everything the pod logged in the last
+// sinceSeconds (0 = the whole log), with NO byte cut.
+//
+// The cut is what Tail exists for and what a recorder must never do. A viewer
+// that loses old bytes re-reads them next poll; a recorder that loses them
+// writes the loss into a file nothing can rebuild — which is exactly the "a
+// burst larger than 64KiB between two polls" failure the recording closes.
+// The time cursor replaces the byte window: the recorder asks for what it has
+// not seen, and dedupes what overlaps by seq.
+func (s *OCLogSource) ReadSince(ctx context.Context, orgName, projectName, componentName string, sinceSeconds int64) (LiveTail, error) {
+	return s.read(ctx, orgName, projectName, componentName, sinceSeconds, 0)
+}
+
+// read resolves the binding, snapshots the pod and renders its log. maxBytes
+// <= 0 keeps the whole page (the recorder); a positive value keeps the newest
+// bytes (a viewer's page).
+func (s *OCLogSource) read(ctx context.Context, orgName, projectName, componentName string, sinceSeconds int64, maxBytes int) (LiveTail, error) {
 	if s == nil || s.runtime == nil {
 		return LiveTail{}, fmt.Errorf("codingagent: live log source not configured")
 	}
@@ -77,7 +97,7 @@ func (s *OCLogSource) Tail(ctx context.Context, orgName, projectName, componentN
 		// the dark zone from the pod state; there is no text to read.
 		return LiveTail{Pod: pod}, nil
 	}
-	lines, err := s.runtime.PodLogs(ctx, orgName, binding, pod.Name, 0)
+	lines, err := s.runtime.PodLogs(ctx, orgName, binding, pod.Name, sinceSeconds)
 	if err != nil {
 		if errors.Is(err, openchoreo.ErrNotFound) {
 			// The binding is there but the pod's log is not — a container that
@@ -92,6 +112,7 @@ func (s *OCLogSource) Tail(ctx context.Context, orgName, projectName, componentN
 // tailText renders log lines in the `timestamps=true` shape the progress parser
 // already understands (`RFC3339Nano <line>`), keeping at most maxBytes from the
 // END so a long-running agent's newest output is what survives the cap.
+// maxBytes <= 0 keeps everything, which is what the recorder asks for.
 func tailText(lines []openchoreo.PodLogLine, maxBytes int) string {
 	var b strings.Builder
 	for i := range lines {

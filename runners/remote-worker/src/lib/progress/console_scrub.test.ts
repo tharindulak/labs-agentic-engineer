@@ -53,7 +53,7 @@ function events(): Array<Record<string, unknown>> {
 }
 
 function summaries(): string[] {
-  return events().map((e) => String(e.summary));
+  return events().map((e) => String(e.detail));
 }
 
 /** A console with all five methods, so the bridge has something to wrap. */
@@ -85,13 +85,14 @@ test("installConsoleScrubber: console output lands on the feed as typed, parseab
   // The envelope every other event carries — this is what a bare stdout line
   // used to be missing, and what made the feed not-NDJSON.
   for (const e of out) {
-    assert.equal(e.kind, "log");
-    assert.equal(e.schemaVersion, 1);
+    assert.equal(e.kind, "notice");
+    assert.equal(e.v, 2);
+    assert.equal(e.agentId, "lead", "a runner line is the lead's unless somebody says otherwise");
     assert.ok(typeof e.ts === "string" && e.ts !== "");
     assert.ok(typeof e.seq === "number");
   }
   assert.deepEqual(out.map((e) => e.level), ["info", "warn", "error"]);
-  assert.equal(out[0]?.summary, "[local] materialised 6 skill(s); preload=4");
+  assert.equal(out[0]?.detail, "[local] materialised 6 skill(s); preload=4");
   // seq is monotonic across the bridge and the rest of the feed alike.
   assert.deepEqual(out.map((e) => e.seq), [1, 2, 3]);
 });

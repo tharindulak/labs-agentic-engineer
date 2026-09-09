@@ -65,9 +65,21 @@ build: gen
 dev:
 	$(TURBO) run dev
 
+# `skills/` is not a pnpm workspace and deliberately isn't one — nothing in this
+# repo imports it (see knip.jsonc). Its payload still carries logic worth
+# pinning: the report generator the validation agent invokes decides a run's
+# verdict. Its tests run from here rather than nowhere, guarded on a match
+# because `node --test` with no arguments discovers the whole tree instead.
+# Every Go loop below records the first failure and exits non-zero at the end.
+# A bare `for` in make keeps only the LAST iteration's status, so a failure in any
+# module but the last was reported as a green verb — which is exactly how a red
+# `go vet` in aep-api passed as a clean `make typecheck`. The loops still run every
+# module, because knowing about one broken module should not hide the next.
 test: gen
 	$(TURBO) run test
-	@for d in $(GO_MODULE_DIRS); do echo ">> go test $$d"; ( cd "$$d" && go test ./... ); done
+	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> go test $$d"; ( cd "$$d" && go test ./... ) || rc=1; done; exit $$rc
+	@files=$$(find $(ROOT)/skills -name '*.test.mjs' | sort); \
+	  if [ -n "$$files" ]; then echo ">> node --test skills"; node --test $$files; fi
 
 # Local coverage summary — coverage is not gated in CI. Go: the aep-api module's fast-lane
 # cover target (-short, no Docker). TS: @aep/agents via node:test's
@@ -86,7 +98,7 @@ cover:
 #   make eval EVAL=<file>     one eval file, e.g. EVAL=evals/requirements.eval.ts
 #   make eval-ui              run once + serve the local results UI
 eval:
-	$(PNPM) --filter @aep/spec-agent-evals eval $(if $(EVAL),-- $(EVAL),)
+	$(PNPM) --filter @aep/spec-agent-evals eval $(if $(EVAL),$(EVAL),)
 
 eval-ui:
 	$(PNPM) --filter @aep/spec-agent-evals eval:ui
@@ -98,11 +110,11 @@ eval-bal:
 
 lint:
 	$(TURBO) run lint
-	@for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && $(GOLANGCI) run ./... ); done
+	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && $(GOLANGCI) run ./... ) || rc=1; done; exit $$rc
 
 typecheck: gen
 	$(TURBO) run typecheck
-	@for d in $(GO_MODULE_DIRS); do echo ">> go vet $$d"; ( cd "$$d" && go vet ./... ); done
+	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> go vet $$d"; ( cd "$$d" && go vet ./... ) || rc=1; done; exit $$rc
 
 license:
 	@git ls-files | $(LICENSE_MATCH) | tr '\n' '\0' | xargs -0 $(ADDLICENSE) -f $(LICENSE_HEADER)

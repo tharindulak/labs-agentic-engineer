@@ -27,8 +27,11 @@
 // It is also on the SAME file descriptor as the NDJSON feed, which is why this
 // converts rather than merely scrubs: a bare line on that fd makes the stream
 // not-NDJSON, so a strict consumer breaks on it and a watchdog cannot parse the
-// feed it is supposed to be watching. Emitting a typed `log` event instead
-// gives every line the same envelope, schemaVersion, ts and seq as the rest.
+// feed it is supposed to be watching. Emitting a typed `notice` instead gives
+// every line the same envelope, version, ts and seq as the rest. The notice
+// carries no `code`: that field names closed CONDITIONS a consumer branches on,
+// and arbitrary console output is not one — it is prose for a reader, which is
+// what `detail` is for.
 // The BFF's raw-line fallback stays as a safety net for output that never went
 // through console at all (a dependency writing to process.stdout directly).
 //
@@ -70,7 +73,7 @@ export function installConsoleScrubber(target: ConsoleLike = console): void {
     // specifiers and Error stacks, so nothing is lost by collapsing the args
     // to one string.
     target[method] = (...args: unknown[]): void => {
-      emit({ kind: "log", level: LEVELS[method], summary: format(...args) });
+      emit({ kind: "notice", level: LEVELS[method], detail: format(...args) });
     };
   }
 }

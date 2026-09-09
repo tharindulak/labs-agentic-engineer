@@ -178,7 +178,9 @@ it is how the platform maps your PR back to this run.
 
 ## 2 · Work the issues
 
-For **each** issue in the ordered set:
+For **each** issue in the ordered set — and whoever works it, you inline or a
+subagent you handed it to, keeps its status line current from start to done
+(**The status line**):
 
 1. **Read it in full** — Scope, Acceptance criteria, References — **and the
    contract under `specs/`**: its component's `design.json` and `openapi.yaml`,
@@ -190,18 +192,65 @@ For **each** issue in the ordered set:
 2. **Make the change it asks for**, holding to
    `references/component-contract.md` and the stack skills of every component it
    touches.
-3. **Commit that issue's work on its own, attributed to it:**
+3. **A `web-application` is finished by a walk, not a build.** Once its build is
+   clean, dispatch **one more subagent** for that component with exactly this
+   prompt, and nothing about how to walk:
+
+   ```text
+   Walk <component> at <App Path>. Load `mock-verification` and
+   `agent-browser`; the first is the whole procedure. Edit/Write only inside
+   <App Path>; never run `git`. Progress: `gh issue comment <N> --body "<line>"`.
+   Report back the closing line and the numbered list.
+   ```
+
+   The walk lands before the commit, so what it fixes ships with what it
+   checked. An issue that moved no file the app loads skips this. One you are
+   closing as **already satisfied** does not: that verdict is a claim about a
+   screen, and reading the code cannot settle one.
+4. **Commit that issue's work on its own, attributed to it:**
    ```bash
    git add <the App Paths that issue touched>
+   git diff --cached --name-only    # what is ACTUALLY staged — read it
    git commit -m "<type>: <short summary> (#<number>)"
    git push -u origin HEAD          # -u only on the first push
    ```
    `(#N)` is what a crash resume reads to know this issue is done — push as you
    go, so a crash never loses more than the issue in flight.
+
+   **Read that `--name-only` list against what you changed.** `git add` on a
+   directory drops every ignored path inside it **silently, at exit 0**, leaving
+   `git status` clean; the staged list is the only place the omission shows. What
+   is missing there is missing from the build context, and the first sign is a red
+   build minutes later in a component that compiled perfectly on your disk.
+
    Keep the repo-root `.gitignore` current in the same commit that introduces
    something it should cover (build output, dependency directories, local env
    files) — one file for the whole project, and never commit what belongs in it.
-4. Re-derive the working set (§1) and pick the next issue.
+   **Anchor every pattern to the path it means**: `/onboarding-api/target/`, not
+   a bare `target/`. One `.gitignore` serves every component of a polyglot repo,
+   so an unanchored directory name reaches into all of them — a `generated/`
+   added for a Ballerina component also swallows a web-app's `src/generated/`,
+   which that stack **requires** committed. Anchor the pattern; never `git add -f`
+   past it.
+
+   **Crash artefacts are the one category to ignore before you have one.** A
+   compiler, a JVM or a browser that dies hard drops a `core` or an
+   `hs_err_pid*.log` wherever it was running — tens of megabytes of binary,
+   untracked, in a tree you are staging from. Nothing lists it, `git status`
+   shows one unfamiliar name among your own files, and a single `git add -A`
+   puts it in the pull request for good. These belong at the top of the
+   repo-root `.gitignore` of every project, unanchored on purpose — they can
+   land in any directory, and unlike `target/` there is no component that wants
+   one committed:
+
+   ```gitignore
+   # crash artefacts — never wanted, in any component
+   core
+   core.*
+   hs_err_pid*.log
+   replay_pid*.log
+   ```
+5. Re-derive the working set (§1) and pick the next issue.
 
 **Say why before you throw work away.** Before deleting or wholesale-rewriting a
 file that already exists — a generated stub, a scaffold, anything an earlier step
@@ -215,40 +264,89 @@ Only your *tool calls* reach the run's progress feed, so a deletion with no stat
 reason is indistinguishable afterwards from a mistake. If you cannot state one in
 a line, fix the file rather than delete it.
 
+### The status line
+
+An issue's **newest comment is its status line** — the console renders that
+comment's first line beside the issue, and it is what a person watching the build
+reads. Whoever works an issue keeps its line current: you, on one you took
+inline; the subagent, on one you handed out. Only the actor doing the work knows
+what is happening on it.
+
+```bash
+gh issue comment <number> --body "<one line: what is happening on this issue now>"
+```
+
+**Post when the one-line answer changes**, and always at both ends — when the
+work starts and when it stops. In between it changes when a component goes green
+and when its work is committed. A walk's progress is the walker's, posted with
+the command its prompt hands it; `mock-verification` fixes the shapes. A stretch
+with no new answer is silence telling the truth; a comment repeating the line
+already there is noise.
+
+Every tool call already reaches the run's progress feed, so this line carries the
+**shape** of the work rather than its steps — the component, and what is
+happening to it:
+
+```text
+Implementing todo-api — 6 endpoints against its openapi.yaml.
+todo-api builds clean; todo-web builds clean, walk dispatched.
+Committed todo-api and todo-web (#12).
+```
+
+Not a plan, not a status table, not a diff, and never a comment on an issue that
+is not the one being worked.
+
 ### Fan-out to subagents
 
-You have a fan-out tool, and **fanning out is the default, not the exception** —
-a provider and its consumer may be built at the same time, by different subagents
-(**Contract-first**). Two tests, and they are the only two:
+You have a **fan-out tool** and a **wait tool** — the tool glossary at the end of
+your instructions names them for this session. **Fanning out is the default, not
+the exception**: a provider and its consumer may be built at the same time, by
+different subagents (**Contract-first**). Two tests, and they are the only two:
 
-- **Disjoint App Paths** — no file and no module written by both. Overlap is the
-  only reason to serialise; work those inline, in ascending order.
+- **Disjoint write boundaries** — no file or module written by both. Separate
+  App Paths qualify; a stack skill may also split one App Path into exclusive
+  subdirectories or files. Pass those narrower boundaries to each worker.
+  Overlapping writes stay inline, in ascending order.
 - **Big enough to be worth a subagent.** A one-file change, a config tweak, a
   small fix issue: work those inline. A subagent for small work costs more than it
   saves and makes the run harder to follow.
 
-**Issue every subagent for a wave in ONE turn, and wait for them.** Several
-fan-out calls in a single message is what makes them run at the same time, and
-short prompts are what make one message possible. Do not use `run_in_background`:
-it does not add concurrency — it detaches the subagent, so its steps stop reaching
-the progress feed and the person watching sees an empty section where a component
-was built.
+**Dispatch every builder of a wave in the background, in ONE turn.**
+Backgrounding is what lets you keep working while they build — resolve the next
+component's wiring, review one that has come back — instead of spending the whole
+wave inside one blocked tool call. Short prompts are what make one message
+possible.
 
-**Say on the issue when you hand its work to a subagent.** In the same turn you
-dispatch a wave, comment ONE line on each issue in it naming what was delegated:
+**Wait for every one of them with the wait tool before you stage or commit
+anything.** A subagent that has not reported is not done, whatever the tree looks
+like: the files it is still writing are already on disk, so a commit taken early
+ships half an issue.
 
-```bash
-gh issue comment <number> --body "Started: <what the subagent was asked to build>"
-```
+**Inside a subagent, every command runs in the foreground** — a subagent never
+backgrounds a shell call. A build left running in the background lets the
+subagent report "clean" while it is still compiling, and whatever is still
+running when the session ends is recorded as an orphan. It is item 8 of the
+dispatch below, because a rule you do not pass on is a rule the subagent does
+not have.
 
-That comment is the only thing a person watching the build sees between dispatch
-and the pull request — the issue is the surface they are reading, and a wave that
-takes twenty minutes is otherwise twenty minutes of silence on it. One line per
-issue, at dispatch. Not a plan, not a status table, and never a second comment
-saying the same thing again.
+**A subagent may fan out itself** when its own work meets the two tests above; it
+inherits every rule in this section.
+
+**Pick the model for the job.** A walk or a small fix runs well on the fast model,
+a build on the default one. Name the model on the fan-out call — the glossary
+lists the aliases this session accepts.
+
+**Keep your plan in the task list.** One entry per issue you work, moved to
+in_progress when you or a subagent starts it, and to completed when its work is
+committed. The person watching this run reads that list, so it is the one place
+your plan has to be true.
 
 **A subagent starts from its prompt and nothing else.** It does not have this
-skill. Name **exactly these**, and nothing else:
+skill, and it must not load it: the skill is listed in its mirror by
+description, so left unsaid, a subagent loads the umbrella and re-derives the
+cycle it is not running — 24 KB it then carries for the whole build. This list
+is a **build** dispatch — a walk's prompt is the literal one in step 3, and
+nothing else. Name **exactly these**, and nothing else:
 
 1. its issue — the number, and to read it in full;
 2. its App Paths — the only paths it may write;
@@ -260,16 +358,29 @@ skill. Name **exactly these**, and nothing else:
    readable, while nothing may be written outside its App Paths;
 5. the stack skills it must load, by name — and that where a stack skill's own
    flow contradicts the component contract, the contract wins (a stack skill may
-   end its flow at "open a PR", which this subagent may not do);
+   end its flow at "open a PR", which this subagent may not do). In the same
+   line, that it loads **no other skill and not `aep`**: this prompt is its
+   whole procedure;
 6. **the artefacts only you could resolve** — and say which is which: the
    component's `workload.yaml` when you hold a resolved one, pasted verbatim and
    not to be changed; **or** that no wiring was resolved, so it authors the file
    from the design per `references/workload-and-wiring.md`. Plus any
    `org-service` contract you resolved — pasted, as a path, or named as
    undocumented, which changes the job to a minimal client;
-7. the ban: `Edit`/`Write` only. **A subagent never runs `git` and never runs
-   `gh`** — no commit, push, branch, comment or PR;
-8. what to report: what it changed, and whether the verify command passed.
+7. **its write boundary** — `Edit`/`Write`, and only inside its App Paths.
+   **It never runs `git`**: the branch, the commits and the pull request are
+   yours;
+8. **that every command it runs stays in the foreground** — it never backgrounds
+   a shell call, however long the build takes. A command still running when its
+   session ends is recorded as an orphan, and it will otherwise report "clean"
+   while its build is still compiling;
+9. what to report back to you when it finishes: what it changed and whether the
+   verify command passed.
+10. **its issue's status line** — the `gh issue comment` command above with **its**
+   issue number filled in, and the rule that goes with it (**The status line**):
+   one line, at both ends of its work and whenever the answer changes between
+   them. That command is the only `gh` it may run, and its own issue is the only
+   issue it may touch.
 
 Give paths, not contents. A subagent reads the same filesystem you do, so a
 contract you paste is a long turn spent before it starts, on a file it opens
@@ -283,7 +394,13 @@ incomplete, and what you must open to commit. Re-reading every file a subagent
 wrote buys nothing and carries the whole set for the rest of the run.
 
 **You are the sole git writer.** When a subagent reports done, *you* stage those
-paths and commit them exactly as in step 3. **No worktrees** — one workspace.
+paths and commit them exactly as in step 4. **No worktrees** — one workspace.
+
+**A walk that leaves a failure open is not a failed wave** (the component
+contract's **Walks**). Its report comes back with the fixes already in the tree
+(step 3): commit the component with the rest of that issue's work and carry the
+report's `[ ]` lines into **Finish the cycle**, where the pull request body
+carries them verbatim.
 
 ## 3 · Finish the cycle
 
@@ -348,14 +465,21 @@ failed.** Find the PR that closed it (`gh pr list --state merged --search "<the
 issue number>"`), read what it tried, and do something different. Arriving at
 `high` after a recurrence takes more evidence, not less.
 
+**A web application in the cycle** → its Task's `Screens:` and `Flows:` lists
+go in the body, ticked from the walk's report: a screen when its line is green,
+a flow when every screen in its block is. An open `[ ]` line stays unticked with
+the report's line beside it (`wireframes`' `references/implementing.md` shows
+the shape). The PR stays ready for review — a defect on a committed component
+is not a red one (the component contract's **Walks**).
+
 **A component stayed red** → the same PR, but `--draft` and a `[build-failed]`
 title prefix. A draft is the platform's signal that you are not finished and is
 never auto-merged. Still list `Resolves #N` for the issues that DID complete so
 the diff stays attributable, and carry the diagnostic the component contract asks
 for under an `## Error` heading (the ~40 lines, fenced) and `## What was tried`.
 
-**Leave every issue you did not finish open**, with a comment carrying the same
-diagnostic: what you tried and why it stopped.
+**Leave every issue you did not finish open**, and make its last status line the
+same diagnostic: what you tried and why it stopped.
 
 ### When no code change can resolve an issue
 
@@ -460,8 +584,7 @@ web search. The rest belongs to the run:
 
 - **Hold back or skip an issue because a component it depends on is not built
   yet.** Code against the contract.
-- Let a subagent run `git` or `gh`.
-- Fan out with `run_in_background` (**Fan-out to subagents**).
+- Let a subagent run `git`, or any `gh` its prompt did not give it.
 
 ## Git and GitHub
 

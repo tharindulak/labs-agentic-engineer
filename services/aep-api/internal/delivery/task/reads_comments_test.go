@@ -221,3 +221,158 @@ func TestReads_ListByTag_CommentFailureDoesNotFailTheList(t *testing.T) {
 		}
 	}
 }
+
+// The DETAIL read's comment half. It exists for one issue the list can never
+// answer for: buildView drops the validation issue on its kind before comments
+// are ever attached, so this path is the only way its narrative reaches a
+// console — and that narrative is what the Validation page shows while a run is
+// in flight.
+func TestReads_Get_CarriesTheValidationIssuesComments(t *testing.T) {
+	base := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
+	issues := newFakeIssues()
+	issues.seed(validationIssue(7))
+	issues.seedComment(7, comment("c1", "aep-bot", "Starting validation: 12 criteria, 9 to author.", base))
+	issues.seedComment(7, comment("c2", "aep-bot", "Healing AC-004-b — the login step raced the redirect.", base.Add(time.Hour)))
+
+	detail, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(detail.Comments) != 2 {
+		t.Fatalf("comments = %d, want 2 — the list hides this issue, so only Get can carry them", len(detail.Comments))
+	}
+	// Oldest first, so a consumer reading the CURRENT status takes the last.
+	if detail.Comments[1].Body != "Healing AC-004-b — the login step raced the redirect." {
+		t.Fatalf("newest comment = %q", detail.Comments[1].Body)
+	}
+	if detail.Comments[0].Author != "aep-bot" || detail.Comments[0].ID != "c1" {
+		t.Fatalf("projection = %+v", detail.Comments[0])
+	}
+}
+
+// The detail read's two host calls OVERLAP, like the list's. Get is polled at
+// the same 5s cadence while a validation run is in flight, so a comment round
+// trip taken strictly after the issue fetch adds its whole latency to every
+// tick — for a field the caller may not even render.
+//
+// Asserted by construction rather than by a stopwatch, the same way the list's
+// is: the fake's GetIssue refuses to proceed until the comment read has
+// entered, so an implementation that reverted to sequential cannot finish this
+// test at all.
+func TestReads_Get_ReadsTheIssueAndItsCommentsConcurrently(t *testing.T) {
+	issues := newFakeIssues().overlapProbe()
+	issues.seed(validationIssue(7))
+	issues.seedComment(7, comment("c1", "aep-bot", "Authoring the last three specs.", time.Now()))
+
+	detail, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 7)
+	if err != nil {
+		// Get collapses every GetIssue error into ErrTaskNotFound, so the fake's
+		// own "the two host reads are sequential" never reaches here. Say it.
+		t.Fatalf("Get: %v — a not-found here means the probe timed out: the comment read started AFTER the issue fetch", err)
+	}
+	if len(detail.Comments) != 1 {
+		t.Fatalf("want the Task with its comment, got %+v", detail)
+	}
+}
+
+// The detail read asks for the SAME depth as the list. Two surfaces showing the
+// same thread at different depths would put a comment on one page and not the
+// other, for no reader's benefit.
+func TestReads_Get_UsesTheSameCommentWindowAsTheList(t *testing.T) {
+	issues := newFakeIssues()
+	issues.seed(agentIssue(5, "Implement the login endpoint", "## Scope"))
+
+	if _, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 5); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issues.lastCommentPerIssue != CommentsPerIssue {
+		t.Fatalf("asked the host for %d comments, want CommentsPerIssue (%d)",
+			issues.lastCommentPerIssue, CommentsPerIssue)
+	}
+}
+
+// The platform's own comments never reach this surface either. The validation
+// issue in particular collects them — the run dispatches against it — so a
+// detail read that passed them through would show a machine note as the agent's
+// current status.
+func TestReads_Get_DropsMachineComments(t *testing.T) {
+	base := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
+	machine := comment("m1", "aep-bot", "Validation run dispatched.", base.Add(time.Hour))
+	machine.Machine = true
+
+	issues := newFakeIssues()
+	issues.seed(validationIssue(7))
+	issues.seedComment(7, comment("c1", "aep-bot", "Authoring the last three specs.", base))
+	issues.seedComment(7, machine)
+
+	detail, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(detail.Comments) != 1 {
+		t.Fatalf("comments = %d, want only the agent's", len(detail.Comments))
+	}
+	if detail.Comments[0].ID != "c1" {
+		t.Fatalf("surviving comment = %+v, want the agent's", detail.Comments[0])
+	}
+}
+
+// The platform's two brands get opposite policies here, and the asymmetry is the
+// point: a MACHINE comment is written for the agent and would crowd out the
+// narrative, while an OBSERVED one IS the narrative for most of a validation run
+// — the agent posts an opening line and a closing summary and the platform
+// reports everything between them. Dropping both would leave this field holding
+// two comments hours apart, which is the defect the observed class was added for.
+func TestReads_Get_KeepsObservedCommentsAndDropsMachineOnes(t *testing.T) {
+	base := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
+	machine := comment("m1", "aep-bot", "Validation run dispatched.", base)
+	machine.Machine = true
+	observed := comment("o1", "aep-bot", "Running specs against the deployed system.", base.Add(time.Hour))
+	observed.Observed = true
+
+	issues := newFakeIssues()
+	issues.seed(validationIssue(7))
+	issues.seedComment(7, comment("c1", "aep-bot", "Starting validation: 12 criteria.", base.Add(-time.Hour)))
+	issues.seedComment(7, machine)
+	issues.seedComment(7, observed)
+
+	detail, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 7)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(detail.Comments) != 2 {
+		t.Fatalf("comments = %d, want the agent's and the platform's observation", len(detail.Comments))
+	}
+	if detail.Comments[0].ID != "c1" || detail.Comments[1].ID != "o1" {
+		t.Fatalf("surviving comments = %+v, want c1 then o1 in host order", detail.Comments)
+	}
+	// Carried through rather than flattened away: the status line is the NEWEST
+	// comment, and a reader deciding how much to trust it needs to know a machine
+	// inferred it from a tool call rather than an agent judging its own work.
+	if !detail.Comments[1].Observed {
+		t.Error("the observed brand was lost on the way to the read DTO")
+	}
+	if detail.Comments[0].Observed {
+		t.Error("the agent's own line was marked as the platform's observation")
+	}
+}
+
+// A host that will not answer comments costs the caller its narrative, never its
+// Task — the same bargain the list makes, and for the same reason: the detail
+// page's other halves are not decorative.
+func TestReads_Get_CommentFailureDoesNotFailTheRead(t *testing.T) {
+	issues := newFakeIssues()
+	issues.seed(validationIssue(7))
+	issues.failComments = true
+
+	detail, err := newReads(issues, newFakeExecReader(), nil).Get(context.Background(), "org1", "proj1", 7)
+	if err != nil {
+		t.Fatalf("Get must survive a comment failure, got %v", err)
+	}
+	if detail.IssueNumber != 7 {
+		t.Fatalf("issue = %d, want 7", detail.IssueNumber)
+	}
+	if detail.Comments != nil {
+		t.Fatalf("comments = %v, want nil", detail.Comments)
+	}
+}

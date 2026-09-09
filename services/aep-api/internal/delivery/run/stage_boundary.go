@@ -251,7 +251,11 @@ type loop struct {
 	// has its issue minted for it by the EVENT PLANE, which sees the failure
 	// first-hand; a deployment has no webhook, so the supervisor is the only
 	// thing that ever knows which component did not come up.
-	deployFailed   []string
+	//
+	// Each failure carries the COMMIT its release was being cut from, because the
+	// issue's dedupe key is (component, commit) and one reconcile pass can promote
+	// two components at two different commits.
+	deployFailed   []delivery.DeployTarget
 	deployFailures map[string]string
 	// cycleID is the current cycle's record id. Surfaced on the loop because the
 	// verdict write lands after the agent stage has returned.
@@ -443,12 +447,18 @@ func (l *loop) work(ctx workflow.Context, ends bookends) (RunResult, error) {
 			return l.settle(ctx, delivery.RunStateBlocked, delivery.RunReasonAgentQuotaBlocked)
 		case cyclePublisherCredentials:
 			return l.settle(ctx, delivery.RunStateBlocked, delivery.RunReasonPublisherCredentials)
-		case cycleDeployFailed:
-			// File the work before looping. Unlike a red build or a conflict —
-			// where the event plane has already minted the issue by the time the
-			// supervisor hears about it — nothing else observes a deployment, so
-			// if this does not mint, the next boundary finds an empty working set
-			// and settles a run whose version is not running.
+		default:
+			// File the deploy's work before looping, on whatever the cycle's
+			// RESULT was: a red cycle can also have a failed deployment now that
+			// the reconcile runs on both verdicts, and the result carries the
+			// build's verdict. Keying on the failures themselves is what keeps
+			// the two independent.
+			//
+			// Unlike a red build or a conflict — where the event plane has already
+			// minted the issue by the time the supervisor hears about it — nothing
+			// else observes a deployment, so if this does not mint, the next
+			// boundary finds an empty working set and settles a run whose version
+			// is not running.
 			if err := l.mintDeployFixIssues(ctx); err != nil {
 				return l.result(), err
 			}
@@ -540,16 +550,33 @@ func (l *loop) onEmptyWorkingSet(ctx workflow.Context, ends bookends) (settled b
 //	                                    ├─ conflict  ─► cycleConflict
 //	                                    ├─ no landing within the deadline ─► re-dispatch
 //	                                    └─ merged ─► wait for the fan-out's builds
-//	                                                 ├─ a component red ─► cycleRed
-//	                                                 └─ all green ─► DEPLOY, then wait for Ready
-//	                                                                ├─ all ready ─► cycleGreen
-//	                                                                └─ a component failed ─► cycleDeployFailed
+//	                                                 ├─ a component red ─► build verdict red
+//	                                                 └─ all green ─► build verdict green
+//	                                                 then, on EITHER verdict:
+//	                                                 RECONCILE the version, wait for Ready
+//	                                                 ├─ all ready ─► deploy verdict green
+//	                                                 └─ a component failed ─► cycleDeployFailed
 //
 // It composes the three stages, which is why it lives with the boundary that
 // drives it rather than in any one of them: what a cycle IS — code that merges,
 // builds and then serves — is the boundary's definition of a delivered
 // increment. A validation run has no such cycle: its pull request touches only
 // `tests/`, so it runs the agent stage alone (workflow_validation.go).
+//
+// The deploy runs on a RED build too (ADR-0026). A red build has already minted
+// its fix issue and cannot be helped by holding its siblings back; the version's
+// other components are built, and promoting them is what keeps "what is serving"
+// a function of what has been built rather than of which files a fix touched.
+// What makes that safe is the promotable rule, not this call site: the reconcile
+// writes only components whose hard providers are serving or promoted ahead of
+// them.
+//
+// A cycle can therefore be red AND have a deploy failure. Both mint their work —
+// the build's issue by the event plane, the deploy's by the boundary — and the
+// cycle's RESULT is the earlier stage's verdict, because the deploy verdict is
+// downstream of it and the result only decides the next cycle's kind and the
+// terminal reason at an empty boundary, where both would name a budget that has
+// already produced its issue.
 func (l *loop) runCycle(ctx workflow.Context, kind string, anchorIssue int) (cycleResult, error) {
 	landed, res, err := l.agentStage(ctx, kind, anchorIssue)
 	if err != nil || !landed {
@@ -557,21 +584,38 @@ func (l *loop) runCycle(ctx workflow.Context, kind string, anchorIssue int) (cyc
 	}
 
 	l.st.Phase = delivery.RunPhaseBuilding
-	res, components, err := l.awaitBuilds(ctx)
+	buildRes, err := l.awaitBuilds(ctx)
 	if err != nil {
 		return cycleNone, err
 	}
-	if res != cycleGreen {
-		return res, nil
+	if buildRes != cycleGreen && buildRes != cycleRed {
+		// Cancelled mid-build. Nothing to reconcile — the run is over.
+		return buildRes, nil
 	}
+
 	// Built, not yet running. The deploy is the platform's own act — nothing
-	// promotes a release on its own — so the cycle is not over until the
-	// components this merge touched are serving. Everything downstream of a
-	// green cycle depends on that being true rather than merely requested:
-	// validation asserts against the deployment, and the version is called
-	// delivered on the strength of it.
+	// promotes a release on its own — so the cycle is not over until the version
+	// is serving what has been built. Everything downstream of a green cycle
+	// depends on that being true rather than merely requested: validation asserts
+	// against the deployment, and the version is called delivered on the strength
+	// of it.
 	l.st.Phase = delivery.RunPhaseDeploying
-	return l.deployCycle(ctx, components)
+	version, err := l.readVersionState(ctx)
+	if err != nil {
+		return cycleNone, err
+	}
+	deployRes, err := l.reconcileVersion(ctx, version)
+	if err != nil {
+		return cycleNone, err
+	}
+	switch {
+	case deployRes == cycleCancelled:
+		return cycleCancelled, nil
+	case buildRes == cycleRed:
+		return cycleRed, nil
+	default:
+		return deployRes, nil
+	}
 }
 
 // settle ends the run, and each terminal state carries its own consequence for
@@ -862,6 +906,25 @@ func (l *loop) pollMilestone(ctx workflow.Context) (MilestoneSnapshot, error) {
 	return out, err
 }
 
+// readVersionState re-derives what the version is serving, and mirrors it onto
+// the live status so a console reading a run mid-deploy sees the same five
+// states the loop decided on.
+//
+// It is READ, never carried. The reconcile's own classification is a moment old
+// by the time the boundary asks — a converge may have landed, a binding may
+// have been hand-edited — and the whole value of the delivery gate is that it
+// asserts what is true NOW rather than what the stage believed when it wrote.
+// Same rule the working-set poll follows.
+func (l *loop) readVersionState(ctx workflow.Context) (delivery.VersionState, error) {
+	var out delivery.VersionState
+	if err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).ReadVersionState,
+		ProjectRef{OrgID: l.in.OrgID, ProjectID: l.in.ProjectID}).Get(ctx, &out); err != nil {
+		return delivery.VersionState{}, err
+	}
+	l.st.Version = out
+	return out, nil
+}
+
 func (l *loop) milestoneRef() MilestoneRef {
 	return MilestoneRef{OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, MilestoneNumber: l.in.MilestoneNumber}
 }
@@ -1019,6 +1082,11 @@ func (l *loop) closeCancelledWork(ctx workflow.Context) error {
 // mintDeployFixIssues files one issue per component that did not come up, so the
 // next cycle can work it like any other fix.
 //
+// Only components this pass WROTE, or was already waiting on, can appear here —
+// that is a property of the wait set, not a filter applied at this call. Held and
+// unbuilt components are never waited on, so a healthy web app whose api is red
+// cannot be handed a deployment bug it does not have.
+//
 // This is the supervisor minting an issue, which it does nowhere else — every
 // other recovery issue belongs to the event plane, which observes the failure
 // through a webhook. A deployment produces no webhook, so there is no event
@@ -1033,15 +1101,14 @@ func (l *loop) mintDeployFixIssues(ctx workflow.Context) error {
 			OrgID:           l.in.OrgID,
 			ProjectID:       l.in.ProjectID,
 			MilestoneNumber: l.in.MilestoneNumber,
-			Components:      l.deployFailed,
+			Failed:          l.deployFailed,
 			Reasons:         l.deployFailures,
-			CommitSHA:       l.mergeSHA,
 		}).Get(ctx, nil)
 	if err != nil {
 		return err
 	}
 	workflow.GetLogger(ctx).Info("deployment failed; filed fix work",
-		"components", l.deployFailed, "commit", l.mergeSHA)
+		"components", delivery.TargetNames(l.deployFailed))
 	l.deployFailed, l.deployFailures = nil, nil
 	return nil
 }

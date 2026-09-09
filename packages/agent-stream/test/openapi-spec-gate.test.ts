@@ -97,7 +97,7 @@ test("ignores a dependency's committed spec (someone else's document)", () => {
 });
 
 test("ignores non-spec paths", () => {
-  assert.equal(checkOpenapiSpec("specs/design/design.md", "# not a spec"), null);
+  assert.equal(checkOpenapiSpec("specs/design/domain-model.md", "# not a spec"), null);
 });
 
 test("a rejected write leaves the bundle byte-for-byte unchanged", () => {
@@ -127,4 +127,9 @@ test("the gate runs on an edit too, not just a whole-file write", () => {
   assert.ok(!res.ok, "an edit that empties the paths block must be rejected");
   if (!res.ok) assert.equal(res.code, "INVALID_OPENAPI");
   assert.equal(bundle.read(PATH), CLEAN, "the file is unchanged");
+});
+
+test("a dependency's contract is not held to the component gate — it is someone else's API", () => {
+  const swagger = CLEAN.replace("openapi: 3.0.3", "swagger: '2.0'");
+  assert.equal(checkOpenapiSpec("specs/design/dependencies/stripe/openapi.yaml", swagger), null);
 });

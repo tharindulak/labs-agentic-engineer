@@ -27,22 +27,25 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { ChevronDown } from "@wso2/oxygen-ui-icons-react";
+import { EmptyState } from "../../../components/EmptyState";
 import { GitHubRefChip } from "../../../components/GitHubRefChip";
-import { AgentLogLines, LogSurface } from "./AgentLogLines";
+import { RunCrew } from "./RunCrew";
+import { connectionTail } from "../lib/feedTail";
 import { useRunProgress, type RunProgressCycle } from "../hooks/useRunProgress";
 
 // The run feed: ONE SSE stream for the whole run, rendered as one accordion
 // section per cycle. Grouping by cycle is the point — a fix or conflict cycle
 // re-enters an earlier phase of the loop, so a flat log would read as the agent
-// going backwards. Within a cycle, each subagent the main agent fanned out to
-// gets its own collapsible section (see AgentLogLines, shared with the task
-// log) — several run at once and their lines arrive interleaved, so read flat
-// they would look like one agent contradicting itself.
+// going backwards.
+//
+// Inside a cycle the events are not a log any more: they are a CREW (see
+// RunCrew). A flat feed could show what happened but never whether anything was
+// still happening, because a stall on a log surface looks exactly like a log
+// that has scrolled — and on a run that fans out to several agents at once, the
+// interleaved rows read as one agent contradicting itself.
 //
 // Sections read NEWEST FIRST. The cycle a reader came to watch is the newest one,
 // so it leads rather than sitting below however much history the run accumulated.
-// The LINES inside a section stay oldest-first — a log read upwards is unreadable,
-// and that is a different tier of ordering from the boxes holding them.
 
 /**
  * One cycle's accordion box. Exported because the VERSION feed renders the same
@@ -68,7 +71,7 @@ function CycleSection({
   expanded: boolean;
   onToggle: (open: boolean) => void;
 }) {
-  const { cycle, lines } = section;
+  const { cycle, events } = section;
   // ONE string for the heading and for the pull request's accessible name. The link
   // has to state which box it belongs to — two runs each hold a "Cycle 1" — and
   // composing the prefix twice is how the two drift apart. Keeping them identical is
@@ -104,7 +107,7 @@ function CycleSection({
             </Typography>
           )}
           <Typography variant="caption" color="text.secondary">
-            {lines.length} line{lines.length === 1 ? "" : "s"}
+            {events.length} event{events.length === 1 ? "" : "s"}
           </Typography>
           {/* A spacer rather than `ml: auto` on the link: Stack lays its spacing
               down as `margin-left` through a descendant selector, which outranks a
@@ -133,9 +136,7 @@ function CycleSection({
         </Stack>
       </AccordionSummary>
       <AccordionDetails sx={{ pt: 0 }}>
-        <LogSurface>
-          <AgentLogLines lines={lines} />
-        </LogSurface>
+        <RunCrew events={events} />
       </AccordionDetails>
     </Accordion>
   );
@@ -193,21 +194,22 @@ export function RunFeed({
   const followed = expandNewest ? (shown[0]?.cycle.id ?? null) : null;
   const openId = chosen === undefined ? followed : chosen;
 
-  let tail: string | undefined;
-  if (feed.phase === "connecting") {
-    tail = "attaching to the run feed…";
-  } else if (feed.phase === "reconnecting") {
-    tail = "connection lost — reconnecting…";
-  } else if (feed.phase === "ended") {
-    tail = `run settled${feed.settledState ? ` — ${feed.settledState}` : ""}`;
-  }
+  // Connection health only. How the run ENDED labels the section header instead
+  // — beside the title, where every other section on this page carries its
+  // status — so repeating it under the log would be the same news twice.
+  const tail = connectionTail(feed.phase);
 
   return (
     <Box>
       {feed.cycles.length === 0 ? (
-        <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-          No cycle output yet — the run's first agent has not written a line.
-        </Typography>
+        // The same `EmptyState compact` the Build logs section below uses. Two
+        // placeholders that sit one card apart on this page read as one surface
+        // only if they are drawn the same way — a left-aligned sentence beside a
+        // centred one looks like a mistake, not a distinction.
+        <EmptyState
+          compact
+          description="No cycle output yet — the run's first agent has not written a line."
+        />
       ) : (
         shown.map((section, i) => (
           <CycleSection
@@ -232,7 +234,13 @@ export function RunFeed({
         ))
       )}
       {tail && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          // Right-aligned: it is the feed's own connection status, not a line
+          // OF the feed, and the left edge is where the log's content starts.
+          sx={{ display: "block", mt: 1, textAlign: "right" }}
+        >
           {tail}
         </Typography>
       )}

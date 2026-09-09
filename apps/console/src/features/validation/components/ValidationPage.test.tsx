@@ -81,6 +81,13 @@ let mockNewerRuns: MilestoneRunView[] = [];
 // a GitHub read that failed is not the same state as "no issue yet", and the page
 // is required to treat them alike.
 let mockIssueUrl: string | undefined = "https://github.com/acme/demo/issues/30";
+// The validation issue's comment thread — the status line lives in the NEWEST
+// one. Oldest first, matching the contract. `observed` marks a line the PLATFORM
+// posted from what it watched the run do, which is most of them.
+let mockIssueComments: { id: string; body: string; observed?: boolean }[] = [];
+// Whether the page asked get-task to poll. This read is GitHub-backed, so an
+// idle version must cost nothing and a live one must not go stale.
+let mockIssueLive: boolean | undefined;
 
 function run(over: {
   validation?: RunValidation;
@@ -202,16 +209,36 @@ vi.mock("../../builds/api/queries", () => ({
 // which is what makes "asked before an issue existed" visible rather than silently
 // answered.
 vi.mock("../../tasks/api/queries", () => ({
-  useTask: (_project: string, issueNumber: number) => ({
-    isPending: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-    data:
-      issueNumber > 0 && mockIssueUrl !== undefined
-        ? { issueNumber, issueUrl: mockIssueUrl }
-        : undefined,
-  }),
+  useTask: (
+    _project: string,
+    issueNumber: number,
+    opts: { live?: boolean } = {},
+  ) => {
+    mockIssueLive = opts.live;
+    return {
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      data:
+        issueNumber > 0 && mockIssueUrl !== undefined
+          ? {
+              issueNumber,
+              issueUrl: mockIssueUrl,
+              ...(mockIssueComments.length > 0
+                ? {
+                    comments: mockIssueComments.map((c) => ({
+                      ...c,
+                      author: "aep-bot",
+                      createdAt: "2026-09-04T10:00:00Z",
+                      url: `${mockIssueUrl}#issuecomment-${c.id}`,
+                    })),
+                  }
+                : {}),
+            }
+          : undefined,
+    };
+  },
 }));
 
 vi.mock("../api/queries", () => ({
@@ -230,6 +257,25 @@ const CRITERIA = JSON.stringify({
       criteria: [
         { id: "AC-001-a", must: "Search returns matches", method: "e2e" },
         { id: "AC-001-b", must: "Category filter works", method: "e2e" },
+        { id: "AC-003-b", must: "Payment is encrypted", method: "manual" },
+      ],
+    },
+  ],
+});
+
+// The oracle after the spec moved on: AC-001-c is authored but absent from the
+// pinned REPORT below, which is what the page really sees whenever criteria are
+// edited after an attempt settled. The console reads the criteria at the branch tip
+// and the report at the merge commit of the attempt that wrote it.
+const CRITERIA_DRIFTED = JSON.stringify({
+  requirements: [
+    {
+      id: "REQ-001",
+      statement: "Shoppers can search the catalog.",
+      criteria: [
+        { id: "AC-001-a", must: "Search returns matches", method: "e2e" },
+        { id: "AC-001-b", must: "Category filter works", method: "e2e" },
+        { id: "AC-001-c", must: "An empty search explains itself", method: "e2e" },
         { id: "AC-003-b", must: "Payment is encrypted", method: "manual" },
       ],
     },
@@ -302,6 +348,8 @@ afterEach(() => {
   mockLive = {};
   mockLiveActive = true;
   mockIssueUrl = "https://github.com/acme/demo/issues/30";
+  mockIssueComments = [];
+  mockIssueLive = undefined;
 });
 
 // A milestone sees SEQUENTIAL runs across its life and only some of them
@@ -606,6 +654,12 @@ describe("ValidationPage lifecycle", () => {
     mockRun = run({});
     renderPage(undefined);
     expect(screen.getByText(/Nothing validated yet/)).toBeInTheDocument();
+    // The event is a DEPLOYMENT, not a build: validation drives a running
+    // instance and needs its resolved endpoints, so a build alone cannot trigger
+    // it. And it names the same subject the agent's own status line does.
+    expect(
+      screen.getByText(/After a deployment, the deployed system is checked/),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId("run-feed")).not.toBeInTheDocument();
   });
 
@@ -776,6 +830,52 @@ describe("ValidationPage lifecycle", () => {
   // The regression this replaced a default with: no state may FORCE a body, because
   // `?view=logs | absent` has no third value, so `onViewChange(undefined)` cannot
   // outrank a forced arm and the "View report" button silently does nothing.
+  // "No result" is a claim about a run that FINISHED without covering the row. A
+  // repeat attempt in flight may still answer it, so while one is running the row
+  // waits with everything else.
+  it("says a drifted criterion is pending while a repeat attempt runs", () => {
+    mockValidation = "running";
+    mockRun = {
+      ...run({
+        validation: {
+          verdict: "failed",
+          reportPath: "tests/validation/report.json",
+        },
+        cycles: [validationCycle],
+      }),
+      state: "running",
+    };
+    mockCriteria.data = { content: CRITERIA_DRIFTED };
+    mockReport.data = { content: REPORT };
+    renderPage(undefined);
+
+    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.queryByText("No result")).not.toBeInTheDocument();
+    // The rows the pinned report DOES cover keep the last attempt's verdict, which
+    // is what makes widening the pending signal safe.
+    expect(screen.getByText("Passed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+  });
+
+  // The other side of the same gate: nothing is running, so the report's silence
+  // about this row is final.
+  it("says a drifted criterion is out of run once nothing is running", () => {
+    mockValidation = "failed";
+    mockRun = run({
+      validation: {
+        verdict: "failed",
+        reportPath: "tests/validation/report.json",
+      },
+      cycles: [validationCycle],
+    });
+    mockCriteria.data = { content: CRITERIA_DRIFTED };
+    mockReport.data = { content: REPORT };
+    renderPage(undefined);
+
+    expect(screen.getByText("No result")).toBeInTheDocument();
+    expect(screen.queryByText("Pending")).not.toBeInTheDocument();
+  });
+
   it("keeps the report/log toggle working while a repeat attempt runs", () => {
     mockValidation = "running";
     mockRun = {
@@ -1082,12 +1182,11 @@ describe("ValidationPage lifecycle", () => {
   });
 });
 
-// The method badge is the reader's only signal for who checks a criterion, and it
-// used to render the wire value verbatim — `E2E`, an acronym the lexicon forbids
-// and nothing in the product expanded. The wire value cannot change (the runner,
-// the report generator and the tests/e2e/specs/<AC-ID>.spec.ts path all key on
-// it), so the display name is the thing under test here.
-describe("ValidationPage criterion method badges", () => {
+// `e2e` is an acronym the console lexicon forbids and nothing in the product
+// expands, and it cannot change — the runner, the report generator and the
+// tests/e2e/specs/<AC-ID>.spec.ts path all key on it. So no surface may leak it,
+// which is part of what these assertions hold.
+describe("ValidationPage criterion rows", () => {
   function renderWithCriteria() {
     mockValidation = "passed";
     mockRun = run({
@@ -1099,34 +1198,44 @@ describe("ValidationPage criterion method badges", () => {
     renderPage(undefined);
   }
 
-  it("says auto rather than the e2e wire value", () => {
+  // Two marks answering two questions: the glyph says who checks the criterion,
+  // the chip says what the run made of it. Both belong on a results page — the
+  // reader still has to find their own work in it.
+  it("carries the verdict beside the method, and names neither in words", () => {
     renderWithCriteria();
 
-    // Two e2e criteria in the fixture, plus the summary tally's own badge.
-    expect(screen.getAllByText("auto")).toHaveLength(2);
-    expect(screen.queryByText("e2e")).not.toBeInTheDocument();
-    expect(screen.getByText("auto 2")).toBeInTheDocument();
+    expect(screen.getByText("Passed")).toBeInTheDocument();
+    expect(screen.getByText("Manual")).toBeInTheDocument();
+    expect(
+      screen.getByText("Requires manual validation."),
+    ).toBeInTheDocument();
+    // The method is a glyph, never a word: neither the wire value nor the word it
+    // is spelled as elsewhere may reach a row.
+    for (const word of ["e2e", "auto", "manual"]) {
+      expect(screen.queryByText(word)).not.toBeInTheDocument();
+    }
   });
 
-  it("leaves the manual badge alone", () => {
+  // The tile above already prints "N passed · M manual" and its method line. The
+  // view's own tally repeated those numbers a few rows lower on the same screen.
+  it("drops the summary tally the tile above already prints", () => {
     renderWithCriteria();
 
-    expect(screen.getByText("manual")).toBeInTheDocument();
-    expect(screen.getByText("manual 1")).toBeInTheDocument();
+    expect(screen.queryByText("auto 2")).not.toBeInTheDocument();
+    expect(screen.queryByText("manual 1")).not.toBeInTheDocument();
+    expect(screen.queryByText(/requirements ·/)).not.toBeInTheDocument();
   });
 
-  it("explains each method on hover", async () => {
+  // Inside REQ-001's card the `AC-001-` half of every criterion id is already on
+  // the page, so the rows print only what distinguishes them. The full id stays
+  // reachable on hover, being the handle for spec filenames and for the agent.
+  it("shortens the ids to what the card does not already say", () => {
     renderWithCriteria();
 
-    fireEvent.mouseOver(screen.getAllByText("auto")[0]!);
-    expect(
-      await screen.findByText("Validated automatically by the agent."),
-    ).toBeInTheDocument();
-
-    fireEvent.mouseOver(screen.getByText("manual"));
-    expect(
-      await screen.findByText("Requires manual validation."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getAllByText("a").length).toBeGreaterThan(0);
+    expect(screen.queryByText("AC-001-a")).not.toBeInTheDocument();
+    expect(screen.queryByText("REQ-001")).not.toBeInTheDocument();
   });
 
   // The description explaining what criteria ARE belongs to the Spec view, where
@@ -1298,7 +1407,7 @@ describe("ValidationPage live per-criterion progress", () => {
     expect(screen.getByText("Setting up the test harness…")).toBeInTheDocument();
   });
 
-  it("stops narrating the run once the rows can speak for themselves", () => {
+  it("counts the answered criteria once the rows have started moving", () => {
     mockValidation = "running";
     mockRun = { ...run({ cycles: [validationCycle] }), state: "running" };
     mockCriteria.data = { content: CRITERIA };
@@ -1306,6 +1415,7 @@ describe("ValidationPage live per-criterion progress", () => {
     renderPage(undefined);
 
     expect(screen.queryByText("Setting up the test harness…")).not.toBeInTheDocument();
+    expect(screen.getByText(/Checking the criteria, 0 of \d+ answered…/)).toBeInTheDocument();
     expect(screen.getByText("Exploring…")).toBeInTheDocument();
     // Untouched auto criteria still read Pending; a manual one never will.
     expect(screen.getAllByText("Pending").length).toBe(1);
@@ -1404,5 +1514,220 @@ describe("ValidationPage live note is gated on an open cycle", () => {
     expect(screen.queryByText("Setting up the test harness…")).not.toBeInTheDocument();
     // The previous attempt's evidence still stands.
     expect(screen.getByText(/category option never appeared/)).toBeInTheDocument();
+  });
+});
+
+// A run reports `planned` for EVERY criterion in the test plan, and SKILL.md has
+// the agent write a plan section per criterion — manual ones included. So the
+// feed carries a status for a criterion no agent will ever work, and the row used
+// to render it: the method badge read `manual` while the chip beside it read
+// "Planned", for the whole run, with nothing able to supersede it.
+describe("ValidationPage manual criteria ignore the live feed", () => {
+  it("keeps a manual criterion on Manual when the feed reports it planned", () => {
+    mockValidation = "running";
+    mockRun = { ...run({ cycles: [validationCycle] }), state: "running" };
+    mockCriteria.data = { content: CRITERIA };
+    // AC-003-b is the `manual` criterion in CRITERIA; AC-001-a is `e2e`.
+    mockLive = { "AC-001-a": "planned", "AC-003-b": "planned" };
+    renderPage(undefined);
+
+    expect(screen.getByText("Manual")).toBeInTheDocument();
+    // Only the e2e row may say Planned — the manual one must not.
+    expect(screen.getAllByText("Planned")).toHaveLength(1);
+  });
+
+  it("keeps it on Manual through every live status, not just planned", () => {
+    // Nothing else is reachable for a manual criterion today, but the rule is
+    // about the METHOD rather than about which status happened to arrive.
+    mockValidation = "running";
+    mockRun = { ...run({ cycles: [validationCycle] }), state: "running" };
+    mockCriteria.data = { content: CRITERIA };
+    mockLive = { "AC-003-b": "running" };
+    renderPage(undefined);
+
+    expect(screen.getByText("Manual")).toBeInTheDocument();
+    expect(screen.queryByText("Running…")).not.toBeInTheDocument();
+  });
+
+});
+
+// The run-wide narration a reader arrives with. Until now the tile had exactly
+// two sentences in its whole vocabulary and said NOTHING for the entire middle of
+// a run — the longest stretch, and the one where "is this progressing or stuck?"
+// is the only question anyone has. The agent now keeps a status line on its own
+// validation issue (skills/aep/SKILL.md, "The status line") and this renders it.
+describe("ValidationPage agent status line", () => {
+  const validating = () => {
+    mockValidation = "running";
+    mockRun = { ...run({ cycles: [validationCycle] }), state: "running" };
+    mockCriteria.data = { content: CRITERIA };
+  };
+
+  it("shows the agent's own words over the derived sentence", () => {
+    validating();
+    // The derived line would say "Setting up the test harness…" here, because no
+    // criterion has been touched. The agent knows better and said so.
+    mockIssueComments = [{ id: "c1", body: "Reading the criteria; 12 to author." }];
+    renderPage(undefined);
+
+    expect(screen.getByText("Reading the criteria; 12 to author.")).toBeInTheDocument();
+    expect(screen.queryByText("Setting up the test harness…")).not.toBeInTheDocument();
+  });
+
+  it("takes the NEWEST comment, which is the point of a durable line", () => {
+    validating();
+    mockIssueComments = [
+      { id: "c1", body: "Starting validation: 12 criteria, 9 to author." },
+      { id: "c2", body: "Healing AC-004-b — the login step raced the redirect." },
+    ];
+    renderPage(undefined);
+
+    expect(
+      screen.getByText("Healing AC-004-b — the login step raced the redirect."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Starting validation/)).not.toBeInTheDocument();
+  });
+
+  it("shows the platform's observed line unlabelled — the pulse beside it says machine", () => {
+    // Most lines on a validation issue are this, and labelling the common case
+    // would spend the reader's attention where none is needed.
+    validating();
+    mockIssueComments = [
+      { id: "o1", body: "Running automated tests against the deployed system…", observed: true },
+    ];
+    renderPage(undefined);
+
+    expect(screen.getByText("Running automated tests against the deployed system…")).toBeInTheDocument();
+    expect(screen.queryByText(/The agent:/)).not.toBeInTheDocument();
+  });
+
+  it("labels the AGENT's line, which is the one carrying a judgement", () => {
+    // The platform reports tool calls; the agent speaks between them for what no
+    // command can show. That line is worth more than the one before it, and a
+    // reader who cannot tell them apart over-trusts the mechanical one.
+    validating();
+    mockIssueComments = [
+      { id: "o1", body: "Running automated tests against the deployed system…", observed: true },
+      { id: "c2", body: "AC-001-b blocked: the roles gate published no second login." },
+    ];
+    renderPage(undefined);
+
+    expect(screen.getByText(/The agent:/)).toBeInTheDocument();
+    expect(
+      screen.getByText("AC-001-b blocked: the roles gate published no second login."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders one line of a multi-line comment", () => {
+    // A comment body is markdown over an unbounded textarea; the tile is a note.
+    validating();
+    mockIssueComments = [
+      { id: "c1", body: "Authoring the last three specs.\n\n- AC-005-a\n- AC-005-b" },
+    ];
+    renderPage(undefined);
+
+    expect(screen.getByText("Authoring the last three specs.")).toBeInTheDocument();
+    expect(screen.queryByText(/AC-005-a/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the derived sentence when the agent has posted nothing", () => {
+    // The skill ASKS for the line, and an asked-for thing can be skipped — so the
+    // page must degrade to what it showed before rather than to a blank.
+    validating();
+    mockIssueComments = [];
+    renderPage(undefined);
+
+    expect(screen.getByText("Setting up the test harness…")).toBeInTheDocument();
+  });
+
+  it("survives the switch to the log body, where the derived line cannot", () => {
+    // The live fold is opened only for the report body, so `live.active` is false
+    // here and the derived sentence is empty by construction. The status line is
+    // polled rather than streamed, so it does not care — and the log view is
+    // exactly where someone watching a long run sits.
+    validating();
+    mockIssueComments = [{ id: "c1", body: "Running the whole suite." }];
+    mockLiveActive = false;
+    renderPage("logs");
+
+    expect(screen.getByText("Running the whole suite.")).toBeInTheDocument();
+  });
+
+  it("polls the issue while the loop is live, and not once it settles", () => {
+    // This read is GitHub-backed: an idle version must cost nothing, and a live
+    // one must not freeze at whatever the line said when the page opened.
+    validating();
+    renderPage(undefined);
+    expect(mockIssueLive).toBe(true);
+
+    mockValidation = "passed";
+    mockRun = {
+      ...run({
+        validation: { verdict: "passed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle],
+      }),
+      state: "succeeded",
+    };
+    mockReport.data = { content: REPORT };
+    renderPage(undefined);
+    expect(mockIssueLive).toBe(false);
+  });
+
+  // A comment OUTLIVES the run that wrote it. The closing summary stays the
+  // newest comment on the issue forever, so an ungated line kept announcing a
+  // finished run as if it were still going.
+  it("says nothing over a settled verdict, however recent the comment", () => {
+    mockValidation = "passed";
+    mockRun = {
+      ...run({
+        validation: { verdict: "passed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle],
+      }),
+      state: "succeeded",
+    };
+    mockReport.data = { content: REPORT };
+    mockIssueComments = [
+      { id: "c1", body: "Validation complete: 2/2 e2e criteria passing." },
+    ];
+    renderPage(undefined);
+
+    expect(screen.queryByText(/Validation complete/)).not.toBeInTheDocument();
+    // The verdict itself still speaks — this removes a duplicate, not the answer.
+    expect(screen.getByText(/covered by a test and passed/)).toBeInTheDocument();
+  });
+
+  // The sharper half: `awaiting-fix` is a lifecycle state, so the loop IS live —
+  // but the cycle running is CODING. The newest validation cycle closed when it
+  // reported the failure, so its last words describe a finished attempt, and
+  // showing them claims an agent is validating while none is.
+  it("says nothing while a repair cycle codes, even though the loop is live", () => {
+    mockValidation = "awaiting-fix";
+    mockRun = {
+      ...run({
+        validation: { verdict: "failed", reportPath: "tests/validation/report.json" },
+        cycles: [validationCycle, { ...validationCycle, id: "cycle-3", kind: "coding" }],
+      }),
+      state: "running",
+    };
+    mockCriteria.data = { content: CRITERIA };
+    mockReport.data = { content: REPORT };
+    mockLiveActive = false;
+    mockIssueComments = [{ id: "c1", body: "3 of 12 failed — report committed." }];
+    renderPage(undefined);
+
+    expect(screen.queryByText(/3 of 12 failed/)).not.toBeInTheDocument();
+    // And it must not poll GitHub for a line it will not render.
+    expect(mockIssueLive).toBe(false);
+  });
+
+  // The pulse is the claim that an agent is WORKING. It rides with the line, so
+  // the gate above is also what keeps it from animating over a settled run.
+  it("carries the working pulse while it speaks", () => {
+    validating();
+    mockIssueComments = [{ id: "c1", body: "Authoring the last three specs." }];
+    renderPage(undefined);
+
+    expect(screen.getByText("Authoring the last three specs.")).toBeInTheDocument();
+    expect(screen.getByTestId("working-pulse")).toBeInTheDocument();
   });
 });

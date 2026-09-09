@@ -20,6 +20,7 @@ import { useState } from "react";
 import { Box, Button, Stack, Typography } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { useCycleBuilds } from "../api/queries";
+import { connectionTail } from "../lib/feedTail";
 import { useRunProgress, type RunProgressCycle, type RunProgressPhase } from "../hooks/useRunProgress";
 import { provisioningStage } from "../lib/provisioning";
 import { BUILD_CYCLE_KINDS, buildSessionLabel, isTerminalRun } from "../lib/runView";
@@ -67,7 +68,7 @@ function SessionStages({
   cycle,
   index,
   work,
-  lines,
+  events,
   logPhase,
   /** This session's first stage number in the run's one flow. */
   stepFrom,
@@ -83,7 +84,7 @@ function SessionStages({
   cycle: RunCycleView;
   index: number;
   work: TaskView[];
-  lines: RunProgressCycle["lines"];
+  events: RunProgressCycle["events"];
   logPhase: RunProgressPhase;
   stepFrom: number;
   labelled: boolean;
@@ -124,7 +125,7 @@ function SessionStages({
                     that log is the record of how the code got written. */}
                 {showLog ? (
                   <AgentLogPanel
-                    lines={lines}
+                    events={events}
                     phase={logPhase}
                     agentRunning={agentRunning}
                     maxHeight={agentRunning ? 420 : 260}
@@ -169,7 +170,7 @@ function SessionStages({
  * The session RECORDS come from the run read, not from the stream: a session
  * exists the moment it is dispatched, and waiting for its first log line to
  * render it would hide the boot window entirely. The stream then fills each
- * session's lines in.
+ * session's events in.
  */
 export function RunSpine({
   projectName,
@@ -201,7 +202,7 @@ export function RunSpine({
   const [logRequested, setLogRequested] = useState(false);
   const showLog = !isTerminalRun(run.state) || logRequested;
   const progress = useRunProgress(projectName, run.id, showLog);
-  const linesByCycle = new Map(progress.cycles.map((c) => [c.cycle.id, c.lines]));
+  const eventsByCycle = new Map(progress.cycles.map((c) => [c.cycle.id, c.events]));
 
   // Step numbers are assigned from the session COUNT alone — every session
   // contributes exactly SESSION_STAGE_COUNT stages — so the rail can number
@@ -228,12 +229,9 @@ export function RunSpine({
     );
   }
 
-  let tail: string | undefined;
-  if (progress.phase === "connecting") {
-    tail = "attaching to the run feed…";
-  } else if (progress.phase === "reconnecting") {
-    tail = "connection lost — reconnecting…";
-  }
+  // Connection only: a settled run is already drawn by the stage rows above, so
+  // a second sentence saying it ended would be the same news twice.
+  const tail = connectionTail(progress.phase);
 
   return (
     <Box>
@@ -254,7 +252,7 @@ export function RunSpine({
           cycle={cycle}
           index={i}
           work={work}
-          lines={linesByCycle.get(cycle.id) ?? []}
+          events={eventsByCycle.get(cycle.id) ?? []}
           logPhase={progress.phase}
           stepFrom={firstSessionStep + i * SESSION_STAGE_COUNT}
           // The first session is the flow; a LATER one is a re-entry, and that

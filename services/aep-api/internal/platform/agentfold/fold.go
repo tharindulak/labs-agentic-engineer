@@ -26,6 +26,12 @@
 // internal/platform/designspec could NOT be reused), and the npm-yaml-parity
 // frontmatter re-stringify (yamlemit.go).
 //
+// Gates that exist only on the TS side (openapi.yaml, security.json, the
+// design diagrams) are NOT ported: the fold applies a mutation only once the
+// stream's own verdict for it says the TS bundle accepted it (ADR-0021), so a
+// TS-side rejection is never applied here and parity holds for every gate,
+// present and future.
+//
 // Parity is locked by cassette-replay goldens (fold_golden_test.go): every
 // recorded stream folded here must byte-equal the TS fold's committed golden.
 // Where byte parity cannot be guaranteed (frontmatter shapes outside the
@@ -92,6 +98,13 @@ const (
 	ErrSchemaViolation ErrCode = "SCHEMA_VIOLATION"
 	ErrInvalidDSL      ErrCode = "INVALID_DSL"
 	ErrProtectedPath   ErrCode = "PROTECTED_PATH"
+	// Gates that live ONLY on the TS side (openapi.yaml, security.json, the
+	// design diagrams). The fold never re-judges them: it applies a write
+	// only once the stream's own verdict says the TS gate accepted it.
+	ErrInvalidOpenAPI     ErrCode = "INVALID_OPENAPI"
+	ErrInvalidDiagram     ErrCode = "INVALID_DIAGRAM"
+	ErrUnknownParticipant ErrCode = "UNKNOWN_PARTICIPANT"
+	ErrUnknownDependency  ErrCode = "UNKNOWN_DEPENDENCY"
 )
 
 // MatchCandidate echoes a source line for NOT_UNIQUE / NOT_FOUND re-anchoring.
@@ -117,8 +130,8 @@ type OpResult struct {
 
 // protectedPaths are the structural roots removeFile refuses to delete.
 var protectedPaths = map[string]bool{
-	"specs/requirements/prd.md":  true,
-	"specs/design/design.md":             true,
+	"specs/requirements/prd.md": true,
+	"specs/design/design.cell":  true,
 }
 
 const maxCandidates = 6
@@ -131,6 +144,9 @@ type Fold struct {
 	base      BaseReader
 	baseCache map[string]*string // lf-canonical; nil = known-absent
 	overlay   map[string]*string // touched paths only; nil = deleted
+	// pending holds mutation tool-calls awaiting the stream's verdict for
+	// them (ApplyToolCall): applied on ok:true, dropped otherwise.
+	pending map[string]StreamPart
 }
 
 // New builds a Fold over a lazy BaseReader (Phase 4b: Workspace.ReadFile at
@@ -190,9 +206,39 @@ func (f *Fold) AddFile(ctx context.Context, path, content string) (OpResult, err
 		return opErr(path, op, ErrAlreadyExists,
 			path+" already exists — use editFile to change it, or removeFile then addFile to replace it wholesale."), nil
 	}
-	return f.commit(path, op, next, func(e string) string {
+	if code, msg := f.checkComponentDependencies(ctx, path, next); code != "" {
+		return opErr(path, op, code, msg), nil
+	}
+	// A definition removed this turn to be re-added wholesale is still judged
+	// against what was on disk: the user's authorization record rides through
+	// (preserveAssumption), and an altered record is still refused.
+	prior, err := f.removedThisTurn(ctx, path)
+	if err != nil {
+		return OpResult{}, err
+	}
+	return f.commit(path, op, next, prior, func(e string) string {
 		return path + " would not be valid YAML: " + e
 	}), nil
+}
+
+// removedThisTurn is the base content of a path the overlay marks deleted,
+// nil for any other path.
+func (f *Fold) removedThisTurn(ctx context.Context, path string) (*string, error) {
+	if v, ok := f.overlay[path]; !ok || v != nil {
+		return nil, nil
+	}
+	if c, ok := f.baseCache[path]; ok {
+		return c, nil
+	}
+	raw, exists, err := f.base(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("agentfold: read base %q: %w", path, err)
+	}
+	if !exists {
+		return nil, nil
+	}
+	s := lf(string(raw))
+	return &s, nil
 }
 
 // EditFile is FileBundle.editFile: an anchored, exactly-once literal
@@ -242,7 +288,10 @@ func (f *Fold) EditFile(ctx context.Context, path, oldString, newString string) 
 
 	idx := starts[0]
 	after := content[:idx] + newS + content[idx+len(oldS):]
-	return f.commit(path, op, after, func(e string) string {
+	if code, msg := f.checkComponentDependencies(ctx, path, after); code != "" {
+		return opErr(path, op, code, msg), nil
+	}
+	return f.commit(path, op, after, &content, func(e string) string {
 		return "Edit rejected — result would not be valid YAML: " + e + ". The file is unchanged; fix the indentation of newString and retry."
 	}), nil
 }
@@ -267,11 +316,20 @@ func (f *Fold) RemoveFile(ctx context.Context, path string) (OpResult, error) {
 // commit applies content to path gated by the YAML reparse guard, the
 // component design.json schema gate, and the wireframes .dsl syntax gate;
 // a rejection leaves the fold byte-for-byte unchanged.
-func (f *Fold) commit(path string, op Op, content string, rejectMsg func(yamlErr string) string) OpResult {
+// commit runs every write-gate over the candidate content and, when all pass,
+// lands it in the overlay. `prior` is the file as it stood before this write
+// (nil for a create) — the dependency gate's assumed-is-echoed rule reads it.
+func (f *Fold) commit(path string, op Op, content string, prior *string, rejectMsg func(yamlErr string) string) OpResult {
 	if yamlErr := checkYAMLGuard(path, content); yamlErr != "" {
 		return opErr(path, op, ErrInvalidYAML, rejectMsg(yamlErr))
 	}
 	if code, msg := checkComponentDesignGuard(path, content); code != "" {
+		return opErr(path, op, code, msg)
+	}
+	// The user's authorization record on a dependency's definition rides
+	// through every agent write of the file (preserveAssumption).
+	content = preserveAssumption(path, content, prior)
+	if code, msg := checkDependencyDesignGuard(path, content, prior); code != "" {
 		return opErr(path, op, code, msg)
 	}
 	if code, msg := checkWireframeDslGuard(path, content); code != "" {
@@ -329,15 +387,66 @@ func IsFileMutationTool(toolName string) bool {
 	return ok
 }
 
-// ApplyToolCall folds ONE parsed StreamPart into the fold, mirroring how the
-// TS fold consumes the stream (turnStream.ts): only `tool-call` frames for the
-// mutation tools apply; everything else — other frame types, unknown
-// tools, malformed inputs — is silently ignored (nil, nil). The result is
-// returned for logging; state parity does not depend on it.
+// ApplyToolCall folds ONE parsed StreamPart into the fold. A mutation
+// `tool-call` is held until the stream's own verdict for it arrives — the
+// `tool-result` the agents-side write ledger emits right behind it, carrying
+// the TS FileBundle's OpResult — and applied only when that verdict is
+// ok:true (ADR-0021). A rejected write is dropped unapplied, so a gate that
+// exists only in TS (openapi, security.json, the design diagrams) can never
+// put the fold ahead of the bundle: parity is by construction, not by
+// porting every gate. Everything else — other frame types, unknown tools,
+// malformed inputs, a verdict for a call the fold never saw — is silently
+// ignored (nil, nil). The result is returned for logging; state parity does
+// not depend on it.
+//
+// A tool-call with no toolCallId cannot be paired with a verdict and applies
+// at once — the pre-ledger shape, kept for the driving tests.
 func (f *Fold) ApplyToolCall(ctx context.Context, part StreamPart) (*OpResult, error) {
-	if part.Type != "tool-call" || !IsFileMutationTool(part.ToolName) {
+	switch part.Type {
+	case "tool-call":
+		if !IsFileMutationTool(part.ToolName) {
+			return nil, nil
+		}
+		if part.ToolCallID != "" {
+			if f.pending == nil {
+				f.pending = map[string]StreamPart{}
+			}
+			f.pending[part.ToolCallID] = part
+			return nil, nil
+		}
+		return f.applyCall(ctx, part)
+	case "tool-result":
+		call, ok := f.pending[part.ToolCallID]
+		if !ok {
+			return nil, nil
+		}
+		delete(f.pending, part.ToolCallID)
+		if !verdictAccepted(part.Output) {
+			return nil, nil
+		}
+		return f.applyCall(ctx, call)
+	default:
 		return nil, nil
 	}
+}
+
+// verdictAccepted reads the `ok` of the OpResult a tool-result carries. Only
+// an explicit true applies: an absent or malformed verdict drops the write,
+// and the manifest gate then rejects the turn loudly rather than the fold
+// guessing — under committed-truth generation a failed turn is safe, a
+// divergent commit is not.
+func verdictAccepted(output json.RawMessage) bool {
+	var v struct {
+		OK *bool `json:"ok"`
+	}
+	if err := json.Unmarshal(output, &v); err != nil || v.OK == nil {
+		return false
+	}
+	return *v.OK
+}
+
+// applyCall runs one accepted mutation tool-call through the fold's ops.
+func (f *Fold) applyCall(ctx context.Context, part StreamPart) (*OpResult, error) {
 	in, ok := decodeToolInput(part.Input)
 	if !ok {
 		return nil, nil
@@ -533,4 +642,44 @@ func checkComponentDesignGuard(path, content string) (ErrCode, string) {
 		return "", ""
 	}
 	return err.code, path + ": " + err.message
+}
+
+// checkComponentDependencies mirrors the agent gate's checkComponentDependencies
+// for the half the fold can judge with a file read: a component's external
+// dependency must have its definition on disk (or in this turn's overlay),
+// because the component only references it by name — one dependency, one
+// definition. The cell-membership half lives on the agent side, where the cell
+// is always in the bundle.
+func (f *Fold) checkComponentDependencies(ctx context.Context, path, content string) (ErrCode, string) {
+	if componentDesignRe.FindStringSubmatch(path) == nil {
+		return "", ""
+	}
+	var parsed struct {
+		Dependencies []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		return "", "" // the schema gate reports malformed JSON
+	}
+	var missing []string
+	for _, d := range parsed.Dependencies {
+		if d.Kind != "external" || d.Name == "" {
+			continue
+		}
+		defPath := "specs/design/dependencies/" + d.Name + "/dependency.json"
+		if _, exists, err := f.read(ctx, defPath); err != nil || !exists {
+			missing = append(missing, "`"+d.Name+"` → "+defPath)
+		}
+	}
+	if len(missing) == 0 {
+		return "", ""
+	}
+	noun := "an external dependency has"
+	if len(missing) > 1 {
+		noun = "external dependencies have"
+	}
+	return ErrUnknownDependency, fmt.Sprintf("%s rejected — %s no definition yet: %s. A component references an external dependency by name only; its provider, style, contract file, config keys (or open suggestions) live once in that dependency.json, shared by every component that uses it. Write the dependency file first (addFile — for a Registered External resource a stub with \"source\": \"org\" is enough), then re-emit this file. The file is unchanged.",
+		path, noun, strings.Join(missing, "; "))
 }

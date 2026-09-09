@@ -4,6 +4,7 @@ type BuildRunList = components["schemas"]["BuildRunList"];
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunCycleView = components["schemas"]["RunCycleView"];
 type DeployStage = components["schemas"]["DeployStage"];
+type IssueComment = components["schemas"]["IssueComment"];
 // The six VERDICTS, which is a strict subset of the ten states the chip can
 // show: `none`, `running`, `awaiting-fix` and `cancelled` are lifecycle, and no
 // run row or cycle record ever carries them.
@@ -25,7 +26,11 @@ type RunVerdict = NonNullable<
 // flight (see ValidationAttempt below) and whether the repo has an oracle at all:
 //   localStorage.setItem('aep:mock:validation-criteria', 'missing')
 // which drops validation-criteria.json from the file list, so the read 404s the way
-// it does for a version whose spec authored none (handlers/project.ts).
+// it does for a version whose spec authored none (handlers/project.ts). The same key
+// also takes:
+//   localStorage.setItem('aep:mock:validation-criteria', 'drifted')
+// which adds a criterion to the ORACLE that the report does not speak for — see
+// DRIFTED below.
 //
 // Setting it alone is enough: with no `aep:mock:project` chosen, the base scenario
 // becomes `deployed` rather than the usual `building`, because a verdict only
@@ -122,6 +127,49 @@ const CATALOGUE: CatalogueEntry[] = [
     method: "manual",
   },
 ];
+
+/**
+ * A criterion the oracle carries and the pinned report does not.
+ *
+ * Deliberately OUTSIDE the catalogue. build() derives both files from one outcome
+ * map, so every entry it can see lands in both — and drift is precisely the case
+ * where the two files disagree, which is why this is spliced into the oracle after
+ * the pair is built.
+ *
+ * Not a contrived state: the console reads the criteria at the branch tip and the
+ * report at the merge commit of the attempt that wrote it, so any criterion
+ * authored since that attempt looks exactly like this. Asking the agent for one
+ * more criterion after reading a failure is the ordinary way to get here.
+ */
+const DRIFTED: CatalogueEntry = {
+  req: "REQ-001",
+  statement: REQ_001,
+  id: "AC-001-c",
+  must: "A search with no matches explains that nothing was found",
+  method: "e2e",
+};
+
+/** The oracle with DRIFTED appended to its requirement; the report is left alone. */
+function withDrift(criteria: string): string {
+  const doc = JSON.parse(criteria) as {
+    requirements: {
+      id: string;
+      statement: string;
+      criteria: Record<string, unknown>[];
+    }[];
+  };
+  const entry = { id: DRIFTED.id, must: DRIFTED.must, method: DRIFTED.method };
+  const req = doc.requirements.find((r) => r.id === DRIFTED.req);
+  if (req) req.criteria.push(entry);
+  else {
+    doc.requirements.push({
+      id: DRIFTED.req,
+      statement: DRIFTED.statement,
+      criteria: [entry],
+    });
+  }
+  return JSON.stringify(doc, null, 2);
+}
 
 /** One criterion's outcome in a run report — the only thing a scenario varies. */
 interface Outcome {
@@ -371,14 +419,18 @@ const ARTIFACTS: Record<ValidationScenario, Artifacts> = {
 export function validationFiles(
   scenario: ValidationScenario,
   attempt: ValidationAttempt = "first",
+  drifted = false,
 ): { path: string; content: string }[] {
   // A repeat attempt is running OVER a failed one whose report is still committed —
   // which is what its copy counts. A first attempt has the oracle and nothing else.
   const { criteria, report } = isRepeat(scenario, attempt)
     ? FAILED
     : ARTIFACTS[scenario];
+  // Only the oracle moves: a report is written once and pinned, so drift can only
+  // ever come from the criteria side.
+  const oracle = criteria && drifted ? withDrift(criteria) : criteria;
   return [
-    ...(criteria ? [{ path: CRITERIA_PATH, content: criteria }] : []),
+    ...(oracle ? [{ path: CRITERIA_PATH, content: oracle }] : []),
     ...(report ? [{ path: REPORT_PATH, content: report }] : []),
   ];
 }
@@ -644,4 +696,83 @@ export function validationRuns(
 ): BuildRunList {
   const row = isRepeat(scenario, attempt) ? RUNNING_REPEAT : RUNS[scenario];
   return { tag: "v1", milestoneNumber: 1, runs: [row] };
+}
+
+// ---------------------------------------------------------------------------
+// The agent's STATUS LINE — the validation issue's comment thread.
+//
+// The agent keeps its issue's newest comment current while it works
+// (`skills/aep/SKILL.md`, "The status line"), and the tile renders that line's
+// first row. It is the only run-wide narration that survives a reload, so the
+// fixture's job is to show a line the derived sentence could not have produced:
+// the middle of a run, where the derived sentence can only count criteria.
+//
+// Oldest first, matching the contract — the tile reads the LAST one.
+//
+// Only `running` renders: the page shows this line while validation is running
+// and at no other time, because a comment outlives its run and the closing
+// summary would otherwise narrate a finished attempt forever. The three settled
+// and repairing threads below are therefore NOT dead fixture — they are how the
+// gate is seen to work, by switching the scenario and watching the line go away.
+type StatusPost = { body: string; observed?: boolean };
+
+const STATUS_THREAD: Partial<Record<ValidationScenario, StatusPost[]>> = {
+  // The shape a real run takes: the agent's opener, the platform's rungs as it
+  // watches the run work, and the agent speaking again only for the thing no
+  // command shows. `running` ends on the platform's line, so the tile renders
+  // the unlabelled common case.
+  running: [
+    { body: "Starting validation: 12 criteria, 9 need new specs." },
+    { body: "Setting up the test harness…", observed: true },
+    { body: "Exploring the deployed app to author automated tests…", observed: true },
+    { body: "Authoring automated tests…", observed: true },
+    { body: "Running automated tests against the deployed system…", observed: true },
+  ],
+  // Ends on the AGENT's line, which is what renders the "The agent:" label — the
+  // two scenarios are how the attribution is seen to work, by switching between
+  // them and watching the prefix appear.
+  "awaiting-fix": [
+    { body: "Starting validation: 12 criteria, 9 need new specs." },
+    { body: "Running automated tests against the deployed system…", observed: true },
+    { body: "3 of 12 failed — report committed, PR #14 open for review." },
+  ],
+  passed: [
+    { body: "Starting validation: 12 criteria, 9 need new specs." },
+    { body: "Generating the validation report from the automated test results…", observed: true },
+    { body: "All 12 covered and passing. Report committed, PR #14 open." },
+  ],
+  failed: [
+    { body: "Starting validation: 12 criteria, 9 need new specs." },
+    { body: "Running automated tests against the deployed system…", observed: true },
+    { body: "AC-004-b blocked: the roles gate published no second login." },
+    { body: "3 of 12 failed — report committed, PR #14 open for review." },
+  ],
+};
+
+/**
+ * The validation issue's comments for a scenario, or undefined when the agent
+ * has posted nothing.
+ *
+ * Undefined rather than `[]` on purpose: the contract omits the field for every
+ * empty case, and a scenario with no thread is what exercises the tile's
+ * FALLBACK to the derived sentence — the path a run takes when its posts could
+ * not reach GitHub at all.
+ */
+export function validationStatusThread(
+  scenario: ValidationScenario,
+): IssueComment[] | undefined {
+  const bodies = STATUS_THREAD[scenario];
+  if (!bodies) return undefined;
+  // Fifteen minutes apart, inside the window the run's own cycles occupy, so the
+  // thread reads as one run's narration rather than as history from another day.
+  return bodies.map((post, i) => ({
+    id: `vc-${String(i + 1)}`,
+    author: "aep-bot",
+    body: post.body,
+    createdAt: `2026-07-10T09:${String(45 + i * 5).padStart(2, "0")}:00Z`,
+    url: `${REPO_URL}/issues/30#issuecomment-${String(i + 1)}`,
+    // Author cannot separate these — the platform and the runner share one
+    // credential — so the brand is the only thing that can, here as on the wire.
+    ...(post.observed ? { observed: true } : {}),
+  }));
 }

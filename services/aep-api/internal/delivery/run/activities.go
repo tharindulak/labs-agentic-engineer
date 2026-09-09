@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 
 	"go.temporal.io/sdk/temporal"
 
@@ -199,11 +200,19 @@ func (a *Activities) SetValidationVerdict(ctx context.Context, in SetValidationV
 // ---- cycle record ----------------------------------------------------------
 
 // AppendCycleInput opens a new cycle record under a run.
+//
+// ValidationIssue is the issue a VALIDATION cycle is being dispatched at, and is
+// zero for every other kind. It rides the open rather than waiting for the
+// verdict because the console reads it to reach the run while the run is still
+// going: the issue link and the agent's status line both key on it, and a number
+// that only lands at the verdict reaches them after the only window they render
+// in has closed.
 type AppendCycleInput struct {
-	RunID     string `json:"runId"`
-	OrgID     string `json:"orgId"`
-	ProjectID string `json:"projectId"`
-	Kind      string `json:"kind"`
+	RunID           string `json:"runId"`
+	OrgID           string `json:"orgId"`
+	ProjectID       string `json:"projectId"`
+	Kind            string `json:"kind"`
+	ValidationIssue int    `json:"validationIssue,omitempty"`
 }
 
 // AppendCycle opens the cycle record for a dispatch and returns its id.
@@ -212,10 +221,11 @@ func (a *Activities) AppendCycle(ctx context.Context, in AppendCycleInput) (stri
 		return "", errNotConfigured
 	}
 	return a.cycles.Append(ctx, &delivery.RunCycle{
-		RunID:     in.RunID,
-		OrgID:     in.OrgID,
-		ProjectID: in.ProjectID,
-		Kind:      in.Kind,
+		RunID:           in.RunID,
+		OrgID:           in.OrgID,
+		ProjectID:       in.ProjectID,
+		Kind:            in.Kind,
+		ValidationIssue: in.ValidationIssue,
 	})
 }
 
@@ -531,71 +541,152 @@ func (a *Activities) CheckDeployReadiness(ctx context.Context, in ProjectRef) (D
 	return DeployGateVerdict{Unconfigured: unconfigured, Provisioning: provisioning}, nil
 }
 
-// DeployCycleInput promotes the components a cycle's merge touched, at the
-// commit it merged.
-type DeployCycleInput struct {
-	OrgID      string   `json:"orgId"`
-	ProjectID  string   `json:"projectId"`
-	Components []string `json:"components"`
-	CommitSHA  string   `json:"commitSha"`
+// ReadVersionState classifies EVERY component in the design against what has
+// been built and what is deployed — the read behind both the reconcile and the
+// delivery gate (ADR-0026).
+//
+// One activity rather than three, so the classification lands in workflow
+// history the way the wave plan does: which components were behind, which were
+// held and what each was waiting on is then readable off the run rather than
+// inferred from what the stage went on to write.
+//
+// Unwired degrades to an EMPTY state, which reads as serving — the same answer
+// DeployCycle's missing deployer gives, and for the same reason: a plane with no
+// OpenChoreo behind it must not have its runs fail on a gate that has nothing to
+// gate.
+func (a *Activities) ReadVersionState(ctx context.Context, in ProjectRef) (delivery.VersionState, error) {
+	if a.design == nil || a.builds == nil || a.deployRead == nil {
+		return delivery.VersionState{}, nil
+	}
+	paths, err := a.design.ComponentPaths(ctx, in.OrgID, in.ProjectID)
+	if err != nil {
+		return delivery.VersionState{}, sourceControlErr(err)
+	}
+	// Sorted, because the map's iteration order is random and this list decides
+	// the order of every promote, log line and issue that follows. The waves
+	// re-order it by the design's edges; within a wave it is this order.
+	components := make([]string, 0, len(paths))
+	for name := range paths {
+		components = append(components, name)
+	}
+	sort.Strings(components)
+
+	builds := make(map[string][]BuildRunInfo, len(components))
+	for _, name := range components {
+		runs, lerr := a.builds.ListBuildRuns(ctx, in.OrgID, in.ProjectID, name)
+		if lerr != nil {
+			return delivery.VersionState{}, lerr
+		}
+		builds[name] = runs
+	}
+	states, err := a.deployRead.DeploymentState(ctx, in.OrgID, in.ProjectID, components)
+	if err != nil {
+		return delivery.VersionState{}, deployErr(err)
+	}
+	deploys := make(map[string]delivery.ComponentDeploy, len(states))
+	for _, st := range states {
+		deploys[st.Component] = st
+	}
+
+	out := versionState(in.ProjectID, components, builds, deploys)
+	// Logged like the wave plan, and for the same reason: what is serving is the
+	// premise every later decision rests on, and the symptom of getting it wrong
+	// appears in a browser rather than anywhere near this code.
+	serving, total := out.ServingCount()
+	slog.InfoContext(ctx, "run: version state read",
+		"orgID", in.OrgID, "projectID", in.ProjectID,
+		"serving", serving, "components", total, "notServing", out.Describe())
+	return out, nil
 }
 
-// DeployCycle promotes each of the cycle's components: cut the release from the
-// Workload its build posted, then write the binding that pins it — wiring and
-// pin in one object write.
+// PromoteInput promotes each target at its own commit — one wave of a plan, or
+// the stage's closing converge.
+type PromoteInput struct {
+	OrgID     string                  `json:"orgId"`
+	ProjectID string                  `json:"projectId"`
+	Targets   []delivery.DeployTarget `json:"targets"`
+}
+
+// PromoteWave promotes one wave: cut each component's release from the Workload
+// its build posted, then write the binding that pins it — wiring and pin in one
+// object write.
+//
+// Each target carries its OWN commit, which is what makes this a reconcile
+// rather than a cycle deploy: a pass promotes every behind component at the
+// commit its newest green build was cut from, and those differ. A target with
+// an empty commit CONVERGES — no release is re-cut and no component's live
+// release moves.
 //
 // Degrades to "nothing to do" when unwired, like the other optional
 // collaborators. That is a real configuration (a plane with no OpenChoreo
 // behind it), not a failed run — but note what it means for the loop: with no
-// deployer, a cycle's components never become Ready and the stage reports them
-// all deployed, which is the same answer the loop gave before it had a deploy
-// stage at all.
-func (a *Activities) DeployCycle(ctx context.Context, in DeployCycleInput) ([]delivery.ComponentDeploy, error) {
-	if a.deployer == nil || len(in.Components) == 0 {
+// deployer nothing ever becomes Ready and the stage reports everything
+// deployed, which is the same answer the loop gave before it had a deploy stage
+// at all.
+func (a *Activities) PromoteWave(ctx context.Context, in PromoteInput) ([]delivery.ComponentDeploy, error) {
+	if a.deployer == nil || len(in.Targets) == 0 {
 		return nil, nil
 	}
-	out, err := a.deployer.Deploy(ctx, in.OrgID, in.ProjectID, in.Components, in.CommitSHA)
+	out, err := a.deployer.Deploy(ctx, in.OrgID, in.ProjectID, in.Targets)
 	if err != nil {
 		// Logged as well as returned: Temporal retries this activity, and the
 		// per-attempt cause is otherwise only visible in workflow history.
 		slog.ErrorContext(ctx, "run: deploy failed",
-			"orgID", in.OrgID, "projectID", in.ProjectID, "components", in.Components, "error", err)
+			"orgID", in.OrgID, "projectID", in.ProjectID,
+			"targets", delivery.TargetNames(in.Targets), "error", err)
 		return nil, deployErr(err)
 	}
 	return out, nil
 }
 
-// PlanDeployWaves orders the cycle's components into the levels they can be
-// promoted in — providers before the consumers whose start-up config carries
-// their address.
+// PlanDeployInput asks what one reconcile pass should do, given what the
+// version is serving.
+type PlanDeployInput struct {
+	OrgID     string                `json:"orgId"`
+	ProjectID string                `json:"projectId"`
+	Version   delivery.VersionState `json:"version"`
+}
+
+// PlanDeployWaves plans the pass: the behind components that may be promoted,
+// levelled so every provider precedes the consumers whose start-up config
+// carries its address, plus what to wait for and what is held.
 //
-// Unwired degrades to ONE wave rather than none, matching DeployCycle's own
+// Unwired degrades to ONE wave of everything behind, matching PromoteWave's own
 // no-deployer behaviour: a plane without OpenChoreo still walks the stage, it
 // just has nothing to write.
-func (a *Activities) PlanDeployWaves(ctx context.Context, in DeployCycleInput) ([][]string, error) {
-	if a.deployer == nil || len(in.Components) == 0 {
-		return [][]string{in.Components}, nil
+func (a *Activities) PlanDeployWaves(ctx context.Context, in PlanDeployInput) (delivery.DeployPlan, error) {
+	if a.deployer == nil {
+		return unorderedPlan(in.Version), nil
 	}
-	waves, err := a.deployer.PlanDeploymentWaves(ctx, in.OrgID, in.ProjectID, in.Components)
+	plan, err := a.deployer.PlanDeploymentWaves(ctx, in.OrgID, in.ProjectID, in.Version)
 	if err != nil {
-		slog.ErrorContext(ctx, "run: deploy order could not be planned",
-			"orgID", in.OrgID, "projectID", in.ProjectID, "components", in.Components, "error", err)
-		return nil, deployErr(err)
+		slog.ErrorContext(ctx, "run: deploy pass could not be planned",
+			"orgID", in.OrgID, "projectID", in.ProjectID, "error", err)
+		return delivery.DeployPlan{}, deployErr(err)
 	}
 	// Logged, not merely returned. The order is the stage's whole premise — a
 	// consumer promoted before its provider is a blank page, and the symptom
-	// appears in a browser rather than anywhere near this code. Reading the plan
-	// off the run beats inferring it from what broke.
-	slog.InfoContext(ctx, "run: deploy order planned",
-		"orgID", in.OrgID, "projectID", in.ProjectID, "waves", waves)
-	return waves, nil
+	// appears in a browser rather than anywhere near this code. So is the HELD
+	// set, which is the one thing a reader cannot infer from what was written.
+	slog.InfoContext(ctx, "run: deploy pass planned",
+		"orgID", in.OrgID, "projectID", in.ProjectID,
+		"waves", planWaveNames(plan), "waiting", plan.Waited, "held", heldNames(plan))
+	return plan, nil
 }
 
-// PollCycleDeployments reads back each component's binding — the readiness poll.
+// WaitSetInput is the readiness poll's population: everything a pass promoted,
+// plus what was already converging.
+type WaitSetInput struct {
+	OrgID      string   `json:"orgId"`
+	ProjectID  string   `json:"projectId"`
+	Components []string `json:"components"`
+}
+
+// PollDeployments reads back each waited-on component's binding.
 //
 // With no reader wired every component reads as Ready, which keeps a plane
 // without OpenChoreo from parking its runs in the deploy stage forever.
-func (a *Activities) PollCycleDeployments(ctx context.Context, in DeployCycleInput) (CycleDeployState, error) {
+func (a *Activities) PollDeployments(ctx context.Context, in WaitSetInput) (CycleDeployState, error) {
 	if a.deployRead == nil || len(in.Components) == 0 {
 		return CycleDeployState{Expected: len(in.Components), Ready: len(in.Components)}, nil
 	}
@@ -606,14 +697,14 @@ func (a *Activities) PollCycleDeployments(ctx context.Context, in DeployCycleInp
 	return classifyCycleDeploys(len(in.Components), states), nil
 }
 
-// MintDeployFixIssuesInput names the components a cycle could not get running.
+// MintDeployFixIssuesInput names the components a pass could not get running,
+// each at the commit whose release it was promoting.
 type MintDeployFixIssuesInput struct {
-	OrgID           string            `json:"orgId"`
-	ProjectID       string            `json:"projectId"`
-	MilestoneNumber int               `json:"milestoneNumber"`
-	Components      []string          `json:"components"`
-	Reasons         map[string]string `json:"reasons,omitempty"`
-	CommitSHA       string            `json:"commitSha"`
+	OrgID           string                  `json:"orgId"`
+	ProjectID       string                  `json:"projectId"`
+	MilestoneNumber int                     `json:"milestoneNumber"`
+	Failed          []delivery.DeployTarget `json:"failed"`
+	Reasons         map[string]string       `json:"reasons,omitempty"`
 }
 
 // MintDeployFixIssues files one issue per component that did not come up.
@@ -625,11 +716,11 @@ type MintDeployFixIssuesInput struct {
 // delivered that never started. Wiring it is not optional in any real
 // deployment.
 func (a *Activities) MintDeployFixIssues(ctx context.Context, in MintDeployFixIssuesInput) ([]int, error) {
-	if a.deployMint == nil || len(in.Components) == 0 {
+	if a.deployMint == nil || len(in.Failed) == 0 {
 		return nil, nil
 	}
 	filed, err := a.deployMint.MintDeployFixIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber,
-		in.Components, in.Reasons, in.CommitSHA)
+		in.Failed, in.Reasons)
 	return filed, sourceControlErr(err)
 }
 

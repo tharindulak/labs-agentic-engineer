@@ -22,7 +22,7 @@ import { FileBundle, type OpErr, type OpOk } from "../src/bundle.js";
 import { SEED_FILES } from "./seed.js";
 
 const OPENAPI = "specs/design/components/hello-api/openapi.yaml";
-const DESIGN = "specs/design/design.md";
+const DESIGN = "specs/design/design.cell";
 const REQUIREMENTS = "specs/requirements/prd.md";
 
 function fresh(): FileBundle {
@@ -169,4 +169,21 @@ test("addFile: any component type string is accepted at design time (support-gat
   const b = fresh();
   const task = { ...(JSON.parse(CD_VALID) as Record<string, unknown>), type: "scheduled-task" };
   assert.equal(expectOk(b.addFile(CD_PATH, JSON.stringify(task))).status, "applied");
+});
+
+test("a dependency definition re-emitted wholesale keeps the user's assumed record", () => {
+  const path = "specs/design/dependencies/mail/dependency.json";
+  const record = { by: "admin", at: "2026-09-08T10:15:00Z" };
+  const prior = JSON.stringify({ name: "mail", provider: "Postmark", style: "rest-api", assumed: record });
+  const b = new FileBundle({ ...SEED_FILES, [path]: prior });
+  // removeFile then addFile without the record — the way a model replaces a file.
+  assert.equal(b.removeFile(path).status, "applied");
+  const res = b.addFile(path, JSON.stringify({ name: "mail", provider: "Postmark", style: "rest-api", contract: "openapi.yaml" }));
+  assert.equal(res.status, "applied", JSON.stringify(res));
+  assert.deepEqual(JSON.parse(b.read(path)!).assumed, record);
+  // An altered record on the re-add is still refused.
+  const b2 = new FileBundle({ ...SEED_FILES, [path]: prior });
+  b2.removeFile(path);
+  const altered = b2.addFile(path, JSON.stringify({ name: "mail", provider: "Postmark", style: "rest-api", assumed: { by: "agent", at: record.at } }));
+  assert.equal(altered.ok, false);
 });

@@ -37,8 +37,7 @@ import {
   consumePendingSeed,
   notifyTurnEnd,
   replaceMessages,
-  setPendingSeed,
-} from "../../agent-chat/chatStore";
+  setPendingSeed, peekPendingSeed } from "../../agent-chat/chatStore";
 import { SpecView, designWarningIntro, specTurnGate } from "./SpecView";
 import {
   clearPlan,
@@ -54,7 +53,7 @@ type BuildResponse = components["schemas"]["BuildResponse"];
 // --- Router -----------------------------------------------------------
 const mockNavigate = vi.fn();
 const mockSearch = vi.hoisted(() => ({
-  current: {} as { generate?: "design"; view?: "architecture" },
+  current: {} as { generate?: "design"; view?: "architecture"; file?: string },
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockNavigate,
@@ -258,6 +257,10 @@ const mockUseSpecFileContent = vi.fn();
 const mockUseDesignDependencies = vi.fn();
 
 vi.mock("../api/queries", () => ({
+  // The definition view's two writes: stubbed, since this file renders without a
+  // QueryClientProvider; DependencyView's own behavior is its own test's.
+  useProvideDependencyContract: () => ({ mutate: vi.fn(), isPending: false, isError: false, isSuccess: false, error: null }),
+  useAcceptDependencyAssumption: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useSpecFiles: (...args: unknown[]) => mockUseSpecFiles(...args),
   useSpecFileContent: (...args: unknown[]) => mockUseSpecFileContent(...args),
   useDesignDependencies: (...args: unknown[]) =>
@@ -295,26 +298,26 @@ vi.mock("./BuildDependencyDrawer", () => ({
     items,
     onClose,
     onContinue,
-    onResolveDependency,
+    onOpenDependency,
+    onResolveAll,
   }: {
     open: boolean;
     items: PreflightItem[];
     onClose: () => void;
     onContinue: (inputs: BuildInputItem[]) => void;
-    onResolveDependency?: (
-      item: PreflightItem,
-      intent: "resolve" | "reconsider",
-    ) => void;
+    onOpenDependency?: (name: string) => void;
+    onResolveAll?: () => void;
   }) =>
     open ? (
       <div data-testid="dependency-drawer">
         <button onClick={() => onContinue(STUB_INPUTS)}>Drawer Continue</button>
         <button onClick={onClose}>Drawer Cancel</button>
         {items[0] ? (
-          <button onClick={() => onResolveDependency?.(items[0]!, "resolve")}>
-            Resolve drawer item
+          <button onClick={() => onOpenDependency?.(items[0]!.dependency)}>
+            Open drawer item
           </button>
         ) : null}
+        {items[0] ? <button onClick={() => onResolveAll?.()}>Resolve all drawer</button> : null}
       </div>
     ) : null,
 }));
@@ -357,8 +360,8 @@ const BLOCKED_ITEMS: PreflightItem[] = [
   {
     component: "checkout-api",
     dependency: "crm",
-    kind: "external-ambiguous",
-    description: "More than one candidate fits.",
+    kind: "external-unresolved",
+    description: "No provider chosen yet — choose which one to use.",
   },
 ];
 
@@ -1138,6 +1141,42 @@ describe("SpecView dependency wiring (#252 Task 9)", () => {
 });
 
 // --- #252 Task 10: build dependency drawer wiring --------------------------
+// A link in the chat (`aep://spec/<path>`, ADR-0028) lands here as `?file=`:
+// the document is selected once and the param is stripped, so a rail click
+// afterwards survives a reload.
+describe("SpecView — a document linked from the chat", () => {
+  it("selects the linked definition and strips the param", async () => {
+    const definitionPath = "specs/design/dependencies/currency-service/dependency.json";
+    mockUseSpecFiles.mockReturnValue({
+      data: [...BASE_FILES, { path: definitionPath, sha: "dep1", group: "designs" }],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSpecFileContent.mockImplementation((_project: string, file: { path: string } | null) => ({
+      data:
+        file?.path === definitionPath
+          ? { sha: "dep1", content: JSON.stringify({ name: "currency-service", suggestions: [{ name: "Open Exchange Rates" }] }) }
+          : undefined,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    }));
+    mockSearch.current = { file: definitionPath };
+
+    render(<SpecView projectName="proj1" />);
+
+    expect(await screen.findByRole("heading", { name: "currency-service" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select a provider" })).toBeInTheDocument();
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/projects/$projectName/spec", params: { projectName: "proj1" }, replace: true }),
+    );
+    mockSearch.current = {};
+  });
+});
+
 describe("SpecView build dependency drawer (#252 Task 10)", () => {
   const DRAWER_PREFLIGHT_ITEMS: PreflightItem[] = [
     {
@@ -1158,7 +1197,7 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
     });
   });
 
-  it("resolves a drawer blocker item to its full Dependency entry and fires the seeded chat flow", async () => {
+  it("opens a dependency's definition from a drawer row and closes the drawer, which would otherwise cover it", async () => {
     mockPreflightRefetch.mockResolvedValue({
       data: {
         needsInput: true,
@@ -1166,6 +1205,26 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
         items: DRAWER_PREFLIGHT_ITEMS,
       },
     });
+    // The definition is a file in the spec, rendered like a component's
+    // design.json: the drawer's Open selects it, and the pane reads it.
+    const definitionPath = "specs/design/dependencies/stripe/dependency.json";
+    mockUseSpecFiles.mockReturnValue({
+      data: [...BASE_FILES, { path: definitionPath, sha: "dep1", group: "designs" }],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSpecFileContent.mockImplementation((_project: string, file: { path: string } | null) => ({
+      data:
+        file?.path === definitionPath
+          ? { sha: "dep1", content: JSON.stringify({ name: "stripe", provider: "Stripe", style: "rest-api" }) }
+          : undefined,
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    }));
 
     render(<SpecView projectName="proj1" />);
     clickBuild();
@@ -1173,13 +1232,16 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
       expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument(),
     );
 
-    fireEvent.click(screen.getByText("Resolve drawer item"));
+    fireEvent.click(screen.getByText("Open drawer item"));
 
-    // Same lookup precedent as "Resolve in chat" above: the FULL endpoint
-    // entry (status/reason included), never a hand-built partial object —
-    // looked up by (item.component, item.dependency), not the currently
-    // selected file's component (the drawer can span any component). The
-    // RESOLVE intent, since this is the blocker panel's chat button.
+    await waitFor(() =>
+      expect(screen.queryByTestId("dependency-drawer")).not.toBeInTheDocument(),
+    );
+    // The definition is the selection now: its heading is the dependency's
+    // name, and its Resolve runs the guided flow through the same seeded-chat
+    // seam the design view's cards use, with the FULL endpoint entry.
+    expect(screen.getByRole("heading", { name: "stripe" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resolve" }));
     expect(mockResolveViaChat).toHaveBeenCalledWith(
       "checkout-api",
       CHECKOUT_DEPS[0]!.dependencies![0],
@@ -1203,7 +1265,7 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
     render(<SpecView projectName="proj1" />);
     clickBuild();
     await waitFor(() =>
-      expect(screen.getByText("Resolve drawer item")).toBeInTheDocument(),
+      expect(screen.getByText("Open drawer item")).toBeInTheDocument(),
     );
     // PAINTED is not SUBSCRIBED. The drawer's items land in a commit, but the
     // effect that registers SpecView's turn-end listener is a passive effect
@@ -1227,7 +1289,7 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
     expect(mockFlush).toHaveBeenCalledTimes(flushesBeforeTurnEnd + 1);
 
     await waitFor(() =>
-      expect(screen.queryByText("Resolve drawer item")).not.toBeInTheDocument(),
+      expect(screen.queryByText("Open drawer item")).not.toBeInTheDocument(),
     );
     expect(mockPreflightRefetch).toHaveBeenCalledTimes(2);
   });
@@ -1241,11 +1303,11 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
     expect(mockFlush).not.toHaveBeenCalled();
   });
 
-  // #252 Task 15: the drawer is a MUI overlay — left open after "Resolve via
-  // chat" it covers the chat panel the seeded message just opened, so the
-  // user can't see what they're meant to respond to. Closing it is this
-  // handler's job, alongside firing the seeded chat flow.
-  it('closes the dependency drawer when "Resolve via chat" is clicked, so the seeded chat is visible', async () => {
+  // The drawer is a MUI overlay — left open after handing off to chat it
+  // covers the chat panel the seeded message just opened, so the user can't
+  // see what they're meant to respond to. "Resolve all" seeds the batch flow
+  // and closes it.
+  it('seeds the batch flow and closes the drawer on "Resolve all"', async () => {
     mockPreflightRefetch.mockResolvedValue({
       data: {
         needsInput: true,
@@ -1260,15 +1322,9 @@ describe("SpecView build dependency drawer (#252 Task 10)", () => {
       expect(screen.getByTestId("dependency-drawer")).toBeInTheDocument(),
     );
 
-    fireEvent.click(screen.getByText("Resolve drawer item"));
+    fireEvent.click(screen.getByText("Resolve all drawer"));
 
-    // The seeded chat flow still fires (same lookup as the test above)...
-    expect(mockResolveViaChat).toHaveBeenCalledWith(
-      "checkout-api",
-      CHECKOUT_DEPS[0]!.dependencies![0],
-      "resolve",
-    );
-    // ...and the drawer closes so the chat panel it opens is actually visible.
+    expect(peekPendingSeed(chatKeyFor("acme", "proj1"))?.message).toBe("/resolve-dependencies");
     await waitFor(() =>
       expect(screen.queryByTestId("dependency-drawer")).not.toBeInTheDocument(),
     );
@@ -1322,7 +1378,7 @@ describe("SpecView follows the write (#576, ADR-0026)", () => {
 
     // The turn moves on to other writes and back to the cell; a still-following
     // editor would jump to Architecture here. It must not.
-    act(() => planFileWriting(chatKey, "t1", "specs/design/design.md"));
+    act(() => planFileWriting(chatKey, "t1", "specs/design/domain-model.md"));
     act(() => planFileWriting(chatKey, "t1", CELL));
     expect(screen.queryByTestId("cell-diagram-panel")).not.toBeInTheDocument();
   });
@@ -1806,17 +1862,58 @@ describe("SpecView validation criteria explanation", () => {
     render(<SpecView projectName="proj1" />);
 
     expect(
-      screen.getByText(/Each criterion represents one thing your software must do/),
+      screen.getByText(/Each criterion represents one thing your system must do/),
     ).toBeInTheDocument();
     expect(screen.getByText(/based on your requirements/)).toBeInTheDocument();
+    // Both halves, because only the automatable ones are checked for the reader.
+    // Claiming all of them were is what this sentence used to do, above a list
+    // whose glyphs said otherwise.
+    expect(
+      screen.getByText(/the ones that can be automated are checked/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/The rest you have to check yourself/),
+    ).toBeInTheDocument();
     expect(screen.getByText(/To change one, ask the agent/)).toBeInTheDocument();
   });
 
-  it("names the methods without the e2e acronym", () => {
+  it("marks who checks each criterion, and never with a run signal", () => {
+    // This pane has no run attached — it is a file preview of the oracle — so a
+    // chip here would name a run that does not exist. `manual` is the one that
+    // regressed: a rule giving manual criteria their final word was ranked above
+    // the has-a-run check, and stamped "Manual" onto every preview.
     render(<SpecView projectName="proj1" />);
 
-    expect(screen.getByText("auto")).toBeInTheDocument();
-    expect(screen.getByText("manual")).toBeInTheDocument();
-    expect(screen.queryByText("e2e")).not.toBeInTheDocument();
+    // Each row's mark is a glyph, so its phrase is what identifies it. The glyph
+    // carries no visible text of its own, which is why the phrase is also the
+    // accessible name.
+    expect(
+      screen.getByText("Validated automatically by the agent."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Requires manual validation.")).toBeInTheDocument();
+    for (const chip of ["Manual", "Pending", "Passed", "Failed", "Planned"]) {
+      expect(screen.queryByText(chip)).not.toBeInTheDocument();
+    }
+  });
+
+  it("names no method at all — the glyph does it", () => {
+    // `e2e` is an acronym the console lexicon forbids, and "auto" is the word it
+    // is spelled as elsewhere. Neither belongs on a row, where the glyph carries
+    // the distinction, so neither may leak here.
+    render(<SpecView projectName="proj1" />);
+
+    for (const word of ["e2e", "auto", "manual"]) {
+      expect(screen.queryByText(word)).not.toBeInTheDocument();
+    }
+  });
+
+  it("shortens the ids, keeping the full one on hover", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("a")).toBeInTheDocument();
+    expect(screen.getByText("b")).toBeInTheDocument();
+    expect(screen.queryByText("AC-001-a")).not.toBeInTheDocument();
+    expect(screen.queryByText("REQ-001")).not.toBeInTheDocument();
   });
 });

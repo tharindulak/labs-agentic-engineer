@@ -31,6 +31,7 @@ flowchart LR
 | `tags` | list the project's `v<N>` spec version tags | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
 | `collab` | the collab session descriptor + the S2S room-access oracle | `.../spec/collab-session`, `GET /collab/validate` |
+| `designdeps` | the two writes into an external dependency's directory: provide its contract (a URL the platform fetches, or the document itself), and record the user's authorization to build on the design agent's assumed contract — before the agent writes it (the resolve flow's card) or after (the definition's acceptance box) | `POST .../dependencies/{name}/contract`, `POST .../dependencies/{name}/assumption` |
 
 *Still flat in the domain root (not carved into finer slices): the artifacts store/versioning machinery,
 the genai turn engine (runner/broker/sweeper), and the files / design / skills services.*
@@ -51,6 +52,22 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 ## Owns
 - git spec content (`prd.md`, `specs/design/**`), the annotated `v<N>` tag (the version store),
   the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam).
+- **One external dependency, one definition** (ADR-0027). An external dependency lives in
+  `specs/design/dependencies/<name>/` — `dependency.json` (provider, style, config keys, open
+  suggestions, provenance, the user's `assumed` record) beside the committed contract it points at
+  (an OpenAPI/GraphQL slice, an `sdk.json` manifest). A component's `design.json` references it by
+  name only; `AssembleDesign` hydrates every reference from the directory (`dependency_json.go`), so
+  downstream readers keep the flat `Dependency`, and `SplitDesign` writes both halves back. A design
+  from before the directory existed is lifted into one at its next save (the legacy fields on the
+  component are decoded, never re-encoded). `ComputeDependencyStatus` reads the state off the
+  hydrated edge — org/registry → resolved+registered; no provider (the user has not chosen a
+  service; `suggestions` may be open) → needs-input; a style with no contract or manifest on disk
+  → needs-contract; an agent-written
+  contract (`x-aep-assumed: true` in the file) with no acceptance → needs-acceptance; else resolved,
+  flagged assumed / derived (`x-aep-derived: true` — written from the provider's own reference) /
+  sdk-only — and the build gate blocks on nothing else. The write-gates (zod in
+  `@aep/agent-stream`, `agentfold/dependencygate.go`, `designspec` at save) validate the file; the
+  `assumed` record is the one field only the platform writes (`designdeps`).
 - **The Skill library.** One flat authored library at repo-root `skills/`, COPY'd into the image and read
   at runtime from `config.SkillsDir` (default `/app/skills`) — not go:embed'd. A skill dir is `SKILL.md`
   plus the [Agent Skills standard structure](https://agentskills.io/specification) — `scripts/`,

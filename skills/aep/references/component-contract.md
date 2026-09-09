@@ -17,7 +17,8 @@ what is there, and change only what the issue moves.
 - it **starts with no required environment variables** — every setting has a
   sensible default that an env var may override;
 - it implements the full contract with real working code — no stubs, no mocks,
-  every endpoint functional;
+  every endpoint functional (a `web-application`'s dev-only `mock/` harness is
+  not a stub; its build proves it absent from `dist/`);
 - it is green.
 
 **`workload.yaml` is your prompt's to give.** When it carries one, that file is
@@ -52,7 +53,7 @@ path or a payload shape, and never invent an operation.
 | `component` | `specs/design/components/<dep>/openapi.yaml`, already in your tree — authoritative whether or not that component is built yet. Read the spec, never the provider's source |
 | `org-service` | the provider's published contract: your prompt carries it, names where it is, or says it is undocumented |
 | `platform-resource` | its `wiring` outputs |
-| `external` | **a pinned contract wins when there is one**: its `specPath` (a URL, or a file under `specs/design/components/<component>/dependencies/`), else the vendor's docs. The procedure is `external-dependency-research.md` beside this file |
+| `external` | **a pinned contract wins when there is one**: `specs/design/dependencies/<name>/openapi.yaml` (or `schema.graphql`, or `sdk.json`), the slice of the provider's document the design committed to — or the interface it derived from the provider's reference; the vendor's docs fill what it does not cover. The procedure is `external-dependency-research.md` beside this file |
 
 **An endpoint dependency's env var is always `<DEP_NAME>_URL`**, upper-snake-cased
 (`todo-api` → `TODO_API_URL`). With no published contract at all, implement a
@@ -106,11 +107,23 @@ you run.
 **Never hand-write a dependency lockfile or one of its checksums** — regenerate
 it with your stack's dependency tool and keep exactly what that produces.
 
-Compile checks are the *only* execution allowed. **Do not run, start, or execute
-the application** — no long-running process of any kind — and do not build
-container images. The platform builds and deploys; a `Dockerfile` is verified
-there and never here, so write it carefully (your stack skill pins the base
-image).
+Compile checks are the only execution a **service** gets: do not run, start or
+execute one, and never build a container image. The platform builds and deploys;
+a `Dockerfile` is verified there and never here, so write it carefully (your
+stack skill pins the base image).
+
+**A `web-application` is green when it builds AND walks.** A screen that
+compiles can still render the wrong content, drop a navigation arrow its
+wireframe draws, or leave a button wired to nothing. The walk is
+`mock-verification`, dispatched by the lead once your build is clean: leave
+`mock/` and the `dev:mock` script working and hand off a clean build. A clean
+build alone is not green, so never report it as such.
+
+**Walks** means the walk ran to its report. A `[ ]` line in that report is an
+open defect on one screen, fixed and re-walked lines beside it: the component is
+committed and the cycle's record carries the line, so the defect is visible and
+attributable rather than blocking the cycle. Only a build that stays red, or an
+app that will not stand up in mock mode, leaves a `web-application` unfinished.
 
 **If a component will not go green**, stop after a reasonable number of attempts
 at one root cause — three is plenty. Do not force something broken through.

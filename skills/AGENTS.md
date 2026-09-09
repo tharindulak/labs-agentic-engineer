@@ -40,10 +40,11 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
   `wireframes`, `validation-criteria`, `task-planning`), the `console`
   narration policy, and the coding run's own workflow skills (`aep`,
-  `aep-validation`, `playwright-cli`).
+  `aep-validation`, `mock-verification`) and the browser CLIs they drive
+  (`playwright-cli`, `agent-browser`).
 - **`org`** — the org-visible stack skills (`go`, `ballerina`, `react-webapp`,
-  `astryx-design-system`, `api-management`, `thunder-authentication`). Editable
-  and deletable by an org.
+  `oxygen-ui-design-system`, `astryx-design-system`, `api-management`,
+  `thunder-authentication`). Editable and deletable by an org.
 
 Kind decides console visibility and who may edit a skill, and nothing else. It is
 `audience` that decides who may *read* one, and the two are independent — a skill
@@ -83,9 +84,13 @@ one was `go`'s, and it was invisible for as long as `go` was preloaded regardles
 A web app's UI toolkit is an **organization** decision, and nothing in this
 library hardcodes one. Two edits change it, both in places an org may edit:
 
-1. Add the new design-system skill — author `skills/<name>/SKILL.md`, or import
-   it through Settings → Skills. Delete `astryx-design-system` if the org does
-   not want it available.
+1. Make sure a skill for the design system exists — author
+   `skills/<name>/SKILL.md`, or import it through Settings → Skills. The
+   library ships two: `oxygen-ui-design-system` (WSO2 Oxygen UI, the default
+   `organization` names) and `astryx-design-system` (kept available, named by
+   nothing). Delete the one an org does not want offered at all, or switch it
+   off in Settings → Skills — availability is the org's manifest flag
+   (ADR-0015), not something a library file can set.
 2. Point the **UI design system** section of `organization` at its name.
 
 `architecture` reads the name out of that section rather than holding one of its
@@ -96,7 +101,13 @@ per-flow eager skill), so the name is always in context when a component's
 the pin follows the org's choice with **no platform-skill edit** —
 `architecture` is `kind: platform` and read-only in the console, which is exactly
 why the name cannot live there. An empty section means web-app builds carry only
-the stack skills. `astryx-design-system` is the shipped default, nothing more.
+the stack skills. A design-system skill this section does not name is never
+**pinned**, so no build is steered by it — but it is still seeded **enabled**
+(ADR-0015: an absent manifest entry means enabled) and still copied into every
+project mirror, where a coding agent can load it by name. Withholding it as
+well is the org's toggle at Settings → Skills, and **no file in this library
+can pre-set it**: `reconcileEmbedded` only carries a `Disabled` flag forward
+from the org's own repo and never originates one.
 
 A design-system skill must declare four things to work in that slot:
 
@@ -104,7 +115,10 @@ A design-system skill must declare four things to work in that slot:
   system is built against, not designed with; `[coding]` is what puts it in the
   project mirror, and `org` is what lets an org edit or delete it.
 - **A `## Verify` section** naming the one command `react-webapp`'s verify
-  sequence should run for it, or nothing if it has none.
+  sequence should run for it, or nothing if it has none. A command that is a
+  script the skill ships (`oxygen-ui-design-system/scripts/verify.mjs`) rides
+  the mirror like any aux file and is pinned by a `*.test.mjs` beside it, which
+  `make test` runs.
 - **Which of its own defaults the platform overrides.** Every vendor's
   quickstart assumes a project it scaffolded itself; `react-webapp`'s deployment
   facts (no `base`, the platform's own nginx assets, `window._env_`, one
@@ -114,7 +128,7 @@ A design-system skill must declare four things to work in that slot:
   layer (`openapi-fetch` + the committed `src/generated/` client) stays
   `react-webapp`'s.
 
-Only `organization` and the design-system skill itself may name a design system.
+Only `organization` and a design-system skill itself may name a design system.
 A vendor name anywhere else in this library is a defect — it is the thing that
 would make a swap need more than the two edits above. That includes
 `references/*.md`: a mirror copies a skill's whole directory, so a vendor name in
@@ -122,13 +136,22 @@ a reference reaches a coding session exactly as a body would. Check it before
 changing a web-app skill:
 
 ```bash
-grep -rniE 'astryx|@astryxdesign' skills/ --include='*.md'
+grep -rniE 'astryx|@astryxdesign|\boxygen\b|@wso2/oxygen' skills/ --include='*.md'
 ```
 
-Only `skills/organization/SKILL.md`, `skills/astryx-design-system/**` and this
-file should match. A hit anywhere else — especially in `architecture`, which is
+Four paths may match, plus the one exception below: `skills/organization/SKILL.md`,
+`skills/oxygen-ui-design-system/**`, `skills/astryx-design-system/**` and this
+file. A hit anywhere else — especially in `architecture`, which is
 `kind: platform` and read-only in the console — means an org can no longer swap
 its design system without a platform change.
+
+The exception: `skills/wireframes/SKILL.md` says the wireframe
+compiler renders with an "Oxygen UI palette" and applies "the Oxygen theme".
+That is the **compiler's** drawing style for a `.excalidraw` picture, not the
+app's UI toolkit, and it does not follow the org's design system — swapping
+the design system does not restyle a wireframe. Keep it that way: do not
+couple the two, and do not let the name spread from there into anything a
+build reads.
 
 ## Who owns what
 
@@ -142,6 +165,13 @@ its design system without a platform change.
   the fan-out section names the file and a rule that is not in it does not reach
   an implementer. The lead reads it too, for inline work and for authoring
   `workload.yaml` (whose format is `references/workload-and-wiring.md`).
+- **The walk is split the same way.** `mock-verification` owns what a walk
+  verifies, the shapes its progress takes, and the script that runs its dev
+  server; `aep` owns the dispatch (a literal prompt the lead copies, carrying
+  where progress goes) and what becomes of the report;
+  the component contract and `react-webapp` say only that the walk exists and
+  what the builder leaves for it. A second description of how to walk, in any
+  of those, is a defect.
 - **Stack skills own only their stack**: layout, `Dockerfile`, libraries, the
   verify command, their own pitfalls. Restating a platform-contract rule in a
   stack skill is a defect — it is preloaded context paid twice, and the two
@@ -159,7 +189,10 @@ its design system without a platform change.
   (`packages/bal-library-tool/design/decisions/ADR-0011-…`).
 - Inside `aep`, the tie-break: a rule naming `git`/`gh`/an issue/a PR belongs to
   `SKILL.md`; one naming a path, a file or an env var belongs to the component
-  contract. The contract is stated as information rather than a build procedure,
+  contract. That is why the **status line** — the one `gh` a fan-out subagent may
+  run, keeping its own issue's newest comment current — is handed down through
+  the fan-out prompt and not written into the contract the subagent reads
+  (`runners/remote-worker/design/decisions/ADR-0010-the-issue-is-the-status-line.md`). The contract is stated as information rather than a build procedure,
   so it reads the same for a component's first line and for a change to one that
   shipped weeks ago.
 - Niche material only some runs need goes to `references/`, not into a body.

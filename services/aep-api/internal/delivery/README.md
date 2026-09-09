@@ -131,8 +131,8 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   conflict: the design is unsatisfiable on this cluster, so the click claims no version and
   starts no workflow.
 - **What preflight gates**: it reports what a version's dependencies still need, and only
-  `needsResolution` — a dependency the design itself cannot name (ambiguous, unresolved, missing spec,
-  or an org service awaiting access) — blocks the version cut. `needsInput` stays the broad "there is
+  `needsResolution` — a dependency the design itself cannot name (no service chosen, an unaccepted
+  assumption, missing spec, or an org service awaiting access) — blocks the version cut. `needsInput` stays the broad "there is
   something to show" flag: an external dependency's config VALUES are collected while the build runs
   and enforced at the deploy gate, so they never hold up starting a build.
 - The **event plane** (`eventcore`): the platform's whole reaction to a pull request, a milestone-matched
@@ -159,13 +159,15 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `ended_at IS NULL`: usage arrives from the terminal-log capture, and a cycle closes on the merge webhook
   seconds after its Job exits — fencing it would discard nearly every capture. Entries are keyed
   `(source, source_id)`, so a re-read of the same log updates one entry rather than adding a second.
-- The **deploy stage** (`run`): once a cycle's builds are green, the supervisor cuts each touched
-  component's release from the Workload its build posted, writes the binding that pins it — release
-  pin, trait env configs and workload overrides in ONE object write — and waits for every binding to
-  report Ready before the cycle is green. Components carry `autoDeploy: false`, so nothing else
-  promotes a release. It promotes WAVE BY WAVE (providers before the consumers whose start-up config
-  carries their address) and finishes with one converge for the facts that flow the other way — see
-  the invariant below and ADR-0019.
+- The **deploy stage** (`run`): every cycle, red or green, the supervisor RECONCILES THE VERSION. It
+  reads every component the design declares, compares the release its newest succeeded build would
+  cut against the release its binding pins, and promotes the difference — cutting each release from
+  the Workload that build posted and writing the binding that pins it, release pin plus trait env
+  configs plus workload overrides in ONE object write — then waits for Ready. Components carry
+  `autoDeploy: false`, so nothing else promotes a release. It promotes WAVE BY WAVE (providers before
+  the consumers whose start-up config carries their address), holds a component whose provider is not
+  serving, and finishes with one converge for the facts that flow the other way — see the invariants
+  below, ADR-0019 and ADR-0026.
 - The **run loop** (`run`): one Temporal workflow per SPECIES per milestone —
   `<kind>-<org>-<project>-<milestoneNumber>`, whose id is REUSED after a terminal run because a
   milestone sees sequential runs of one kind across its life. `dev` and `task` are the same cycle loop
@@ -268,6 +270,15 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   routable fact, and ordering is the "Depends on #N" lines the AGENT honours. Dedupe on re-plan is the
   title slug against the milestone's own issues, which makes reconcile additive-only and a crash re-run a
   no-op.
+- **A cycle's own verification happens INSIDE the session, and this domain orchestrates none of it.** A
+  coding cycle no longer ends at "it compiles": before committing a `web-application` the agent stands it
+  up in mock mode, drives it through a browser against the component's stories and heals what that finds,
+  which the skill library owns end to end and the platform not at all. There is no activity, no store, no
+  callback and no status for those passes — the only trace they leave here is the SHAPE of what arrives (one pull
+  request carrying the build AND its fixes, so no extra branch, pull request or issue reaches the event
+  plane) and the cycle's `activeDeadlineSeconds`, which the dispatch now NAMES rather than inheriting the
+  ComponentType's default because the work runs longer (`codingagent/design/oc-job-dispatch.md`). Judging
+  a DEPLOYED version is a different job and the validation run owns it.
 - **Two label axes: an issue is ARMED or not, and has exactly one KIND** (`labels.go`). `aep` arms it —
   something may work it — and is also the human's adoption trigger; the kind (`development`, `bug`,
   `conflict`, `validation`, `provision`) says which loop, and a `bug` carries a `src/*` source saying who
@@ -466,9 +477,27 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   without committing a report at all, which proves nothing about the software and is a breach of the
   runner contract. `ValidationVerdictFailsRun` / `IsValidationTerminalReason` are the executable copy of
   that pair. A run that settles for a reason outside this list is a bug in the loop, not a new state.
+- **The deploy set is the VERSION's, not the cycle's** (ADR-0026). `desired(c)` is the release
+  `c`'s newest SUCCEEDED build would cut; `actual(c)` is what its binding pins and whether that is
+  Ready; the difference classifies every design component as `serving`, `behind`, `converging`,
+  `held` or `unbuilt`, and only `behind` is ever written to. A component is promoted when it is
+  behind AND every hard provider is serving or promoted ahead of it in the same pass — otherwise it
+  is `held`, which is neither waited on nor filed against. This runs on a RED cycle too: a red build
+  has already minted its fix issue, and its green siblings are still built. What it replaced promoted
+  the cycle's path diff, which made "what is serving" a function of which files a fix touched — one
+  version shipped with its API never promoted at all, because the cycle that built it was red and no
+  later cycle's diff mentioned it again. A fully serving version reconciles in one read and zero
+  writes, which is what lets the pass run every cycle.
+- **A version is delivered when it is SERVING, asserted rather than inferred.** The boundary re-reads
+  the version state and requires every design component `serving` before it mints the validation task;
+  anything else settles `version-incomplete` naming what was not. "Deployed-green" used to be inferred
+  from an empty working set plus a green last cycle — neither of which is a statement about a component
+  the cycles never touched. By the loop's own invariants the failure should be unreachable, which is
+  exactly why it must be loud rather than silent.
 - **A cycle is green when its components are DEPLOYED, not built.** The supervisor performs the
-  promote itself — `EnsureRelease` at the merge commit, then one `ApplyReleaseBinding` carrying the
-  pin and the wiring together — and then waits on each binding's Ready condition. While OpenChoreo's
+  promote itself — `EnsureRelease` at each component's own commit, then one `ApplyReleaseBinding`
+  carrying the pin and the wiring together — and then waits on each binding's Ready condition. While
+  OpenChoreo's
   AutoDeploy promoted releases on its own, a green WorkflowRun meant a deployment had been ASKED for:
   the chain was kicked off from inside the build and reconciled afterwards with no link back to the
   cycle that caused it. Everything downstream depended on the weaker fact — validation asserted
@@ -477,7 +506,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   component's own start-up config — a web app reads its backend's out of `window._env_` and throws at
   module load without it, so publishing the SPA alongside its backend serves a blank page. Those edges
   (`spec.HardConfigEdges`) put the provider in an earlier wave, and each wave must be Ready before the
-  next is promoted. What flows the other way is SOFT — a protected API's CORS allowlist is the
+  next is promoted. The edges are read over the WHOLE design rather than over the set being deployed,
+  so a provider with no serving release is an unsatisfied edge rather than an assumed-satisfied one
+  (ADR-0026 — the reading that published a SPA against an API that had never deployed). What flows the other way is SOFT — a protected API's CORS allowlist is the
   project's SPA origins, an OIDC resource wants the SPA's callback registered — and is written by ONE
   converge at the end, which passes an EMPTY commit so it re-asserts wiring without re-cutting a
   release. Grading them together is what made the graph look circular: the SPA needs the API's
@@ -645,16 +676,24 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   be a logged no-op rather than a nil check at each call site.
 - **A run's progress is ONE connection over every cycle, and only a terminal run settles it.**
   `stream-run-progress` (`GET .../runs/{runId}/progress`, `text/event-stream`) carries a `cycle` frame per
-  cycle record and a `line` frame per agent-log entry, each line stamped with its cycle id, its 1-based
-  cycle index and an **emitter chip** (`main` | `subagent`) so the console renders one accordion section
-  per cycle and can tell the run's main agent from the work it fanned out with the Task tool. The frame
+  cycle record and an **`event` frame per feed entry** — one `RunEvent`, the generated v2 envelope, stamped
+  by aep-api with the `cycleId` and the `attempt` that produced it, so the console renders one accordion
+  section per cycle and can order a feed whose `seq` restarts on a re-dispatch. Attribution is per AGENT
+  (`agentId`, with `label`/`depth`/`parentAgentId` on the agent-lifecycle kinds), not a `main`/`subagent`
+  chip: a run that fans out to a dozen agents at three depths cannot be described by two values. The frame
   kind rides in a `type` field inside the `data:` payload so it passes the shared agent-stream parser.
   A live run — including one parked in `waiting` — holds the stream open indefinitely; a terminal run
   streams its history, sends `done` + `[DONE]`, and the server closes. The server keeps no cursor; the
-  client dedups by cycle id and `(cycleId, seq)`. This is the read for ONE EXECUTION.
+  client dedups by cycle id and `(cycleId, attempt, seq)`. This is the read for ONE EXECUTION.
+  **This stream sends no `line` frames.** Cycles dispatched by a v1 runner are not a second envelope on it:
+  `codingagent` LIFTS their output into `RunEvent`s (a first sighting of an `emitterId` becomes an
+  `agent_started` marked `role: "inferred"`; the fan-out `tool_result` that answers that id becomes
+  `agent_settled`), so one shape reaches a console whatever produced it. `line` stays in the contract for
+  the version stream below.
 - **A VERSION's progress is one connection across its RUNS, and it settles only while no run is live.**
   `stream-build-progress` (`GET .../builds/{tag}/progress`, `text/event-stream`) is the same frames plus a
-  `run` object — id, kind, and the run's 1-based chronological index — because a version's story is spread
+  `run` object — id, kind, and the run's 1-based chronological index — and it is still the v1 `line`
+  frame (`RunProgressLine`, with the `main`/`subagent` emitter chip), because a version's story is spread
   across several executions and a cycle is not identified until you know which run opened it. The tag
   resolves to a milestone through the run rows, which IS the tenant fence: another org's or another
   project's version is a 404 before a byte. Runs are emitted OLDEST FIRST, sorted here rather than
@@ -668,15 +707,32 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `done { reason: "no_live_run" }` + `[DONE]` when none is — `reason`, never `state`, which is
   contract-defined as one RUN's terminal state. The console reopens it from the run-list poll it already
   makes every 5s. A milestone whose runs are purged mid-stream needs no second ending: no row is live.
-- **Agent logs are read, never stored.** Three sources answer, in order: live OpenChoreo pod logs while
-  the Component exists, the observability archive while the Component is retained, and a synthetic
-  `logs_unavailable` line when the Component is gone or no observability plane is configured. An empty
-  stream and a lost log look identical to a reader and mean opposite things about the agent, so the
-  platform never lets "gone" render as "silent". `CycleLogReader` serves the run-progress stream;
-  `codingagent` owns the read path and writes no log text to Postgres. The one thing taken from a
-  terminal pod's log is the runner's token-usage line, stamped onto the cycle row — accounting, not
-  logging. `coding_agent_logs` remains for legacy execution rows; milestone cycles never used it.
-  (`run_cycle_logs` is retired — do not revive a Postgres sidecar for cycle logs.)
+- **A cycle's feed is RECORDED once, server-side, and viewers read the recording.** The pod's log used to
+  be tailed per viewer — each SSE connection on its own 2s cursor, keeping the newest 64KiB, writing
+  nothing — which lost output five measured ways. `codingagent.CycleRecorder` now reads each dispatched
+  cycle once (1s while its pod is Running, the cycle watcher's 30s otherwise, plus one FINAL FULL READ on
+  a terminal pod) and appends v2 `RunEvent` NDJSON to
+  `<workspaceRoot>/runs/<org>/<cycleId>/events.<attempt>.ndjson`. One file per attempt, because a
+  re-dispatch is a new pod whose seqs restart at 1. `CycleEvents` serves the run stream from that file by
+  byte offset — so a reload mid-run replays from the first event and a reload after the pod is reaped shows
+  the whole cycle. **The 200-event post-mortem window is gone**; the observability archive is called only to
+  backfill a detected `seq` gap.
+  The recording is **observability, not ledger**
+  ([ADR-0027](../../../../docs/decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)):
+  `run_cycles` stays the system of record, and `RunCycleView.recording`
+  (`none | recording | complete | gaps | lost`) tells a console what can actually be served — `none` and
+  `lost` are never collapsed, because they paint the same empty screen and are very different bugs.
+  The v1 VERSION build-progress stream still derives per viewer from the pod, then the archive, then a
+  synthetic "logs unavailable" marker (`CycleProgress`, resolved once by `resolveCycleLog`), and keeps its
+  200-event page cap. Every platform-minted marker that is re-derived per poll — the dark zone, a
+  truncation, a lost log — is a `notice` on a stable NEGATIVE seq with no timestamp, which is what makes it
+  dedup to one row; a notice the RECORDER writes at a point in the run (a gap, the size cap) takes the next
+  free POSITIVE seq and stays where it happened. `CycleLogReader` serves both streams and `RecordingReader`
+  answers `recording`; `codingagent` owns both and writes no log text to Postgres. The one thing taken from
+  a terminal pod's log by the WATCHER is the runner's token-usage line — v2 `run_settled` or v1 `result`,
+  always the LAST one, because the runtime reports usage cumulatively — stamped onto the cycle row:
+  accounting, not logging. `coding_agent_logs` remains for legacy execution rows; milestone cycles never
+  used it. (`run_cycle_logs` is retired — do not revive a Postgres sidecar for cycle logs.)
 - **A project delete purges the WORK and retires the SPEND.** `runs` and `run_cycles` are working state and
   go, so a recreated same-named project cannot inherit a timeline its repo never had; the
   `agent_usage_ledger` is not purged by anything — `RetireByProject` stamps its live entries instead, and
@@ -782,12 +838,21 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   A LEDGER issue is returned by the milestone-scoped read and only by it — the untagged read is two label
   queries, and a ledger issue is defined by carrying no label to query on. Milestone membership is the only
   handle there is.
-- **Issue COMMENTS ride the milestone-scoped list, and only it** (`task/reads.go` `ListByTag`,
-  `?comments=` defaulting true). Each row carries its issue's newest comments — the version's live
-  narrative between an agent's dispatch and its pull request. The field is SERVED, not yet rendered: no
-  console surface reads it today. Comments follow the same handle ledger issues do — the fetch is
-  anchored on one milestone, so a read spanning versions has no bounded set to ask for and omits the
-  field entirely.
+- **Issue COMMENTS ride two reads: the milestone-scoped LIST, and the detail GET** (`task/reads.go`
+  `ListByTag` with `?comments=` defaulting true, and `Get`). Each list row carries its issue's newest
+  comments — the version's live narrative between an agent's dispatch and its pull request — and the
+  Builds row renders that thread's newest first line as the issue's status. On the LIST, comments follow
+  the same handle ledger issues do: the fetch is anchored on one milestone, so a read spanning versions
+  has no bounded set to ask for and omits the field entirely.
+  `Get` carries them for the one issue the list can never reach. It is the only read that serves the
+  VALIDATION issue — the list drops that issue on its kind before comments are ever attached — and the
+  Validation page's status line is its newest comment. One issue is a bounded set by construction, so
+  `Get` needs no `?comments=` handle, and it fires CONCURRENTLY with the issue fetch for the same reason
+  the list's does — this read is polled at 5s while a run is in flight.
+  Same `CommentsPerIssue` DEPTH as the list, so the two surfaces cannot disagree about where a thread
+  is cut off. Their COVERAGE differs and cannot be made to agree: the milestone read is one 100-issue
+  page (`milestoneIssuePage`), so on a larger milestone an issue past that page carries comments here
+  and none in the list. `Get` names its issue, so it is never the one that falls off.
   Three properties are load-bearing. **Nothing is stored** — GitHub is the only copy, read live on every
   request. **The platform's OWN comments are dropped, and not by author** — authorship cannot answer that
   question here (`sourcecontrol`'s README has the why); the discriminator is the brand that domain stamps
