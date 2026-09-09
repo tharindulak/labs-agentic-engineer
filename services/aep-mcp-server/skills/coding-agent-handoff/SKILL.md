@@ -8,14 +8,12 @@ description: Use when a completed RCA report needs a source-code change: how to 
 **Audience: the SRE agent's handoff stage.** You are the last step of an RCA run,
 and this incident needs a change to the REPOSITORY.
 
-Your output is one GitHub issue. Filing it is the whole hand-over — the call that
-creates the issue is the same call that hands it over, so there is no second call
-for you to make.
+Your output is one GitHub issue. Filing it is the whole hand-over — once the issue
+is created, AE decides what to do with it. There is no second call for you to make.
 
 Most of this incident is already **settled** — the classification, the dedupe
-key, the labels, whether a coding run starts — and what is settled about this
-filing comes back in the call's own answer (see WHAT THE FILING CALL ANSWERS).
-One thing is **yours**: the words of the issue, and the `componentName` you pass.
+key and the tracking policy after creation. One thing is **yours**: the words of
+the issue, and the `componentName` you pass.
 
 ## WHY YOU ARE HERE
 
@@ -49,11 +47,8 @@ judgement.
    in DEDUPLICATION.
    *Done when* an `ae_create_issue` call has returned and the body it carried
    used the heading skeleton, with every heading that applies filled from the
-   report.
-3. **Say** in `rationale` what the call answered and what it means for this
-   incident.
-   *Done when* `rationale` carries the consequence that the answer's own row in
-   WHAT THE FILING CALL ANSWERS asks for.
+   report. This is your last step: filing the issue is the whole hand-over,
+   and nothing after it is reported anywhere.
 
 ## RELATED-ISSUE DISCOVERY
 
@@ -61,7 +56,7 @@ Pass a handful of **space-separated distinct keywords** — the component name p
 the root-cause symptom terms, `<component> <subsystem> <exception or failure
 reason>`. Try 1-2 variations if the first pass surfaces nothing relevant. If the
 call itself errors (as distinct from finding nothing), retry once at most, then
-file without related-issue context and say so in `rationale`.
+file without related-issue context rather than retry a second time.
 
 An issue is related when it plausibly shares the same root cause or the same
 affected component — not merely the same repo or a similar word. When unsure,
@@ -146,15 +141,13 @@ from the RCA report.
 Deduplication is settled server-side. AE derives a stable key from the incident
 this request belongs to, from the identity headers the run carries. That key is
 not an argument you can pass and not a value you can spell, so the only way to
-learn what it already covers is to file and read the answer.
+learn what it already covers is to file.
 
-**File, and let the answer tell you.** A search hit is not a dedupe verdict: your
+**File; do not decide dedupe from search results.** A search hit is not a dedupe verdict: your
 judgement of "related" is looser than the key, and the key sees closed issues,
 no-change verdicts and recurrences that a keyword match cannot tell apart. An
 issue that already covers this incident is settled by the platform, not by you
-writing on it — `deduped`, `reopened` + `recurrence` and `suppressed` are all
-answers that mean "already tracked", and each one means something different for
-this incident.
+writing on it.
 
 - **Evidence attaches itself.** On a recurrence the platform appends your
   evidence into the issue's own body, not as a comment — a comment can be
@@ -169,33 +162,11 @@ this incident.
   a human filter for every issue this system has ever filed, independent of the
   per-component dedupe key.
 
-## WHAT THE FILING CALL ANSWERS
-
-Whether a coding run actually starts is settled by the OPERATOR and by what the
-remediation statuses say, and this call's answer is where you read both. The
-issue number, `classification`, `deduped` and `adopted` are recorded from the
-call itself, so `rationale` carries the consequence rather than the values.
-
-`classification` is the platform's, derived from the statuses it was sent — not
-a judgment of yours to restate or dispute.
-
-| Answer | What it means | What `rationale` says |
-|---|---|---|
-| `adopted: true` | filed, and a coding run has it — the normal hand-over | nothing further |
-| `classification: config-level` | filed as a ledger entry, and deliberately not dispatched — the remediation agent already expressed every action as configuration, so a coding agent has nothing to do | say the remaining work is configuration that is already expressed, and that the issue records the incident rather than asking for a code change |
-| `adopted: false`, no `adoptionError`, and not `config-level` | filed; this install files issues only | the issue waits for a human to pick it up |
-| `adopted: false` + `adoptionError` | filed, but nothing will work it yet — usually no built version to adopt into | quote the `adoptionError`, so the human knows it waits for someone |
-| `deduped: true` | an earlier run already filed an open issue for this; nothing created | report it under `related_issues` and note the dedup |
-| `reopened: true` + `recurrence` | a merged fix for this failed and the incident came back; AE reopened that issue with your evidence and re-dispatched it | say so plainly, naming the attempt number — a failed fix is a different situation from a new bug and may deserve a human rather than another cycle |
-| `suppressed: true` | somebody with the repository in front of them already decided this signature needs no code change; nothing created | report that issue under `related_issues` and say the verdict already answers this incident |
-
 ## CONSTRAINTS
 
 - **One RCA report, one issue.** One `ae_create_issue` call is the whole write
-  you make. A `deduped`, a `suppressed`, an `adoptionError` and an outright
-  failure are all answers you report in `rationale` — each of them leaves the
-  count at one, including the two where nothing was created. A retry after a
-  partial failure risks a duplicate that only the dedupe key can catch.
+  you make. A retry after a partial failure risks a duplicate that only the
+  dedupe key can catch.
 - **Creating that issue is your only write.** Every other issue in this run is
   one you read; the `#N` mentions in your body are the only mark you leave on
   them.
