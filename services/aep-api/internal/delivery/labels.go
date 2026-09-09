@@ -47,7 +47,11 @@ const (
 	// It is also the GitHub-side ADOPTION trigger: a human stamping it on an
 	// issue arms it, and the event plane starts (or wakes) a run over the
 	// issue's milestone. Labels the platform stamps itself come back as webhook
-	// echoes and are dropped by sender, so arming stays a human act.
+	// echoes and are dropped by sender, so arming stays a human act — with ONE
+	// deliberate exception: a `bug` sourced `src/user` self-arms on the `bug`
+	// label alone and the platform stamps this one itself as part of adopting it
+	// (ADR-0029, eventcore.AutoAdoptUserBug). Every other kind, and every other
+	// `bug` source, still needs the separate human stamp.
 	LabelAgentWork = "aep"
 )
 

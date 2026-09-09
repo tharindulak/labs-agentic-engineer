@@ -71,6 +71,18 @@ type AdoptTarget struct {
 // platform-authored path to the same state would make "who adopted this"
 // unanswerable.
 //
+// Which is why the label is the CALLER's to write, never this function's. The
+// webhook route reaches here BECAUSE a human's `aep` stamp arrived, so the label
+// is already on the issue and the timeline already names who armed it; the
+// console / MCP dispatch route is an authenticated request from a human or their
+// agent, which is that route's own answer to the same question.
+//
+// ADR-0029 adds the one route whose issue carries no `aep` by construction —
+// a `src/user` bug self-arming on `bug` alone — and it stamps the label itself
+// before calling this, so the run started below sees the issue at its first
+// cycle boundary, plus a bot comment so "who adopted this" still has an answer.
+// See AutoAdoptUserBug; nothing about the rules above changes for it.
+//
 // Nor does it stamp a KIND. An armed issue carrying none reads as a bug to every
 // working-set predicate (delivery.InDevWorkingSet), which is what a human
 // handing over an unclassified issue means, and it is the same answer the host's

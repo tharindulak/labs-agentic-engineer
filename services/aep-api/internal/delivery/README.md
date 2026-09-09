@@ -282,9 +282,12 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
 - **Two label axes: an issue is ARMED or not, and has exactly one KIND** (`labels.go`). `aep` arms it —
   something may work it — and is also the human's adoption trigger; the kind (`development`, `bug`,
   `conflict`, `validation`, `provision`) says which loop, and a `bug` carries a `src/*` source saying who
-  found it. Every routing predicate is then a POSITIVE membership test on the kind, which is what removed
-  the old model's subtraction of exclusions — a rule stated as what it is not, where a single mis-stated
-  exclusion emptied a live working set. A **gate** (`provision` + `aep:dep/<slug>`, minted by
+  found it. The one exception to "a human arms it" is ADR-0029: a `bug` sourced `src/user` self-arms on the
+  `bug` label alone, and `eventcore.AutoAdoptUserBug` stamps `aep` itself as part of adopting it (plus a bot
+  comment, since there is no human stamp to read the act off). Every other kind, and every other `bug`
+  source, still needs the separate human stamp. Every routing predicate is then a POSITIVE membership test
+  on the kind, which is what removed the old model's subtraction of exclusions — a rule stated as what it
+  is not, where a single mis-stated exclusion emptied a live working set. A **gate** (`provision` + `aep:dep/<slug>`, minted by
   `dependencies/provisioning`) is deliberately NOT armed: a dispatch hold is nobody's work, and its absence
   from the armed population is what lets it be counted on its own rather than subtracted from the work
   waiting behind it. The **validation task** IS armed and excluded by its kind instead — it is real agent

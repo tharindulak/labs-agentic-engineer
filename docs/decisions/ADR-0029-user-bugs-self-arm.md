@@ -1,6 +1,6 @@
 # ADR-0029 — A user-reported bug's `bug` label is its own arming
 
-**Status:** accepted · not yet implemented · 2026-09-09
+**Status:** accepted · implemented, pending merge · 2026-09-09
 **Related:** ADR-0011 (milestone is the unit of execution) · ADR-0017 (the
 platform owns deploy) · ADR-0026 (deploy reconciles the version) · the
 SRE/RCA incident-adoption path (`task.Commands.PromoteAndExecute` →
@@ -33,7 +33,10 @@ a label lands on an issue — at creation or later, by anyone able to label the
 repo's issues — it is adopted exactly as if a human had added `aep`: moved
 into the deployed version's milestone, and a `task` run is started (or the
 live one picks it up at its next cycle boundary), through the existing
-`AdoptIssue` path.
+`AdoptIssue` path. "Exactly as if" is literal — the platform stamps `aep`
+itself as part of adopting the issue, because every consumer downstream of
+adoption reads that label and nothing else, so an adopted issue without it is
+a ledger issue whose run has no work to find.
 
 Everything downstream of adoption is unchanged and stays fully unattended:
 agent run → PR auto-merge → build fan-out → the supervisor's deploy reconcile
