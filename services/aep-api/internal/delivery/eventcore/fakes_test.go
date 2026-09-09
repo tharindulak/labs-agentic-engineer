@@ -226,6 +226,10 @@ type fakeIssues struct {
 	// comment is dropped leaves a human staring at a closed issue with no
 	// explanation, which is a real failure and not a cosmetic one.
 	closeComments map[int]string
+	// commentBodies is the body of the last CommentIssue call per issue — the
+	// closeComments pattern, for plain comments. Needed because `commented`
+	// alone (issue numbers only) cannot tell two comment texts apart.
+	commentBodies map[int]string
 	// labelErr fails every AddLabels. It exists to prove ORDER where two writes
 	// are recorded in separate slices: a cancel labels an issue BEFORE closing it,
 	// so with the label failing nothing may be closed.
@@ -253,10 +257,11 @@ func (f *fakeIssues) ReopenIssue(_ context.Context, _, _ string, number int) err
 	return nil
 }
 
-func (f *fakeIssues) CommentIssue(_ context.Context, _, _ string, number int, _ string) error {
+func (f *fakeIssues) CommentIssue(_ context.Context, _, _ string, number int, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.commented = append(f.commented, number)
+	f.commentBodies[number] = body
 	return nil
 }
 
@@ -284,6 +289,7 @@ func newFakeIssues() *fakeIssues {
 		byMilestone:   map[int][]sourcecontrol.IssueInfo{},
 		counts:        map[int]*sourcecontrol.MilestoneIssueCounts{},
 		closeComments: map[int]string{},
+		commentBodies: map[int]string{},
 		next:          100,
 	}
 }
