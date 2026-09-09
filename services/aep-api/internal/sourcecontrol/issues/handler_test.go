@@ -18,6 +18,7 @@ package issues
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
@@ -171,5 +172,44 @@ func TestCreateIssueHonoursAnExplicitOptOut(t *testing.T) {
 
 	if adopter.called {
 		t.Error("the classification must never widen adoption past the caller's opt-out")
+	}
+}
+
+// The wire shape, decoded the way the generated server decodes it. The contract
+// makes the items nullable, and a JSON null has to survive as a nil entry: the
+// remediation stage is off by default, so on a fresh install every action
+// arrives that way, and a payload that lost the nulls would read as a report
+// with no actions at all — the opposite conclusion.
+func TestCreateIssueBindsNullStatusesFromJSON(t *testing.T) {
+	const payload = `{
+		"title": "fix the parser",
+		"body": "...",
+		"dedupeKey": "sre-rca/service1/abc",
+		"actionStatuses": ["suggested", null, "revised"]
+	}`
+
+	var decoded gen.CreateIssueJSONRequestBody
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.ActionStatuses) != 3 {
+		t.Fatalf("got %d statuses, want 3 — the nulls must not collapse", len(decoded.ActionStatuses))
+	}
+	if decoded.ActionStatuses[1] != nil {
+		t.Errorf("statuses[1] = %v, want nil", decoded.ActionStatuses[1])
+	}
+
+	_, adopter, result := createIssue(t, decoded)
+
+	// suggested is pending and revised is config-handled, so this is mixed —
+	// and mixed adopts.
+	if result.Classification != "mixed" {
+		t.Errorf("classification = %q, want mixed", result.Classification)
+	}
+	if !adopter.called {
+		t.Error("mixed must be adopted")
+	}
+	if adopter.got.DedupeKey != "sre-rca/service1/abc" {
+		t.Errorf("dedupeKey = %q, want it unchanged", adopter.got.DedupeKey)
 	}
 }
