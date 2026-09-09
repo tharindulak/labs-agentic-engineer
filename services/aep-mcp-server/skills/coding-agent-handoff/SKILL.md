@@ -32,11 +32,9 @@ settles with the repository and the specification in front of it — closing an
 issue as not planned with its reasoning is a first-class outcome.
 
 **Any code this report suspects is handed over.** A low-confidence root cause
-carrying a code-level action is still a code-level action, and a spec conflict is
-something you write INTO the issue rather than a reason to withhold it — the
-criterion may be the thing that is wrong. Every report that reaches this stage
-produces an issue; what that issue SAYS is yours, and it is the whole of your
-judgement.
+carrying a code-level action is still a code-level action, never a reason to
+withhold it. Every report that reaches this stage produces an issue; what that
+issue SAYS is yours, and it is the whole of your judgement.
 
 ## THE FLOW
 
@@ -64,12 +62,10 @@ leave it out: a wrong link confuses the human reviewer more than a missing one.
 Closed matches and partial overlaps become links.
 
 **Related issues are a ledger, never a spec.** The platform's own implementation
-issues ("Implement <component>") record what was BUILT and what the version's
-acceptance criteria are, and search marks them `PlatformRecord: true` with a
-`ReadAs` note. Treat that flag as binding, and read such an issue for the two
-things it is your only source of: which behaviour must be PRESERVED, for `What
-must not change`, and which acceptance criteria the fix would cross, for `Spec
-conflict`.
+issues ("Implement <component>") record what was BUILT, and search marks them
+`PlatformRecord: true` with a `ReadAs` note. Treat that flag as binding, and
+read such an issue for the thing it is your only source of: which behaviour
+must be PRESERVED, for `What must not change`.
 
 A CLOSED match still matters: it signals a recurrence, so the earlier fix did not
 hold — say so when you reference it.
@@ -87,14 +83,11 @@ apply:
       ## RCA summary
       ## Root cause
       ## What must not change
-      ## Spec conflict
-      ## Before you change a default
       ## Evidence
       ## Related issues
 
 The coding agent reads this body, so a fixed shape is what lets it find the
-constraint and the criteria step every time. Everything under the headings comes
-from the RCA report.
+constraint every time. Everything under the headings comes from the RCA report.
 
 ### What fills each heading
 
@@ -103,21 +96,6 @@ from the RCA report.
   reachable and unaltered — make a value configurable rather than change it, add
   the handling on the side that lacked it rather than remove the state it failed
   on.
-- **Spec conflict**, whenever something in front of you says the fix would
-  contradict intended behaviour — a `PlatformRecord` issue's acceptance
-  criteria, or the report calling the behaviour deliberate. Name that
-  requirement and say the platform filed anyway, because the requirement may be
-  the thing that is wrong. Reading the specification is the coding agent's work
-  and it settles the conflict; naming the doubt is yours. A requirement nobody
-  is shown is a requirement nobody can correct.
-- **Before you change a default**: tell the agent to read
-  `specs/validation/validation-criteria.json` and list the criteria its change
-  could affect, and to close the issue as not planned naming the criterion if any
-  would fail. A step with an output; prose alone has already failed — an issue
-  carrying "preserve every current default" still got a fix that moved a default
-  anyway and failed criteria that had been passing. Say which values matter only
-  by pointing at the criteria file: the kinds that mattered in the last incident
-  are the wrong ones for the next.
 - **Evidence**: carry across what the report already collected — trace links or
   IDs, and the log lines it quoted.
 - **Related issues**: one line each as `- #N — <one-line reason>` (`- #12 — same
