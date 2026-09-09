@@ -1,6 +1,6 @@
 ---
 name: coding-agent-handoff
-description: Use when a completed RCA report needs a source-code change: how to search related issues and file the one issue that hands it to AE's coding agent.
+description: Use when a completed RCA report needs a source-code change — how to search related issues and file the one issue that hands it to AE's coding agent.
 ---
 
 # Coding agent handoff
@@ -33,8 +33,8 @@ issue as not planned with its reasoning is a first-class outcome.
 
 **Any code this report suspects is handed over.** A low-confidence root cause
 carrying a code-level action is still a code-level action, never a reason to
-withhold it. Every report that reaches this stage produces an issue; what that
-issue SAYS is yours, and it is the whole of your judgement.
+withhold it. Every report that reaches this stage produces an issue — what it
+withholds is never yours to decide.
 
 ## THE FLOW
 
@@ -121,11 +121,11 @@ this request belongs to, from the identity headers the run carries. That key is
 not an argument you can pass and not a value you can spell, so the only way to
 learn what it already covers is to file.
 
-**File; do not decide dedupe from search results.** A search hit is not a dedupe verdict: your
-judgement of "related" is looser than the key, and the key sees closed issues,
-no-change verdicts and recurrences that a keyword match cannot tell apart. An
-issue that already covers this incident is settled by the platform, not by you
-writing on it.
+**File; the create call's answer decides dedupe, not your search.** A search hit
+is a discovery signal, not the verdict: your judgement of "related" is looser
+than the key, and the key sees closed issues, no-change verdicts and
+recurrences that a keyword match cannot tell apart. An issue that already
+covers this incident is settled by the platform, not by you writing on it.
 
 - **Evidence attaches itself.** On a recurrence the platform appends your
   evidence into the issue's own body, not as a comment — a comment can be
