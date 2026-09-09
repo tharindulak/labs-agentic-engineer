@@ -105,6 +105,28 @@ const (
 	SrcDeploy     = "src/deploy"
 )
 
+// SourceOf returns the src/* label a KindBug issue carries, or "" when it
+// carries none — which reads as SrcUser (see the SOURCES block above).
+// Mirrors KindOf's shape: a fixed scan order over a fixed vocabulary, never a
+// prefix match.
+func SourceOf(labels []string) string {
+	for _, src := range []string{SrcUser, SrcIncident, SrcValidation, SrcBuild, SrcDeploy} {
+		if HasLabel(labels, src) {
+			return src
+		}
+	}
+	return ""
+}
+
+// IsUserSourced reports whether a bug's source is SrcUser, explicit or
+// absent — the one population ADR-0029's self-arming rule (eventcore's
+// AutoAdoptUserBug) applies to. Every other source is a platform detection
+// and is deliberately excluded.
+func IsUserSourced(labels []string) bool {
+	src := SourceOf(labels)
+	return src == "" || src == SrcUser
+}
+
 // The MARKERS. Orthogonal to kind: they qualify an issue the loop already
 // routed, and an issue may carry any number of them.
 const (
