@@ -421,7 +421,10 @@ already on screen.
 meaning about WHAT the work is — that is the kind — and it is also the
 GitHub-side **adoption** trigger, so a human stamping it hands an issue to the
 agent. Platform-written labels come back as webhook echoes and are dropped by
-sender, which is what keeps arming a human act.
+sender, which is what keeps arming a human act — with one deliberate
+exception: a `bug` issue whose source is `src/user` self-arms on the `bug`
+label alone, no `aep` needed (ADR-0029). Every other kind, and every other
+`bug` source, still requires the separate `aep` stamp.
 
 ### Kind
 Exactly one per issue, and the axis every routing predicate tests **positively**:
@@ -504,7 +507,9 @@ never worked, never stalling settle, and never written to — a cancel does not
 close it and the sweep does not start a run for it, because it is nobody's work
 until a human arms it. It may still be classified — a red-main
 incident is filed as a `bug` so a human can see what it is — because
-classification is not permission. Adding `aep` **adopts** it into the next cycle.
+classification is not permission (except for a `src/user` bug, where the
+`bug` label itself is the arming — ADR-0029). Adding `aep` **adopts** it into
+the next cycle, as does the `bug` label for that one exception.
 
 ### Terminal reason
 Why a non-succeeded run stopped. Each value names exactly ONE failure class —
