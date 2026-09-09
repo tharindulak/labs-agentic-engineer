@@ -79,6 +79,56 @@ func TestKindOf(t *testing.T) {
 	}
 }
 
+func TestSourceOf(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		labels []string
+		want   string
+	}{
+		{"explicit user source", []string{LabelAgentWork, KindBug, SrcUser}, SrcUser},
+		{"incident source", incident, SrcIncident},
+		{"validation-sourced repair", repair, SrcValidation},
+		{"build-sourced fix", bug, SrcBuild}, // bug == {LabelAgentWork, KindBug, SrcBuild}
+		{"no source label at all", []string{LabelAgentWork, KindBug}, ""},
+		{"not even a bug", planned, ""},
+		{"ledger issue", ledger, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := SourceOf(c.labels); got != c.want {
+				t.Errorf("SourceOf(%v) = %q, want %q", c.labels, got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsUserSourced(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		labels []string
+		want   bool
+	}{
+		{"explicit src/user", []string{LabelAgentWork, KindBug, SrcUser}, true},
+		{"no source label — absence reads as user", []string{LabelAgentWork, KindBug}, true},
+		{"bare bug, no arming, no source", []string{KindBug}, true},
+		{"incident-sourced", incident, false},
+		{"validation-sourced", repair, false},
+		{"build-sourced", bug, false},
+		{"deploy-sourced", []string{KindBug, SrcDeploy}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsUserSourced(c.labels); got != c.want {
+				t.Errorf("IsUserSourced(%v) = %v, want %v", c.labels, got, c.want)
+			}
+		})
+	}
+}
+
 // TestWorkingSets pins what each loop may pick up. Every predicate is a POSITIVE
 // membership test on a kind, which is the whole point of the vocabulary: the old
 // model defined work by what it was NOT, and one mis-stated exclusion was enough
