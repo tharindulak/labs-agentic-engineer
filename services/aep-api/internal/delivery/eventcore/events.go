@@ -191,10 +191,6 @@ type issuesPayload struct {
 	} `json:"sender"`
 }
 
-// milestone returns the milestone the event is about: the top-level object
-// when GitHub sends one (milestoned / demilestoned), otherwise the issue's
-// own. Every issues payload embeds the full issue, so keying an event to a run
-// costs no extra read.
 // issueLabels flattens the payload's label objects to the names every label
 // predicate takes.
 func (p issuesPayload) issueLabels() []string {
@@ -205,6 +201,25 @@ func (p issuesPayload) issueLabels() []string {
 	return out
 }
 
+// adoptTarget is this delivery's issue as adoption takes it: its number, its own
+// label set, and the milestone it already belongs to — absent leaves 0, which is
+// adoption's "bare issue" and the case that resolves the deployed version.
+//
+// Both adoption routes through OnIssues build it — the `aep` arming stamp and
+// ADR-0029's self-arming `bug` — and one constructor is what keeps the two from
+// drifting apart on which facts a target carries.
+func (p issuesPayload) adoptTarget() AdoptTarget {
+	target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels()}
+	if ms, ok := p.milestone(); ok {
+		target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
+	}
+	return target
+}
+
+// milestone returns the milestone the event is about: the top-level object
+// when GitHub sends one (milestoned / demilestoned), otherwise the issue's
+// own. Every issues payload embeds the full issue, so keying an event to a run
+// costs no extra read.
 func (p issuesPayload) milestone() (MilestoneRef, bool) {
 	if p.Milestone != nil && p.Milestone.Number > 0 {
 		return MilestoneRef{Number: p.Milestone.Number, Title: p.Milestone.Title}, true
@@ -401,11 +416,7 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	// exactly the event that has to wake it. Returning here would leave a run
 	// asleep on work a human had just handed it.
 	if action == "labeled" && strings.EqualFold(p.Label.Name, delivery.LabelAgentWork) {
-		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels()}
-		if ms, ok := p.milestone(); ok {
-			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
-		}
-		if aerr := e.AdoptIssue(ctx, orgID, projectID, target); aerr != nil {
+		if aerr := e.AdoptIssue(ctx, orgID, projectID, p.adoptTarget()); aerr != nil {
 			// Adoption problems are the human's to see, and the console dispatch
 			// path returns them synchronously. Failing the delivery here would only
 			// make GitHub redeliver a label that is already applied.
@@ -427,11 +438,7 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	firedBug := action == "opened" ||
 		(action == "labeled" && strings.EqualFold(p.Label.Name, delivery.KindBug))
 	if firedBug && eligibleForAutoAdopt(p.issueLabels()) {
-		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels()}
-		if ms, ok := p.milestone(); ok {
-			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
-		}
-		e.AutoAdoptUserBug(ctx, orgID, projectID, target)
+		e.AutoAdoptUserBug(ctx, orgID, projectID, p.adoptTarget())
 	}
 
 	ms, ok := p.milestone()

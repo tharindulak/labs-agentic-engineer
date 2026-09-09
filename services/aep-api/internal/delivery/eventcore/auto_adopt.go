@@ -35,9 +35,9 @@ import (
 // saying so.
 const (
 	autoAdoptedComment = "🤖 Auto-adopted: the `bug` label on this user-reported " +
-		"issue arms it for the coding agent (ADR-0029) — no `aep` label needed. " +
-		"It has been moved into the deployed version's milestone and will be " +
-		"picked up shortly."
+		"issue is its own arming (ADR-0029) — no `aep` label needed. It is now " +
+		"armed for the coding agent, and the run over its milestone picks it up " +
+		"at the next cycle boundary."
 	autoAdoptNoDeployedVersionComment = "This looks like a user-reported bug, but " +
 		"this project has no deployed version yet, so there is nothing to adopt " +
 		"it into (ADR-0029). Once a version deploys, re-add the `bug` label (or " +
@@ -63,14 +63,58 @@ func eligibleForAutoAdopt(labels []string) bool {
 
 // AutoAdoptUserBug is OnIssues' self-arming route (ADR-0029). It shares every
 // rule AdoptIssue already enforces — kind routing, milestone placement, the
-// live-run no-op — and adds only the audit trail: a comment marking the
-// issue self-armed, or explaining why it could not be.
+// live-run no-op — and adds the two things a human's own `aep` stamp otherwise
+// brings with it: the ARMING LABEL, and an audit trail marking the issue
+// self-armed (or explaining why it could not be).
 //
-// Errors from AdoptIssue other than ErrNoDeployedMilestone are logged and
-// swallowed, the same as the `aep`-webhook route does: GitHub redelivering
-// the label must not become a retry storm, and a human watching the issue
-// sees the comment (or its absence) rather than a delivery log.
+// It STAMPS `aep` because AdoptIssue deliberately does not (see its doc
+// comment): the older routes into it carry a human's own authorisation already —
+// the webhook route IS that human's `aep` stamp arriving — while this is the
+// first route that adopts an issue guaranteed NOT to carry the label
+// (eligibleForAutoAdopt requires its absence). Everything downstream of
+// adoption reads that label and nothing else — delivery.InTaskWorkingSet, the
+// milestone counts a cycle boundary polls, the reconcile sweep — so an issue
+// adopted without it is a LEDGER issue by the platform's own definition: the run
+// starts, its first poll counts no work, and it parks indefinitely holding the
+// milestone's one live-run slot.
+//
+// The stamp goes FIRST, and the two writes are one act:
+//
+//   - Before, because the run AdoptIssue starts polls its milestone at the first
+//     cycle boundary, and the platform's own label write comes back
+//     echo-suppressed — a stamp landing after that poll is a stamp no run ever
+//     sees, and nothing would wake it.
+//   - Refusing when the stamp fails, because adopting anyway IS the parked-run
+//     state above. Nothing is written and nothing is claimed on the issue.
+//   - Rolling the stamp back when there is no deployed version to adopt into,
+//     the one adoption outcome that writes nothing else: an armed issue in NO
+//     milestone is invisible to every working set and to the sweep (which walks
+//     milestones), and it would quietly falsify the comment's own advice, since
+//     re-adding `bug` cannot self-arm an issue that already carries `aep`.
+//
+// Any OTHER error from AdoptIssue keeps the stamp and is logged and swallowed,
+// the same as the `aep`-webhook route does: GitHub redelivering the label must
+// not become a retry storm, the armed issue in its milestone is what lets the
+// reconcile sweep finish the job, and a human watching the issue sees the
+// comment (or its absence) rather than a delivery log.
+//
+// The caller gates on eligibleForAutoAdopt, which is also what makes a repeat
+// pass inert: the stamp this route leaves is the "already handled" record, so a
+// later delivery about the same issue is not eligible and the undeduped comment
+// is not posted twice.
 func (e *Events) AutoAdoptUserBug(ctx context.Context, orgID, projectID string, target AdoptTarget) {
+	if lerr := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); lerr != nil {
+		slog.WarnContext(ctx, "eventcore: auto-adopt declined — could not arm the issue",
+			"issue", target.Number, "error", lerr)
+		return
+	}
+	// The label AdoptIssue and every later reader must agree on. It routes on this
+	// set (delivery.AdoptableByATaskRun), and a set that says the issue is unarmed
+	// while the host says it is armed is the disagreement this whole route turns on.
+	if !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
+		target.Labels = append(append([]string(nil), target.Labels...), delivery.LabelAgentWork)
+	}
+
 	err := e.AdoptIssue(ctx, orgID, projectID, target)
 	var comment string
 	switch {
@@ -78,6 +122,13 @@ func (e *Events) AutoAdoptUserBug(ctx context.Context, orgID, projectID string, 
 		comment = autoAdoptedComment
 	case errors.Is(err, ErrNoDeployedMilestone):
 		comment = autoAdoptNoDeployedVersionComment
+		if uerr := e.p.Writer.Unlabel(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); uerr != nil {
+			// Left armed in no milestone: inert (nothing works an issue outside a
+			// milestone) but no longer self-arming, so the comment below tells the
+			// reporter to add `aep` — which is already there — rather than the truth.
+			slog.WarnContext(ctx, "eventcore: could not disarm an issue nothing adopted",
+				"issue", target.Number, "error", uerr)
+		}
 	default:
 		slog.WarnContext(ctx, "eventcore: auto-adopt declined", "issue", target.Number, "error", err)
 		return

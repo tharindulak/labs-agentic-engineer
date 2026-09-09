@@ -1025,6 +1025,75 @@ func TestAutoAdopt_UnrelatedRelabelOfAnExistingBugDoesNotSelfArm(t *testing.T) {
 	}
 }
 
+// TestAutoAdopt_ASecondDeliveryForTheSameIssueIsInert is the redelivery
+// property. IssueWriter.Comment carries no dedupe, so a second pass over an
+// issue this route already self-armed would post the audit comment a second
+// time and re-offer the run.
+//
+// The arming stamp is what closes that, and it is why self-arming has to WRITE
+// the label rather than merely act as if it had: eligibleForAutoAdopt requires
+// `aep`'s absence, so the issue's own label set is this route's "already
+// handled" record and no seen-table is needed.
+func TestAutoAdopt_ASecondDeliveryForTheSameIssueIsInert(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	first := issueBodyWithLabels("labeled", 31, 0, delivery.KindBug,
+		[]string{delivery.KindBug}, "external-reporter")
+	if err := h.deliver(t, "issues", first); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	// Any LATER delivery about that issue reads its live label set — which now
+	// carries what the first pass stamped, and the milestone it joined.
+	second := issueBodyWithLabels("labeled", 31, 5, delivery.KindBug,
+		labelsAfter(h.issues, 31, delivery.KindBug), "external-reporter")
+	if err := h.deliver(t, "issues", second); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	if len(h.issues.commented) != 1 {
+		t.Fatalf("the audit comment must be posted once per adoption, got %v", h.issues.commented)
+	}
+	if len(h.sup.started) != 1 {
+		t.Fatalf("must not re-offer a run for an issue already self-armed, got %+v", h.sup.started)
+	}
+}
+
+// TestAutoAdopt_AReplayedDeliveryStartsNoSecondRun covers the case a live label
+// read cannot: a webhook REDELIVERY replays the stored payload byte for byte, so
+// it still carries the issue's pre-arming label set and is eligible again.
+//
+// What that repeat may not do is duplicate WORK, and every write it repeats is
+// an idempotent merge — the label add, the milestone assignment — while
+// AdoptIssue's live-run check absorbs the run. The audit comment is the one
+// write with no dedupe behind it and a replay does post it twice; that is noise
+// on the issue timeline rather than a second agent on the milestone, and
+// suppressing it would need a live per-issue label read this package's ports do
+// not have.
+func TestAutoAdopt_AReplayedDeliveryStartsNoSecondRun(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	body := issueBodyWithLabels("labeled", 31, 0, delivery.KindBug,
+		[]string{delivery.KindBug}, "external-reporter")
+	for range 2 {
+		if err := h.deliver(t, "issues", body); err != nil {
+			t.Fatalf("dispatch: %v", err)
+		}
+	}
+
+	if len(h.sup.started) != 1 {
+		t.Fatalf("a redelivered label must not start a second run, got %+v", h.sup.started)
+	}
+	for _, move := range h.issues.assigned {
+		if move != "31->5" {
+			t.Fatalf("every repeat must resolve the same milestone, got %v", h.issues.assigned)
+		}
+	}
+	if after := labelsAfter(h.issues, 31, delivery.KindBug); !delivery.InTaskWorkingSet(after) {
+		t.Fatalf("the issue must still be armed work after a replay, got labels %v", after)
+	}
+}
+
 func TestAutoAdopt_NoDeployedVersionLeavesAnExplanationOverTheWebhook(t *testing.T) {
 	h := newHarness(t) // no runs at all — nothing has ever deployed
 

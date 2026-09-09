@@ -57,6 +57,14 @@
 // issue resolves the DEPLOYED version's milestone through run rows; the red-main
 // incident path does the same. No run rows, no milestone, no write.
 //
+// ONE write escapes it, deliberately: a `src/user` bug self-arming under
+// ADR-0029 on a project with no deployed version leaves an explanatory COMMENT
+// on the issue (auto_adopt.go) with zero run rows for that project. It is the
+// ADR's own answer to "there is nothing to adopt it into" — a reporter whose bug
+// was silently ignored has no way to learn why — and it stays inside the safety
+// property the rule exists for: a comment on the issue somebody just labelled
+// starts no run, merges nothing and touches no milestone.
+//
 // # Idempotency
 //
 // A webhook delivery whose handler failed is REDELIVERED and re-run (the
@@ -74,7 +82,14 @@
 //   - triggering a build counts the WorkflowRuns OpenChoreo already holds for
 //     (component, commit) and refuses to exceed the allowance — which is the
 //     SAME mechanism as the automatic re-trigger budget, so idempotency and
-//     the budget can never disagree.
+//     the budget can never disagree;
+//   - self-arming (ADR-0029) stamps `aep` as part of adopting, and its own
+//     eligibility test requires that label's ABSENCE — so the issue's label set
+//     is the record, and a later delivery about an issue this route already
+//     armed is not eligible. A byte-identical REDELIVERY is the residue: it
+//     replays the pre-arming labels, so it is eligible again, and what repeats
+//     is the audit comment — every other write it makes is an idempotent merge
+//     and AdoptIssue's live-run check absorbs the run.
 //
 // # Echo suppression is issues-only
 //
