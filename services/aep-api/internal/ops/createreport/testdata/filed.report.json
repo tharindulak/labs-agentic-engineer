@@ -12,32 +12,8 @@
     "created_issue_number": 41,
     "created_issue_url": "https://gh/x/41",
     "deduped": false,
-    "rationale": "The delay is deliberate, but making it configurable hardens it.",
     "recurrence": 3,
-    "related_issues": [
-      {
-        "number": 4,
-        "title": "Implement service2 slow backend",
-        "url": "https://gh/x/4"
-      },
-      {
-        "number": 9,
-        "title": "No URL on this one"
-      }
-    ],
-    "reopened": true,
-    "ruled_out": [
-      {
-        "index": 1,
-        "justification": "Remediation revised it.",
-        "reason": "config_handled"
-      },
-      {
-        "index": 2,
-        "justification": "A dashboard is not a defect.",
-        "reason": "pure_advice"
-      }
-    ]
+    "reopened": true
   },
   "result": {
     "recommendations": {

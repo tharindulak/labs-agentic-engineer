@@ -7,36 +7,12 @@
     "project": "demohello"
   },
   "handoff": {
-    "adopted": false,
     "classification": "code_level",
     "created_issue_number": null,
+    "created_issue_url": null,
     "deduped": false,
-    "rationale": "The delay is deliberate, but making it configurable hardens it.",
-    "recurrence": 0,
-    "related_issues": [
-      {
-        "number": 4,
-        "title": "Implement service2 slow backend",
-        "url": "https://gh/x/4"
-      },
-      {
-        "number": 9,
-        "title": "No URL on this one"
-      }
-    ],
-    "reopened": false,
-    "ruled_out": [
-      {
-        "index": 1,
-        "justification": "Remediation revised it.",
-        "reason": "config_handled"
-      },
-      {
-        "index": 2,
-        "justification": "A dashboard is not a defect.",
-        "reason": "pure_advice"
-      }
-    ]
+    "failure_reason": "The delay is deliberate, but making it configurable hardens it.",
+    "provider_facts": {}
   },
   "result": {
     "recommendations": {

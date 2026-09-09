@@ -213,11 +213,13 @@ func TestNativeActions_NoRecommendationsYieldsNothing(t *testing.T) {
 	}
 }
 
-// The whole point of the decline section: the reasoning reaches a human. A
+// The whole point of the decision section: the reasoning reaches a human. A
 // report that files nothing is otherwise indistinguishable from one that never
 // ran, and the console would assert "no actionable remediation" directly beneath
-// remediation's own list of wanted code changes.
-func TestRenderDiagnosis_PublishesADeclinesReasoning(t *testing.T) {
+// remediation's own list of wanted code changes. Filing is unconditional now, so
+// the only way a report carries no issue is a stage that crashed before it
+// reached the receiver at all — `failure_reason` is that reasoning.
+func TestRenderDiagnosis_PublishesAFailureReason(t *testing.T) {
 	report, _ := loadGolden(t, "declined")
 
 	d := renderDiagnosis(report)
@@ -225,11 +227,6 @@ func TestRenderDiagnosis_PublishesADeclinesReasoning(t *testing.T) {
 		"## Handoff decision",
 		"No issue was filed for this alert, so no coding agent was dispatched.",
 		"The delay is deliberate, but making it configurable hardens it.",
-		"### Recommended actions ruled out",
-		"_config_handled_",
-		"### Related issues",
-		"[#4 Implement service2 slow backend](https://gh/x/4)",
-		"- #9 No URL on this one", // no url — rendered unlinked, not dropped
 	} {
 		if !contains(d, want) {
 			t.Errorf("diagnosis must carry %q", want)

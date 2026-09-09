@@ -243,19 +243,22 @@ func renderDiagnosis(report map[string]any) string {
 	return truncRunes(strings.TrimSpace(strings.Join(lines, "\n")), maxDiagnosis)
 }
 
-// renderHandoffDecision publishes the handoff's own reasoning.
+// renderHandoffDecision publishes the handoff's own outcome.
 //
-// On a DECLINE this is the most consequential thing on the page: no issue was
-// filed, so nothing was ever dispatched, and that reasoning used to die at the
-// publish boundary — leaving the console asserting "no actionable remediation"
-// directly beneath remediation's own list of code changes it wanted. Right or
-// wrong, that reads as an incident the platform dropped.
+// The skill's only write is the issue itself — title, body, labels, via
+// ae_create_issue. Nothing about the OUTCOME is the model's to summarise
+// anymore: classification is derived here, adoption is decided here, and a
+// crash's `failure_reason` is the platform's own record of what went wrong,
+// never the model's. So this block reads three facts, all of them ours.
+//
+// Filing is unconditional now (even a config-level fix gets a ledger-entry
+// issue), so `created_issue_number == nil` means the stage crashed before it
+// could reach the receiver at all — the one case `failure_reason` exists for.
 func renderHandoffDecision(report map[string]any) []string {
 	handoff := objAt(report, "handoff")
 	if len(handoff) == 0 {
 		return nil
 	}
-	actions := listAt(objAt(objAt(report, "result"), "recommendations"), "recommended_actions")
 
 	lines := []string{"## Handoff decision", ""}
 	lines = append(lines, "**Classification:** "+nativeClassification(report))
@@ -265,57 +268,8 @@ func renderHandoffDecision(report map[string]any) []string {
 	}
 	lines = append(lines, "")
 
-	if v := handoff["rationale"]; truthy(v) {
+	if v := handoff["failure_reason"]; truthy(v) {
 		lines = append(lines, pyStr(v), "")
-	}
-
-	if ruled := listAt(handoff, "ruled_out"); len(ruled) > 0 {
-		lines = append(lines, "### Recommended actions ruled out")
-		for _, raw := range ruled {
-			entry, _ := raw.(map[string]any)
-			description := ""
-			if idx, ok := intIndex(entry["index"]); ok && idx >= 0 && idx < len(actions) {
-				if a, ok := actions[idx].(map[string]any); ok && truthy(a["description"]) {
-					description = pyStr(a["description"])
-				}
-			}
-			if description == "" {
-				description = fmt.Sprintf("action[%s]", pyStr(entry["index"]))
-			}
-			lines = append(lines, "- **"+description+"**")
-			reason := "unspecified"
-			if r := entry["reason"]; truthy(r) {
-				reason = pyStr(r)
-			}
-			justification := ""
-			if j := entry["justification"]; truthy(j) {
-				justification = pyStr(j)
-			}
-			lines = append(lines, fmt.Sprintf("  _%s_ — %s", reason, justification))
-		}
-		lines = append(lines, "")
-	}
-
-	if related := listAt(handoff, "related_issues"); len(related) > 0 {
-		lines = append(lines, "### Related issues")
-		for _, raw := range related {
-			issue, _ := raw.(map[string]any)
-			title := ""
-			if t := issue["title"]; truthy(t) {
-				title = pyStr(t)
-			}
-			label := strings.TrimSpace(fmt.Sprintf("#%s %s", pyStr(issue["number"]), title))
-			url := ""
-			if u := issue["url"]; truthy(u) {
-				url = pyStr(u)
-			}
-			if url != "" {
-				lines = append(lines, fmt.Sprintf("- [%s](%s)", label, url))
-			} else {
-				lines = append(lines, "- "+label)
-			}
-		}
-		lines = append(lines, "")
 	}
 
 	return lines
@@ -446,11 +400,16 @@ func reportFromNative(org string, report map[string]any) *ops.RcaAgentReport {
 		if u := handoff["created_issue_url"]; truthy(u) {
 			out.IssueURL = pyStr(u)
 		}
-		// The handoff's rationale is the best short "why this issue exists" we
-		// have — HandoffResult carries no issue title or body.
-		if r := handoff["rationale"]; truthy(r) {
-			out.IssueExcerpt = truncRunes(pyStr(r), maxExcerpt)
-		}
+		// IssueExcerpt has no source anymore: the skill's only write is the
+		// issue itself (ae_create_issue's title/body/labels), and nothing
+		// summarising it survives onto HandoffResult — the model was asked to
+		// compose the issue, not describe it twice. `failure_reason` is not a
+		// substitute; it is set only when created_issue_number is nil, so it
+		// can never reach this branch. A real fix means aep-api deriving an
+		// excerpt from the `body` it already receives on create — issue
+		// creation and RCA-report ingestion are separate calls today, so that
+		// needs its own wire field (mirroring how `classification` is
+		// answered back), not a read here.
 		out.Dispatched = truthy(providerFact(handoff, "adopted"))
 		// Sent only when the handoff established it: 0 means "unknown", and
 		// claiming a first attempt on behalf of an answer that carried none
