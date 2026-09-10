@@ -365,12 +365,12 @@ echo "1️⃣b RCA agent image + secret"
 #      (preferred — developers iterating on the agent aren't surprised by a
 #       stale registry copy)
 #   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
-#   3. local skill-loader     (previous tier: everything works, but this stage
-#                              still derives its own classification/dispatch
-#                              decision instead of deferring to AE)
-#   4. local handoff-provider (older tier: prompt duplicates the skill, so a
-#                              skill edit no longer fully determines the
-#                              stage's behaviour)
+#   3. local skill-loader     (older tier: needs the provider-descriptor mount
+#                              step 3d no longer creates — handoff stage fails
+#                              to start; RCA itself is unaffected)
+#   4. local handoff-provider (older tier: same descriptor dependency as
+#                              skill-loader — handoff stage fails to start for
+#                              the same reason)
 #   5. local report-sink      (older: reads the PRE-RENAME AE_* config keys)
 #   6. local recurrence       (older contract: handoff works, but publishing
 #                              is REJECTED by current aep-api — no Alerts feed)
@@ -407,16 +407,16 @@ RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:${RCA_IMAGE_TAG}}"
 #                    mounted coding-agent-handoff skill is the stage's entire
 #                    playbook, so this repo owns the handoff's behaviour outright
 #                    and a skill edit needs no SRE image. Tool and argument names
-#                    still come from the provider descriptor this repo ships and
-#                    step 3d mounts (HANDOFF_PROVIDER_FILE). It still derives its
-#                    own classification/dispatch decision in Python and reports
-#                    rationale/related_issues — a newer AE re-deriving that same
-#                    decision can silently disagree with what this image already
-#                    decided.
-#   handoff-provider — descriptor-driven, same as above, but its prompt also
-#                    carries a persona and its own copy of the skill's rules.
-#                    Nothing breaks; the duplication is back, and the prompt can
-#                    disagree with the skill you mounted.
+#                    come from a provider descriptor this image expects mounted at
+#                    /etc/rca-agent/handoff/provider.json — step 3d no longer
+#                    creates that mount (HANDOFF_HEADER_MAP replaced it), so this
+#                    tier's handoff stage now fails to start. RCA itself (minus
+#                    the handoff) is unaffected.
+#   handoff-provider — same descriptor dependency as skill-loader, so its
+#                    handoff stage fails to start for the same reason. Its only
+#                    remaining difference (a prompt that duplicates the skill's
+#                    rules instead of only loading it) is moot once the handoff
+#                    cannot start at all.
 #   report-sink    — publishes reports fine, but reads the PRE-RENAME config
 #                    keys (AE_HANDOFF / AE_AUTO_DISPATCH / AE_API_URL). This
 #                    script writes both sets for exactly that reason, so the
@@ -441,19 +441,20 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
     elif docker image inspect "${RCA_IMAGE_REPO}:skill-loader" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
         echo "    falling back to ${RCA_IMAGE_REPO}:skill-loader."
-        echo "    Everything works, but this stage still derives its own"
-        echo "    classification/dispatch decision instead of deferring to AE, and"
-        echo "    the dedupe fingerprint hashes the model's cited log lines — the"
-        echo "    same defect triggered repeatedly can file more than one issue."
+        echo "    Its handoff stage needs a provider descriptor mounted at"
+        echo "    /etc/rca-agent/handoff/provider.json — step 3d no longer creates"
+        echo "    that mount, so the handoff stage will fail to start. RCA itself"
+        echo "    (minus the handoff) still works."
         echo "    Build the current image to fix:"
         echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:fingerprint-fix -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="skill-loader"
     elif docker image inspect "${RCA_IMAGE_REPO}:handoff-provider" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
         echo "    falling back to ${RCA_IMAGE_REPO}:handoff-provider."
-        echo "    Everything works: same descriptor, same mounted skill. What you lose"
-        echo "    is the prompt/skill split — its prompt repeats the skill's rules, so"
-        echo "    an edit to SKILL.md no longer fully determines what the stage does."
+        echo "    Same descriptor dependency as skill-loader: step 3d no longer"
+        echo "    creates the /etc/rca-agent/handoff/provider.json mount this image"
+        echo "    expects, so its handoff stage will fail to start. RCA itself"
+        echo "    (minus the handoff) still works."
         echo "    Build the current image to fix:"
         echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:fingerprint-fix -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="handoff-provider"
