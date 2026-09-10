@@ -306,6 +306,39 @@ func TestNativeClassification_NormalisesAndClosesTheSet(t *testing.T) {
 	}
 }
 
+// Every current agent build carries classification nested under
+// `handoff.result` — it is AE's own ae_create_issue answer, forwarded
+// verbatim. An agent build from before that change sent it flat, so both must
+// normalise and closed-set-check identically, and the nested shape must win
+// when both happen to be present.
+func TestNativeClassification_ReadsTheNestedResultFirst(t *testing.T) {
+	nested := map[string]any{
+		"handoff": map[string]any{
+			"result": map[string]any{"classification": "code_level"},
+		},
+	}
+	if got := nativeClassification(nested); got != "code-level" {
+		t.Errorf("nested classification: got %q want %q", got, "code-level")
+	}
+
+	flat := map[string]any{
+		"handoff": map[string]any{"classification": "config_level"},
+	}
+	if got := nativeClassification(flat); got != "config-level" {
+		t.Errorf("flat fallback classification: got %q want %q", got, "config-level")
+	}
+
+	both := map[string]any{
+		"handoff": map[string]any{
+			"classification": "config_level",
+			"result":         map[string]any{"classification": "mixed"},
+		},
+	}
+	if got := nativeClassification(both); got != "mixed" {
+		t.Errorf("the nested result must win over the flat field, got %q", got)
+	}
+}
+
 // A report with no root cause still needs a headline, or the Alerts row is blank.
 func TestNativeTitle_FallsBackToTheAlertName(t *testing.T) {
 	report := map[string]any{"alert_context": map[string]any{"alert_name": "an alert"}}
@@ -378,6 +411,18 @@ func TestProviderFact_ReadsTheBagAndTolerantlyFallsBack(t *testing.T) {
 	if got := providerFact(map[string]any{}, "adopted"); got != nil {
 		t.Errorf("missing must stay nil, got %v", got)
 	}
+
+	// handoff.result is AE's own ae_create_issue answer, carried verbatim, and
+	// is more authoritative than either legacy shape: it must win a three-way
+	// contest against both provider_facts and a flat field.
+	all := map[string]any{
+		"adopted":        false,
+		"provider_facts": map[string]any{"adopted": false},
+		"result":         map[string]any{"adopted": true},
+	}
+	if got := providerFact(all, "adopted"); got != true {
+		t.Errorf("the nested result must win over both legacy shapes, got %v", got)
+	}
 }
 
 // End to end through the row: a report whose facts are nested still records the
@@ -402,5 +447,102 @@ func TestFromNative_ReadsDispatchAndRecurrenceFromProviderFacts(t *testing.T) {
 	}
 	if got.Recurrence != 3 {
 		t.Errorf("recurrence: got %d want 3", got.Recurrence)
+	}
+}
+
+// End to end through the row: a report whose issue facts are nested under
+// handoff.result — the shape every current agent build sends, since it is
+// AE's own ae_create_issue answer carried verbatim — still records
+// IssueNumber and IssueURL. The old flat shape must keep working too, since
+// the two repos' new builds can reach production in either order.
+func TestFromNative_ReadsIssueNumberAndURLFromNestedResult(t *testing.T) {
+	report, _ := loadGolden(t, "filed")
+	handoff := report["handoff"].(map[string]any)
+	// Re-shape the golden's flat issue facts the way the current agent sends
+	// them: nested under `result`, alongside the other ae_create_issue facts.
+	handoff["result"] = map[string]any{
+		"number":         handoff["created_issue_number"],
+		"url":            handoff["created_issue_url"],
+		"classification": handoff["classification"],
+		"deduped":        handoff["deduped"],
+		"adopted":        handoff["adopted"],
+		"recurrence":     handoff["recurrence"],
+	}
+	delete(handoff, "created_issue_number")
+	delete(handoff, "created_issue_url")
+	delete(handoff, "classification")
+	delete(handoff, "adopted")
+	delete(handoff, "recurrence")
+
+	got, err := fromNative("org1", report)
+	if err != nil {
+		t.Fatalf("fromNative: %v", err)
+	}
+	if got.IssueNumber == nil || *got.IssueNumber != 41 {
+		t.Errorf("issueNumber: got %v want 41", got.IssueNumber)
+	}
+	if got.IssueURL != "https://gh/x/41" {
+		t.Errorf("issueUrl: got %q want %q", got.IssueURL, "https://gh/x/41")
+	}
+	if got.Classification != "code-level" {
+		t.Errorf("classification: got %q want %q", got.Classification, "code-level")
+	}
+	if !got.Dispatched {
+		t.Error("dispatched must still be read out of the nested result")
+	}
+	if got.Recurrence != 3 {
+		t.Errorf("recurrence: got %d want 3", got.Recurrence)
+	}
+
+	// The old flat shape, unchanged, must still produce the identical row.
+	oldShape, _ := loadGolden(t, "filed")
+	gotOld, err := fromNative("org1", oldShape)
+	if err != nil {
+		t.Fatalf("fromNative (flat): %v", err)
+	}
+	if gotOld.IssueNumber == nil || *gotOld.IssueNumber != 41 {
+		t.Errorf("flat issueNumber: got %v want 41", gotOld.IssueNumber)
+	}
+	if gotOld.IssueURL != "https://gh/x/41" {
+		t.Errorf("flat issueUrl: got %q want %q", gotOld.IssueURL, "https://gh/x/41")
+	}
+}
+
+// The regression test: this is the exact shape a real successful handoff now
+// produces (AE's ae_create_issue answer, carried verbatim under
+// `handoff.result`). Before this fix, nativeClassification and IssueNumber
+// both read the old flat fields, which are never populated in this shape —
+// so IssueNumber stayed nil and escalate.go's shouldEscalate, which gates
+// solely on `r.IssueNumber != nil`, would treat an already-filed issue as
+// unfiled and dispatch a duplicate. Proving IssueNumber is non-nil here is
+// exactly what proves that duplicate can no longer happen.
+func TestFromNative_ARealHandoffResultDoesNotLookUnfiled(t *testing.T) {
+	report := map[string]any{
+		"alert_context": map[string]any{"project": "demohello", "component": "svc1"},
+		"summary":       "svc1 latency breached its SLO",
+		"handoff": map[string]any{
+			"tool": "ae_create_issue",
+			"result": map[string]any{
+				"number":         float64(41),
+				"url":            "https://x/41",
+				"classification": "code-level",
+				"deduped":        false,
+			},
+		},
+	}
+
+	got, err := fromNative("org1", report)
+	if err != nil {
+		t.Fatalf("fromNative: %v", err)
+	}
+	if got.IssueNumber == nil {
+		t.Fatal("IssueNumber must be set from a real handoff.result — a nil here " +
+			"is exactly the bug that files a duplicate escalation issue")
+	}
+	if *got.IssueNumber != 41 {
+		t.Errorf("issueNumber: got %d want 41", *got.IssueNumber)
+	}
+	if got.Classification != "code-level" {
+		t.Errorf("classification: got %q want %q", got.Classification, "code-level")
 	}
 }

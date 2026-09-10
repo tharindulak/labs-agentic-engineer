@@ -144,10 +144,19 @@ func truncRunes(s string, n int) string {
 // the agent's StrEnum spelling (underscores) to this contract's (hyphens). An
 // unrecognised value answers "none" rather than reaching the column: the read
 // side treats this as a closed set.
+//
+// `handoff.result` is checked first: every current agent build carries it
+// there, since it is AE's own ae_create_issue answer, forwarded verbatim. The
+// flat field is a build from before that change, which sent it directly on
+// the handoff — same fallback `providerFact` uses, so the two repos can roll
+// in either order.
 func nativeClassification(report map[string]any) string {
 	handoff := objAt(report, "handoff")
+	result := objAt(handoff, "result")
 	raw := "none"
-	if v := handoff["classification"]; truthy(v) {
+	if v := result["classification"]; truthy(v) {
+		raw = pyStr(v)
+	} else if v := handoff["classification"]; truthy(v) {
 		raw = pyStr(v)
 	}
 	raw = strings.ReplaceAll(raw, "_", "-")
@@ -155,6 +164,31 @@ func nativeClassification(report map[string]any) string {
 		return raw
 	}
 	return "none"
+}
+
+// issueNumberAny reads the filed issue's number, nested-result-first. The
+// nested shape (handoff.result.number) is what every current agent build
+// sends — it's AE's own ae_create_issue answer, carried verbatim. The flat
+// field is what an agent build before that change sent; checking both is what
+// lets the two repos roll in either order, same as providerFact does for the
+// other facts.
+func issueNumberAny(handoff map[string]any) any {
+	if result, ok := handoff["result"].(map[string]any); ok {
+		if v, present := result["number"]; present {
+			return v
+		}
+	}
+	return handoff["created_issue_number"]
+}
+
+// issueURLAny is issueNumberAny's sibling for the issue's URL.
+func issueURLAny(handoff map[string]any) any {
+	if result, ok := handoff["result"].(map[string]any); ok {
+		if v, present := result["url"]; present {
+			return v
+		}
+	}
+	return handoff["created_issue_url"]
 }
 
 // nativeTitle is the Alerts row headline: the top root cause's one-sentence
@@ -252,8 +286,10 @@ func renderDiagnosis(report map[string]any) string {
 // never the model's. So this block reads three facts, all of them ours.
 //
 // Filing is unconditional now (even a config-level fix gets a ledger-entry
-// issue), so `created_issue_number == nil` means the stage crashed before it
-// could reach the receiver at all — the one case `failure_reason` exists for.
+// issue), so no issue number (`issueNumberAny` finding neither
+// `handoff.result.number` nor the older flat `created_issue_number`) means
+// the stage crashed before it could reach the receiver at all — the one case
+// `failure_reason` exists for.
 func renderHandoffDecision(report map[string]any) []string {
 	handoff := objAt(report, "handoff")
 	if len(handoff) == 0 {
@@ -262,7 +298,7 @@ func renderHandoffDecision(report map[string]any) []string {
 
 	lines := []string{"## Handoff decision", ""}
 	lines = append(lines, "**Classification:** "+nativeClassification(report))
-	if handoff["created_issue_number"] == nil {
+	if issueNumberAny(handoff) == nil {
 		lines = append(lines, "",
 			"No issue was filed for this alert, so no coding agent was dispatched.")
 	}
@@ -359,13 +395,22 @@ func fromNative(org string, report map[string]any) (*ops.RcaAgentReport, error) 
 // that: the agent holds the values, and the side that knows what they MEAN
 // reads them.
 //
-// The top-level fallback is for an agent older than that change, which sent
-// them flat. It is a compatibility shim with a defined end: once no deployment
-// runs an agent that predates `provider_facts`, the second lookup can go. It
-// exists so the two repos can be rolled in either order — the same guarantee
-// that was missing when this endpoint's flat body was removed in one step, and
-// report publishing broke for as long as the agent build took.
+// `handoff.result` is checked first, ahead of `provider_facts`: it is the
+// current agent's shape, carrying AE's own `ae_create_issue` answer verbatim
+// — the most authoritative and most current of the three. `provider_facts`
+// is the shape from the plan just before this one, and the top-level fallback
+// below that is for an agent older still, which sent these flat. Both
+// fallbacks are compatibility shims with a defined end: once no deployment
+// runs an agent that predates `handoff.result`, they can go. They exist so
+// the two repos can be rolled in either order — the same guarantee that was
+// missing when this endpoint's flat body was removed in one step, and report
+// publishing broke for as long as the agent build took.
 func providerFact(handoff map[string]any, name string) any {
+	if result, ok := handoff["result"].(map[string]any); ok {
+		if v, present := result[name]; present {
+			return v
+		}
+	}
 	if facts, ok := handoff["provider_facts"].(map[string]any); ok {
 		if v, present := facts[name]; present {
 			return v
@@ -376,10 +421,11 @@ func providerFact(handoff map[string]any, name string) any {
 
 // reportFromNative maps the agent's report document onto the row.
 //
-// The issue fields ride together on `created_issue_number`, because that is the
-// only evidence an issue EXISTS: a handoff can answer needs_code_change=true and
-// still end its turn having filed nothing, and treating the classification as
-// evidence would record a dispatch that never happened.
+// The issue fields ride together on the issue number (`issueNumberAny`),
+// because that is the only evidence an issue EXISTS: a handoff can answer
+// needs_code_change=true and still end its turn having filed nothing, and
+// treating the classification as evidence would record a dispatch that never
+// happened.
 func reportFromNative(org string, report map[string]any) *ops.RcaAgentReport {
 	alert := objAt(report, "alert_context")
 	handoff := objAt(report, "handoff")
@@ -394,17 +440,17 @@ func reportFromNative(org string, report map[string]any) *ops.RcaAgentReport {
 		Diagnosis:      renderDiagnosis(report),
 	}
 
-	if n, ok := intIndex(handoff["created_issue_number"]); ok {
+	if n, ok := intIndex(issueNumberAny(handoff)); ok {
 		num := int64(n)
 		out.IssueNumber = &num
-		if u := handoff["created_issue_url"]; truthy(u) {
+		if u := issueURLAny(handoff); truthy(u) {
 			out.IssueURL = pyStr(u)
 		}
 		// IssueExcerpt has no source anymore: the skill's only write is the
 		// issue itself (ae_create_issue's title/body/labels), and nothing
 		// summarising it survives onto HandoffResult — the model was asked to
 		// compose the issue, not describe it twice. `failure_reason` is not a
-		// substitute; it is set only when created_issue_number is nil, so it
+		// substitute; it is set only when no issue number is present, so it
 		// can never reach this branch. A real fix means aep-api deriving an
 		// excerpt from the `body` it already receives on create — issue
 		// creation and RCA-report ingestion are separate calls today, so that
