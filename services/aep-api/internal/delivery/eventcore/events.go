@@ -403,10 +403,12 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	}
 
 	// The ARMING SWITCH is the adoption trigger: a human adding `aep` to an issue
-	// hands it to the agent. Platform-written labels never reach here — the echo
-	// suppression above drops any delivery this platform's own sender caused —
-	// so every arming that arrives is a human's act, which is what makes "who
-	// adopted this" answerable from the issue timeline alone.
+	// hands it to the agent — at CREATION (`opened`, already carrying the label,
+	// since a label picked at creation never fires a separate `labeled`
+	// delivery) or later (`labeled`). Platform-written labels never reach here —
+	// the echo suppression above drops any delivery this platform's own sender
+	// caused — so every arming that arrives is a human's act, which is what
+	// makes "who adopted this" answerable from the issue timeline alone.
 	//
 	// Adoption does NOT short-circuit the predicate below, and that matters: the
 	// two jobs answer different states of the same milestone. Adoption starts a
@@ -415,7 +417,9 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	// which to notice, so the arming that just made its milestone workable is
 	// exactly the event that has to wake it. Returning here would leave a run
 	// asleep on work a human had just handed it.
-	if action == "labeled" && strings.EqualFold(p.Label.Name, delivery.LabelAgentWork) {
+	firedArm := (action == "opened" && delivery.HasLabel(p.issueLabels(), delivery.LabelAgentWork)) ||
+		(action == "labeled" && strings.EqualFold(p.Label.Name, delivery.LabelAgentWork))
+	if firedArm {
 		if aerr := e.AdoptIssue(ctx, orgID, projectID, p.adoptTarget()); aerr != nil {
 			// Adoption problems are the human's to see, and the console dispatch
 			// path returns them synchronously. Failing the delivery here would only
@@ -438,7 +442,15 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	firedBug := action == "opened" ||
 		(action == "labeled" && strings.EqualFold(p.Label.Name, delivery.KindBug))
 	if firedBug && eligibleForAutoAdopt(p.issueLabels()) {
-		e.AutoAdoptUserBug(ctx, orgID, projectID, p.adoptTarget())
+		if aerr := e.AutoAdoptUserBug(ctx, orgID, projectID, p.adoptTarget()); aerr != nil {
+			// The only error AutoAdoptUserBug returns is a failed rollback of its
+			// own arming stamp (no deployed version, and undoing the stamp also
+			// failed) — an idempotent write worth letting GitHub redeliver and
+			// retry, unlike every other outcome it swallows itself.
+			slog.WarnContext(ctx, "eventcore: auto-adopt rollback failed", "repo", p.Repository.FullName,
+				"issue", p.Issue.Number, "error", aerr)
+			return aerr
+		}
 	}
 
 	ms, ok := p.milestone()

@@ -102,11 +102,20 @@ func eligibleForAutoAdopt(labels []string) bool {
 // pass inert: the stamp this route leaves is the "already handled" record, so a
 // later delivery about the same issue is not eligible and the undeduped comment
 // is not posted twice.
-func (e *Events) AutoAdoptUserBug(ctx context.Context, orgID, projectID string, target AdoptTarget) {
+//
+// The one error it does NOT swallow is a failed rollback: if there is no
+// deployed version to adopt into AND the unlabel meant to undo the stamp also
+// fails, the issue is left armed in no milestone — inert, but no longer
+// self-arming, so the comment's own advice ("add `aep` directly") would be
+// telling the reporter to do something already done. That failure is
+// returned so the caller can fail the webhook delivery and let GitHub's
+// redelivery retry the same idempotent unlabel, rather than posting a
+// comment that would be wrong the moment it landed.
+func (e *Events) AutoAdoptUserBug(ctx context.Context, orgID, projectID string, target AdoptTarget) error {
 	if lerr := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); lerr != nil {
 		slog.WarnContext(ctx, "eventcore: auto-adopt declined — could not arm the issue",
 			"issue", target.Number, "error", lerr)
-		return
+		return nil
 	}
 	// The label AdoptIssue and every later reader must agree on. It routes on this
 	// set (delivery.AdoptableByATaskRun), and a set that says the issue is unarmed
@@ -121,19 +130,18 @@ func (e *Events) AutoAdoptUserBug(ctx context.Context, orgID, projectID string, 
 	case err == nil:
 		comment = autoAdoptedComment
 	case errors.Is(err, ErrNoDeployedMilestone):
-		comment = autoAdoptNoDeployedVersionComment
 		if uerr := e.p.Writer.Unlabel(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); uerr != nil {
-			// Left armed in no milestone: inert (nothing works an issue outside a
-			// milestone) but no longer self-arming, so the comment below tells the
-			// reporter to add `aep` — which is already there — rather than the truth.
-			slog.WarnContext(ctx, "eventcore: could not disarm an issue nothing adopted",
+			slog.WarnContext(ctx, "eventcore: could not disarm an issue nothing adopted — leaving it for redelivery to retry",
 				"issue", target.Number, "error", uerr)
+			return uerr
 		}
+		comment = autoAdoptNoDeployedVersionComment
 	default:
 		slog.WarnContext(ctx, "eventcore: auto-adopt declined", "issue", target.Number, "error", err)
-		return
+		return nil
 	}
 	if cerr := e.p.Writer.Comment(ctx, orgID, projectID, target.Number, comment); cerr != nil {
 		slog.WarnContext(ctx, "eventcore: auto-adopt comment failed", "issue", target.Number, "error", cerr)
 	}
+	return nil
 }

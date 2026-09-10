@@ -93,6 +93,7 @@ func TestSourceOf(t *testing.T) {
 		{"no source label at all", []string{LabelAgentWork, KindBug}, ""},
 		{"not even a bug", planned, ""},
 		{"ledger issue", ledger, ""},
+		{"a non-bug carrying a stray source label", []string{KindDevelopment, SrcUser}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -118,6 +119,9 @@ func TestIsUserSourced(t *testing.T) {
 		{"validation-sourced", repair, false},
 		{"build-sourced", bug, false},
 		{"deploy-sourced", []string{KindBug, SrcDeploy}, false},
+		{"not even a bug, no source label", planned, false},
+		{"a non-bug carrying a stray src/user label", []string{KindDevelopment, SrcUser}, false},
+		{"conflicting sources — human-labeled src/user AND src/build", []string{KindBug, SrcUser, SrcBuild}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

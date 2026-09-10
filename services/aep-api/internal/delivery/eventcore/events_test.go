@@ -1110,3 +1110,46 @@ func TestAutoAdopt_NoDeployedVersionLeavesAnExplanationOverTheWebhook(t *testing
 		t.Fatalf("must explain why it did not adopt, got %q", got)
 	}
 }
+
+// TestAdoption_OpenedWithAepPreAttachedIsAdopted: a label picked in the same
+// GitHub UI action that files the issue never fires a separate `labeled`
+// delivery — only `opened`, carrying the whole label set. Before this, the
+// `aep`-adoption trigger checked `action == "labeled"` alone, so an issue
+// created with `aep` already on it was never adopted at all. `opened` is
+// registered for ADR-0029's `bug` trigger; the `aep` trigger gets the same
+// fix here rather than leaving the twin gap sitting beside it.
+func TestAdoption_OpenedWithAepPreAttachedIsAdopted(t *testing.T) {
+	h := newHarness(t, aRun("run-old", 5, delivery.RunStateSucceeded))
+
+	body := issueBodyWithLabels("opened", 31, 0, delivery.LabelAgentWork,
+		[]string{delivery.LabelAgentWork}, "human")
+	if err := h.deliver(t, "issues", body); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.issues.assigned) != 1 || h.issues.assigned[0] != "31->5" {
+		t.Fatalf("an issue opened already carrying `aep` must join the deployed version's milestone, got %v",
+			h.issues.assigned)
+	}
+	if len(h.sup.started) != 1 || h.sup.started[0].Kind != delivery.RunKindTask {
+		t.Fatalf("must start a task run, got %+v", h.sup.started)
+	}
+}
+
+// TestAutoAdopt_RollbackFailurePropagatesTheWebhookError: the one case
+// AutoAdoptUserBug does not swallow — a failed rollback of its own arming
+// stamp — must fail the DELIVERY, not just the internal call, so GitHub's
+// redelivery retries the same idempotent unlabel instead of the issue being
+// silently left armed with no milestone.
+func TestAutoAdopt_RollbackFailurePropagatesTheWebhookError(t *testing.T) {
+	h := newHarness(t) // no runs at all — nothing has ever deployed
+	h.issues.unlabelErr = errors.New("github: 502")
+
+	body := issueBodyWithLabels("labeled", 31, 0, delivery.KindBug,
+		[]string{delivery.KindBug}, "external-reporter")
+	if err := h.deliver(t, "issues", body); err == nil {
+		t.Fatal("a failed rollback must fail the delivery so GitHub redelivers it")
+	}
+	if _, ok := h.issues.commentBodies[31]; ok {
+		t.Fatalf("must not post a comment whose advice is already false, got %q", h.issues.commentBodies[31])
+	}
+}

@@ -168,6 +168,31 @@ func TestAutoAdoptUserBug_NoDeployedVersionLeavesTheIssueUnarmed(t *testing.T) {
 	}
 }
 
+// TestAutoAdoptUserBug_RollbackFailureIsReturnedNotSwallowed: the ONE error
+// this route does not swallow. If the rollback's own Unlabel fails, the issue
+// is left armed in no milestone — and posting the "no deployed version"
+// comment now would tell the reporter to add `aep` directly, which is
+// already there. Returning the error lets the caller fail the webhook
+// delivery so GitHub's redelivery retries the same idempotent unlabel.
+func TestAutoAdoptUserBug_RollbackFailureIsReturnedNotSwallowed(t *testing.T) {
+	h := newHarness(t) // no runs at all — nothing has ever deployed
+	h.issues.unlabelErr = errors.New("github: 502")
+
+	err := h.events.AutoAdoptUserBug(context.Background(), testOrg, testProject,
+		AdoptTarget{Number: 31, Labels: []string{delivery.KindBug}})
+
+	if err == nil {
+		t.Fatal("a failed rollback must be returned, not swallowed")
+	}
+	if _, ok := h.issues.commentBodies[31]; ok {
+		t.Fatalf("must not post a comment whose advice is already false, got %q", h.issues.commentBodies[31])
+	}
+	after := labelsAfter(h.issues, 31, delivery.KindBug)
+	if !delivery.HasLabel(after, delivery.LabelAgentWork) {
+		t.Fatalf("the failed unlabel must leave the issue exactly as it was — still armed, got %v", after)
+	}
+}
+
 func TestAutoAdoptUserBug_NoDeployedVersionLeavesAnExplanation(t *testing.T) {
 	h := newHarness(t) // no runs at all — nothing has ever deployed
 

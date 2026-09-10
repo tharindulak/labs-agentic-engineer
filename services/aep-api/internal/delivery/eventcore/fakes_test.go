@@ -234,6 +234,9 @@ type fakeIssues struct {
 	// are recorded in separate slices: a cancel labels an issue BEFORE closing it,
 	// so with the label failing nothing may be closed.
 	labelErr error
+	// unlabelErr fails every RemoveLabel. Exists to test AutoAdoptUserBug's
+	// rollback path: the one write failure it does NOT swallow.
+	unlabelErr error
 }
 
 // writer is the fake wearing the domain's issue-write surface, which is what
@@ -280,6 +283,9 @@ func (f *fakeIssues) AddLabels(_ context.Context, _, _ string, number int, label
 func (f *fakeIssues) RemoveLabel(_ context.Context, _, _ string, number int, label string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.unlabelErr != nil {
+		return f.unlabelErr
+	}
 	f.labelled = append(f.labelled, fmt.Sprintf("%d-%s", number, label))
 	return nil
 }
