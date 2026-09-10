@@ -389,22 +389,21 @@ func fromNative(org string, report map[string]any) (*ops.RcaAgentReport, error) 
 // providerFact reads one of OUR facts off the handoff record.
 //
 // `adopted` and `recurrence` are AEP's own answers to `ae_create_issue` — the
-// agent stamps them from the wire and never interprets them, which is why it
-// now carries them in an opaque `provider_facts` bag rather than as typed
-// fields it would have to understand. Reading them here is the other half of
-// that: the agent holds the values, and the side that knows what they MEAN
-// reads them.
+// agent stamps them from the wire and never interprets them. Reading them
+// here is the other half of that: the agent holds the values, and the side
+// that knows what they MEAN reads them.
 //
-// `handoff.result` is checked first, ahead of `provider_facts`: it is the
-// current agent's shape, carrying AE's own `ae_create_issue` answer verbatim
-// — the most authoritative and most current of the three. `provider_facts`
-// is the shape from the plan just before this one, and the top-level fallback
-// below that is for an agent older still, which sent these flat. Both
-// fallbacks are compatibility shims with a defined end: once no deployment
-// runs an agent that predates `handoff.result`, they can go. They exist so
-// the two repos can be rolled in either order — the same guarantee that was
-// missing when this endpoint's flat body was removed in one step, and report
-// publishing broke for as long as the agent build took.
+// `handoff.result` is checked first: it is the current agent's shape,
+// carrying AE's own `ae_create_issue` answer verbatim — the most
+// authoritative and most current of the three. `provider_facts` was the
+// shape from the plan just before this one, which carried them in an opaque
+// bag rather than as typed fields; the top-level fallback below that is for
+// an agent older still, which sent these flat. Both fallbacks are
+// compatibility shims with a defined end: once no deployment runs an agent
+// that predates `handoff.result`, they can go. They exist so the two repos
+// can be rolled in either order — the same guarantee that was missing when
+// this endpoint's flat body was removed in one step, and report publishing
+// broke for as long as the agent build took.
 func providerFact(handoff map[string]any, name string) any {
 	if result, ok := handoff["result"].(map[string]any); ok {
 		if v, present := result[name]; present {

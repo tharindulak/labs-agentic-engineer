@@ -372,11 +372,14 @@ func idxOf(haystack, needle string) int {
 	return -1
 }
 
-// Our own facts now travel in the agent's opaque `provider_facts` bag, because
-// the agent stamps them from the wire without understanding them. Reading them
-// here is the other half of that split — and the flat fallback is what lets the
-// two repos roll in either order, which is exactly the guarantee that was
-// missing when this endpoint's flat body was removed in one step.
+// An older agent build carried our own facts in an opaque `provider_facts`
+// bag, because the agent stamped them from the wire without understanding
+// them. Reading them here is the other half of that split — and the flat
+// fallback below `provider_facts` is what lets the two repos roll in either
+// order, which is exactly the guarantee that was missing when this endpoint's
+// flat body was removed in one step. `handoff.result` is the current,
+// most-authoritative shape and is checked ahead of both layers below — this
+// test's "the bag wins" case now also confirms `result` wins over the bag.
 func TestProviderFact_ReadsTheBagAndTolerantlyFallsBack(t *testing.T) {
 	nested := map[string]any{
 		"provider_facts": map[string]any{"adopted": true, "recurrence": float64(3)},
