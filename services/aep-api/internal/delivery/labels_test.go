@@ -79,32 +79,6 @@ func TestKindOf(t *testing.T) {
 	}
 }
 
-func TestSourceOf(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name   string
-		labels []string
-		want   string
-	}{
-		{"explicit user source", []string{LabelAgentWork, KindBug, SrcUser}, SrcUser},
-		{"incident source", incident, SrcIncident},
-		{"validation-sourced repair", repair, SrcValidation},
-		{"build-sourced fix", bug, SrcBuild}, // bug == {LabelAgentWork, KindBug, SrcBuild}
-		{"no source label at all", []string{LabelAgentWork, KindBug}, ""},
-		{"not even a bug", planned, ""},
-		{"ledger issue", ledger, ""},
-		{"a non-bug carrying a stray source label", []string{KindDevelopment, SrcUser}, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			if got := SourceOf(c.labels); got != c.want {
-				t.Errorf("SourceOf(%v) = %q, want %q", c.labels, got, c.want)
-			}
-		})
-	}
-}
-
 func TestIsUserSourced(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

@@ -109,24 +109,6 @@ const (
 	SrcDeploy     = "src/deploy"
 )
 
-// SourceOf returns the src/* label a KindBug issue carries, or "" when it
-// carries none — which reads as SrcUser (see the SOURCES block above). Only a
-// KindBug issue has a source: every other kind answers "" here regardless of
-// what src/* label it happens to carry, matching the invariant that a source
-// means nothing outside a bug. Mirrors KindOf's shape otherwise: a fixed scan
-// order over a fixed vocabulary, never a prefix match.
-func SourceOf(labels []string) string {
-	if KindOf(labels) != KindBug {
-		return ""
-	}
-	for _, src := range []string{SrcUser, SrcIncident, SrcValidation, SrcBuild, SrcDeploy} {
-		if HasLabel(labels, src) {
-			return src
-		}
-	}
-	return ""
-}
-
 // IsUserSourced reports whether a bug is CLEANLY src/user-sourced: KindBug,
 // and carrying none of the other four recognized sources — explicit
 // `src/user` or an absent source both qualify (the SOURCES block's "absence
@@ -134,12 +116,13 @@ func SourceOf(labels []string) string {
 // rule (eventcore.AutoAdoptUserBug) applies to; every other source is a
 // platform detection and is deliberately excluded.
 //
-// This is NOT "SourceOf resolves to SrcUser". A hand-labeled issue carrying
-// `src/user` ALONGSIDE another recognized source (e.g. a human tagging both
-// `src/user` and `src/build`) is an ambiguous report, not a clean one — and
-// resolving that ambiguity through SourceOf's precedence order would silently
-// treat it as a plain user report. This predicate refuses instead: any OTHER
-// recognized source present, however it got there, disqualifies the issue.
+// This is NOT "resolve the issue's source by precedence and compare to
+// SrcUser". A hand-labeled issue carrying `src/user` ALONGSIDE another
+// recognized source (e.g. a human tagging both `src/user` and `src/build`)
+// is an ambiguous report, not a clean one — and picking a single source by
+// precedence would silently treat it as a plain user report. This predicate
+// refuses instead: any OTHER recognized source present, however it got
+// there, disqualifies the issue.
 func IsUserSourced(labels []string) bool {
 	if KindOf(labels) != KindBug {
 		return false
