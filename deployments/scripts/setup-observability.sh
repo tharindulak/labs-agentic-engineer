@@ -73,9 +73,42 @@
 #       patterns then match analysed lowercase tokens — "ERROR" never matches).
 #
 # Knobs (env):
-#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: fingerprint-fix).
-#                   `fingerprint-fix` is the image for the CURRENT handoff
-#                   contract. It carries three things on top of `skill-loader`:
+#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: thin-handoff).
+#                   `thin-handoff` is the image for the CURRENT handoff
+#                   contract. It carries four things on top of `fingerprint-fix`:
+#                     * no provider-descriptor file. The agent discovers AE's
+#                       tools via standard MCP discovery (server_name="handoff")
+#                       instead of a named tool allow-list, and a generic
+#                       ToolCallRecorder middleware records whichever tool the
+#                       model actually called last — no receiver-specific tool,
+#                       header, or field name is hardcoded anywhere in this repo;
+#                     * incident identity AND the remediation agent's action
+#                       statuses both ride the same generic, config-driven
+#                       header mechanism (HANDOFF_HEADER_MAP below). Action
+#                       statuses used to be forced onto the create-issue tool
+#                       call as an argument; now they travel exactly like
+#                       identity already did, out of the model's reach;
+#                     * HandoffResult on the report is fully generic (`tool`,
+#                       `result`, `failure_reason`) — no typed classification,
+#                       dedupe, or provider_facts fields. A reader looks inside
+#                       `handoff.result` for whatever the receiver answered;
+#                     * handoff_view()'s content filtering (withholding
+#                       observability recommendations and a `revised` action's
+#                       config patch) moved into the coding-agent-handoff
+#                       skill's own instructions — the model now sees the full
+#                       report and is told what not to carry forward.
+#                   Published: docker.io/tharindulak/sre-agent:thin-handoff
+#                   (linux/arm64, as every tag in this ladder is).
+#
+#                   `fingerprint-fix` is the PREVIOUS tier. Its handoff stage
+#                   now ALSO fails to start: it still reads HANDOFF_PROVIDER_FILE
+#                   (settings.handoff_provider_file), which step 3d's ConfigMap
+#                   no longer sets (HANDOFF_HEADER_MAP replaced it), so
+#                   _validate_handoff_config raises at boot — the same failure
+#                   mode `skill-loader` and `handoff-provider` already have
+#                   below. RCA itself (minus the handoff) is unaffected. When it
+#                   could still start, it carried three things on top of
+#                   `skill-loader`:
 #                     * classification and the dispatch decision both moved to
 #                       AE — the stage no longer runs HandoffClassification.derive
 #                       in Python, it forwards each remediation action's status
@@ -102,7 +135,7 @@
 #                   Published: docker.io/tharindulak/sre-agent:fingerprint-fix
 #                   (linux/arm64, as every tag in this ladder is).
 #
-#                   `skill-loader` is the PREVIOUS tier. It expects tool and
+#                   `skill-loader` is the tier before that. It expects tool and
 #                   header names read from a provider descriptor mounted at
 #                   /etc/rca-agent/handoff/provider.json — step 3d no longer
 #                   creates that mount (HANDOFF_HEADER_MAP replaced it), so
@@ -168,12 +201,12 @@
 #                   and the console shows attempt 3 as if it were attempt 1.
 #                   That is the silent failure this tag exists to prevent.
 #
-#                   `fingerprint-fix`, `skill-loader` and `handoff-provider` are
-#                   ALL published, so the registry fallback below can find them.
-#                   To build any of them locally instead (the local copy wins
-#                   over the registry):
+#                   `thin-handoff`, `fingerprint-fix`, `skill-loader` and
+#                   `handoff-provider` are ALL published, so the registry
+#                   fallback below can find them. To build any of them locally
+#                   instead (the local copy wins over the registry):
 #                     cd <openchoreo-repo>/agents && docker build \
-#                       -t tharindulak/sre-agent:fingerprint-fix -f sre-agent/Dockerfile .
+#                       -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
 #                   The context is agents/, NOT agents/sre-agent — the Dockerfile
 #                   pulls in the shared agents/common package.
 #
@@ -325,7 +358,7 @@ echo "✅ ExternalSecrets applied"
 # (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
 # picked up instead of a registry pull):
 #   cd <openchoreo-repo>/agents && docker build \
-#     -t tharindulak/sre-agent:fingerprint-fix -f sre-agent/Dockerfile .
+#     -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
 # The context is agents/, NOT agents/sre-agent: the Dockerfile pulls in the
 # shared agents/common package (openchoreo PR #4372), so building from inside
 # sre-agent/ cannot resolve its COPY paths.
@@ -349,41 +382,46 @@ echo "✅ ExternalSecrets applied"
 # by the Thunder bootstrap (values-thunder.yaml CONFIDENTIAL_APPS).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `fingerprint-fix` (= RCA_IMAGE_TAG default below) carries
-# everything `skill-loader` did — the prompt/skill split (handoff prompt is a
-# loader, the mounted skill is the whole playbook), the one-call handoff stage
-# (HANDOFF_ENABLED), the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted
-# coding-agent-handoff skill from step 3d, the configurable HANDOFF_MCP_PATH
-# (default /mcp), the recurrence contract (ADR-0021), the generic header map
-# (HANDOFF_HEADER_MAP — no descriptor file to mount) and the report sink —
-# plus: classification and the dispatch decision both moved to AE (this stage
-# no longer re-derives either), skill discovery by directory (a second mounted
-# skill needs no image rebuild),
-# and a dedupe fingerprint hashed from raw captured logs instead of the
-# model's cited lines, so one repeated defect produces one issue, not one per
-# run. With this image, editing
+# Preferred tag `thin-handoff` (= RCA_IMAGE_TAG default below) carries
+# everything `fingerprint-fix` did — the prompt/skill split (handoff prompt is
+# a loader, the mounted skill is the whole playbook), the one-call handoff
+# stage (HANDOFF_ENABLED), the EXTERNAL_SKILLS_DIR loader that reads the
+# AEP-mounted coding-agent-handoff skill from step 3d, the configurable
+# HANDOFF_MCP_PATH (default /mcp), the recurrence contract (ADR-0021), and the
+# report sink — plus: no provider-descriptor file at all (tools are discovered
+# via standard MCP, server_name="handoff"), incident identity AND the
+# remediation agent's action statuses both carried by the same generic
+# HANDOFF_HEADER_MAP mechanism instead of a mounted descriptor or a forced
+# tool argument, a fully generic HandoffResult on the report (tool/result/
+# failure_reason, no classification or dedupe fields), and content-shaping
+# (withholding observability recommendations and a revised action's config
+# patch) moved into the coding-agent-handoff skill's own instructions. With
+# this image, editing
 # services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md and re-running
 # step 3d changes the stage's behaviour completely, with no SRE image rebuild.
 # STILL REQUIRES REPORT_SINK / REPORT_SINK_URL, or reports go nowhere and the
 # console Alerts list stays empty.
 # Resolution order:
 #   1. local build            cd <openchoreo-repo>/agents && docker build \
-#                       -t tharindulak/sre-agent:fingerprint-fix -f sre-agent/Dockerfile .
+#                       -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
 #      (preferred — developers iterating on the agent aren't surprised by a
 #       stale registry copy)
 #   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
-#   3. local skill-loader     (older tier: needs the provider-descriptor mount
+#   3. local fingerprint-fix  (previous tier: reads HANDOFF_PROVIDER_FILE,
+#                              which this script no longer sets — handoff
+#                              stage fails to start; RCA itself is unaffected)
+#   4. local skill-loader     (older tier: needs the provider-descriptor mount
 #                              step 3d no longer creates — handoff stage fails
 #                              to start; RCA itself is unaffected)
-#   4. local handoff-provider (older tier: same descriptor dependency as
+#   5. local handoff-provider (older tier: same descriptor dependency as
 #                              skill-loader — handoff stage fails to start for
 #                              the same reason)
-#   5. local report-sink      (older: reads the PRE-RENAME AE_* config keys)
-#   6. local recurrence       (older contract: handoff works, but publishing
+#   6. local report-sink      (older: reads the PRE-RENAME AE_* config keys)
+#   7. local recurrence       (older contract: handoff works, but publishing
 #                              is REJECTED by current aep-api — no Alerts feed)
-#   7. local hand0ff-new      (older: also cannot say WHICH ATTEMPT an incident
+#   8. local hand0ff-new      (older: also cannot say WHICH ATTEMPT an incident
 #                              is on)
-#   8. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
+#   9. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
 #
 # RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/sre-agent),
 # not a short local alias — deliberately. An earlier version used a short repo
@@ -397,20 +435,31 @@ echo "1️⃣b RCA agent image + secret"
 # the fully-qualified name everywhere means a cache-evicted image can always
 # be re-pulled from the real registry — no more silent long-term fragility.
 RCA_IMAGE_REPO="tharindulak/sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-fingerprint-fix}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-thin-handoff}"
 RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:${RCA_IMAGE_TAG}}"
 # Degradation is EXPLICIT and ordered, because each step down loses something
 # different and a silent step-down is what makes a stale agent hard to spot:
-#   fingerprint-fix — current contract. Builds on skill-loader: classification
-#                    and the dispatch decision are AE's, not this stage's; the
-#                    dedupe fingerprint hashes the raw captured logs instead of
-#                    the model's cited lines, so one repeated defect files one
-#                    issue, not one per run; the skill catalog is discovered by
-#                    directory, so a second mounted skill needs no image
-#                    rebuild; and a handoff stage that throws records
-#                    HandoffResult.failed on the report instead of only
-#                    logging. Config keys are HANDOFF_* (see below).
-#   skill-loader   — previous tier. The handoff prompt is a LOADER: the
+#   thin-handoff   — current contract. No provider-descriptor file: tools are
+#                    discovered via standard MCP (server_name="handoff"), and
+#                    incident identity plus the remediation agent's action
+#                    statuses both ride the same generic HANDOFF_HEADER_MAP
+#                    mechanism (see below) instead of a mounted descriptor or a
+#                    forced tool argument. HandoffResult on the report is fully
+#                    generic (tool/result/failure_reason) — no classification
+#                    or dedupe fields. Config keys are HANDOFF_* (see below).
+#   fingerprint-fix — previous tier. Its handoff stage now fails to start:
+#                    it still reads HANDOFF_PROVIDER_FILE, which this script no
+#                    longer sets (HANDOFF_HEADER_MAP replaced it). RCA itself
+#                    (minus the handoff) is unaffected. When it could still
+#                    start: classification and the dispatch decision were AE's,
+#                    not this stage's; the dedupe fingerprint hashed the raw
+#                    captured logs instead of the model's cited lines, so one
+#                    repeated defect filed one issue, not one per run; the
+#                    skill catalog was discovered by directory, so a second
+#                    mounted skill needed no image rebuild; and a handoff stage
+#                    that threw recorded HandoffResult.failed on the report
+#                    instead of only logging.
+#   skill-loader   — tier before that. The handoff prompt is a LOADER: the
 #                    mounted coding-agent-handoff skill is the stage's entire
 #                    playbook, so this repo owns the handoff's behaviour outright
 #                    and a skill edit needs no SRE image. Tool and argument names
@@ -445,6 +494,15 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
         docker tag "$RCA_IMAGE_PULL" "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
         echo "✅ pulled ${RCA_IMAGE_PULL} → retagged as ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
+    elif docker image inspect "${RCA_IMAGE_REPO}:fingerprint-fix" >/dev/null 2>&1; then
+        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
+        echo "    falling back to ${RCA_IMAGE_REPO}:fingerprint-fix."
+        echo "    It still reads HANDOFF_PROVIDER_FILE, which this script no longer"
+        echo "    sets (HANDOFF_HEADER_MAP replaced it), so the handoff stage will"
+        echo "    fail to start. RCA itself (minus the handoff) still works."
+        echo "    Build the current image to fix:"
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
+        RCA_IMAGE_TAG="fingerprint-fix"
     elif docker image inspect "${RCA_IMAGE_REPO}:skill-loader" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
         echo "    falling back to ${RCA_IMAGE_REPO}:skill-loader."
@@ -453,7 +511,7 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
         echo "    that mount, so the handoff stage will fail to start. RCA itself"
         echo "    (minus the handoff) still works."
         echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:fingerprint-fix -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="skill-loader"
     elif docker image inspect "${RCA_IMAGE_REPO}:handoff-provider" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
@@ -463,7 +521,7 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
         echo "    expects, so its handoff stage will fail to start. RCA itself"
         echo "    (minus the handoff) still works."
         echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:fingerprint-fix -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="handoff-provider"
     elif docker image inspect "${RCA_IMAGE_REPO}:report-sink" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
@@ -471,7 +529,7 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
         echo "    Everything works: it reads the AE_* config keys this script also"
         echo "    writes, and its AEP tool names are compiled in rather than read"
         echo "    from the provider descriptor. Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:fingerprint-fix -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="report-sink"
     elif docker image inspect "${RCA_IMAGE_REPO}:recurrence" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
@@ -481,7 +539,7 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
         echo "    report body, which current aep-api rejects, and publishing is"
         echo "    best-effort so the rejection only shows up in the agent's log."
         echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:fingerprint-fix -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="recurrence"
     elif docker image inspect "${RCA_IMAGE_REPO}:hand0ff-new" >/dev/null 2>&1; then
         echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
@@ -490,7 +548,7 @@ if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; 
         echo "    decides that). You lose the console Alerts feed (as above) AND the"
         echo "    report saying WHICH ATTEMPT an incident is on, so a third attempt"
         echo "    reads as the first. Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:fingerprint-fix -f sre-agent/Dockerfile ."
+        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
         RCA_IMAGE_TAG="hand0ff-new"
     elif docker image inspect "${RCA_IMAGE_REPO}:anthropic-patched" >/dev/null 2>&1; then
         echo "⚠️  registry pull failed — falling back to ${RCA_IMAGE_REPO}:anthropic-patched"
