@@ -57,7 +57,10 @@ app.post("/mcp", async (req, res) => {
 
   // Incident identity is the calling PROCESS's, so it rides on the request
   // rather than in the tool arguments its model fills in. Unreadable headers
-  // are logged and dropped: they cost a narrower dedupe key, never the call.
+  // are logged and dropped: they cost a narrower dedupe key, never the call —
+  // except HEADER_ACTION_STATUSES, an unreadable copy of which costs the
+  // classification/adoption decision derived from it, not just dedupe-key
+  // precision (see handoffContext.ts).
   const { identity, notes } = readIncidentIdentity(req.headers);
   for (const note of notes) {
     process.stderr.write(`handoff identity: ${note}\n`);

@@ -110,9 +110,10 @@ constraint every time. Everything under the headings comes from the RCA report.
   coding agent designs the implementation.
 - Mention each `revised` action, so the coding agent does not redo in code what
   configuration already handled: "the resource limit was already raised in
-  configuration; the unbounded input that exhausts it still needs a fix". You are
-  shown THAT it was handled and never the ReleaseBinding change itself, because
-  the coding agent can only edit the repository — so ask for code.
+  configuration; the unbounded input that exhausts it still needs a fix". Say
+  only THAT it was handled — never the ReleaseBinding change itself; see "What
+  you see and must not carry forward" below for what that excludes and why —
+  because the coding agent can only edit the repository, so ask for code.
 
 ### What you see and must not carry forward
 

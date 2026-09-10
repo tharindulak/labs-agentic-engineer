@@ -33,7 +33,10 @@
  * prompt space.
  *
  * Nothing here fails a call. A handoff is one-shot — nothing retries it — so an
- * unreadable header costs a narrower dedupe key, never the incident.
+ * unreadable header costs a narrower dedupe key, never the incident — with one
+ * exception: an unreadable `HEADER_ACTION_STATUSES` costs the classification
+ * and adoption decision derived from it, not merely dedupe-key precision (see
+ * that constant's doc comment).
  */
 
 /** Per-run identity headers. Lower-case: Node lower-cases incoming header names. */
@@ -136,6 +139,18 @@ const lower = (trimmed: string): string => trimmed.toLowerCase();
  * because it is caller-supplied and, unlike the others, structured — a
  * malformed value here must degrade the same way a malformed scalar header
  * does: dropped with a note, never thrown.
+ *
+ * Absent and empty are different claims, not the same "nothing to report":
+ * a missing header means no per-action status at all (this function returns
+ * `undefined`, and `resolveHandoff` omits `actionStatuses` from the create
+ * call entirely) — the caller was never part of an RCA flow, so aep-api
+ * skips classification outright. An empty array is the caller ASSERTING an
+ * RCA report that recommended zero actions, which aep-api classifies as
+ * `none` and derives a dedupe/adoption decision from (see
+ * `CreateIssue` in services/aep-api/internal/sourcecontrol/issues/handler.go
+ * and `ops.ClassifyActions`). Collapsing the two here would either force a
+ * classification onto a caller with no RCA report, or silently drop a report
+ * that legitimately found nothing to do.
  */
 function actionStatusesHeader(
   headers: NodeJS.Dict<string | string[]>,

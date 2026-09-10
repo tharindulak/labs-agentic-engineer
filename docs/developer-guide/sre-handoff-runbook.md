@@ -37,6 +37,23 @@ docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
 # expect: "audience":"aep-*,openchoreo-rca-agent"
 ```
 
+## Upgrading an existing deployment
+
+`setup-observability.sh` used to mount a receiver-specific provider
+descriptor (a `rca-agent-handoff-provider` ConfigMap plus a
+`handoff-provider` volume/volumeMount on the `ai-rca-agent` Deployment) so
+the SRE agent knew this repo's tool and header names. That mount is gone —
+the header names now travel as a generic `HANDOFF_HEADER_MAP` env value
+(step 3b) — and the script does not delete resources it no longer manages.
+On a cluster where an older version of the script already ran, remove the
+orphaned ConfigMap and Deployment wiring by hand, once:
+
+```bash
+kubectl delete configmap rca-agent-handoff-provider -n openchoreo-observability-plane --ignore-not-found
+kubectl edit deployment ai-rca-agent -n openchoreo-observability-plane
+# remove the handoff-provider volume and volumeMount
+```
+
 ## OpenChoreo side
 
 ```bash

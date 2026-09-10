@@ -216,3 +216,35 @@ test("without the header, resolveHandoff carries no action statuses at all", () 
   const resolved = resolveHandoff({}, ARGS, true);
   assert.equal(resolved.actionStatuses, undefined);
 });
+
+// The receiver-specific provider descriptor (provider.json) that used to let
+// drift between a header name and the SRE agent's config be caught here was
+// deleted; the drift surface moved to setup-observability.sh's
+// HANDOFF_HEADER_MAP default, which now hardcodes these same four header
+// names as plain shell text with nothing else checking them against this
+// module's constants — and a typo there silently drops classification and
+// adoption entirely (there is no argument fallback to catch it).
+const SETUP_OBSERVABILITY_SCRIPT = fileURLToPath(
+  new URL("../../../deployments/scripts/setup-observability.sh", import.meta.url),
+);
+
+function readHandoffHeaderMapDefault(path: string): Record<string, string> {
+  const source = readFileSync(path, "utf8");
+  const match = /HANDOFF_HEADER_MAP="\$\{HANDOFF_HEADER_MAP:-(\{.*\})\}"/.exec(source);
+  assert.ok(
+    match,
+    `could not find the HANDOFF_HEADER_MAP default in ${path} — ` +
+      "it may have moved or been reformatted; update this test's pattern to match",
+  );
+  const rawJson = (match?.[1] as string).replace(/\\"/g, '"');
+  return JSON.parse(rawJson) as Record<string, string>;
+}
+
+test("setup-observability.sh's HANDOFF_HEADER_MAP default is pinned to this module's header constants", () => {
+  const headerMap = readHandoffHeaderMapDefault(SETUP_OBSERVABILITY_SCRIPT);
+
+  assert.equal(headerMap.project?.toLowerCase(), HEADER_PROJECT);
+  assert.equal(headerMap.component?.toLowerCase(), HEADER_COMPONENT);
+  assert.equal(headerMap.signature?.toLowerCase(), HEADER_SIGNATURE);
+  assert.equal(headerMap.action_statuses?.toLowerCase(), HEADER_ACTION_STATUSES);
+});

@@ -49,7 +49,7 @@
 #   - ConfigMap patches (post-helm): observer-config auto-trigger keys
 #       (LOGS_ADAPTER_ENABLED / RCA_SERVICE_URL / ALERT_SUPPRESSION_WINDOW)
 #       and rca-agent-config handoff keys (HANDOFF_ENABLED / HANDOFF_API_URL /
-#       HANDOFF_PROVIDER_FILE). Patched after helm so chart
+#       HANDOFF_HEADER_MAP). Patched after helm so chart
 #       upgrades can't silently
 #       drop them on re-runs.
 #   - Cross-namespace HTTPRoute on the MAIN kgateway
@@ -102,13 +102,18 @@
 #                   Published: docker.io/tharindulak/sre-agent:fingerprint-fix
 #                   (linux/arm64, as every tag in this ladder is).
 #
-#                   `skill-loader` is the PREVIOUS tier and still works: it
-#                   reads the same descriptor and the same mounted skill, but
-#                   still derives its own classification/dispatch decision in
-#                   Python and reports `rationale`/`related_issues`. An OLDER
-#                   image talking to a newer AE is not the failure mode here —
-#                   it is a NEWER AE re-deriving a decision this image already
-#                   made, so the two can silently disagree on adoption.
+#                   `skill-loader` is the PREVIOUS tier. It expects tool and
+#                   header names read from a provider descriptor mounted at
+#                   /etc/rca-agent/handoff/provider.json — step 3d no longer
+#                   creates that mount (HANDOFF_HEADER_MAP replaced it), so
+#                   this tier's handoff stage now fails to start; RCA itself
+#                   (minus the handoff) is unaffected. When it could still
+#                   start, it derived its own classification/dispatch decision
+#                   in Python and reported `rationale`/`related_issues`. An
+#                   OLDER image talking to a newer AE was not the failure mode
+#                   there — it was a NEWER AE re-deriving a decision the image
+#                   already made, so the two could silently disagree on
+#                   adoption.
 #                   It is `handoff-provider` plus the prompt/skill split: the
 #                   agent's handoff prompt is now only a SKILL LOADER — the
 #                   run-time scope values and the skill catalog, nothing else.
@@ -120,12 +125,13 @@
 #                   receiver: no persona sentence, and no "GitHub" in the
 #                   structured-output schema either.
 #
-#                   `handoff-provider` is the tier before that and still works: it
-#                   reads the same descriptor and the same mounted skill, and its
-#                   prompt additionally carries a persona plus its own copy of
-#                   what the skill already says. Nothing breaks on it — the
-#                   duplication is simply back, and a skill edit no longer fully
-#                   determines the stage's behaviour.
+#                   `handoff-provider` is the tier before that, with the same
+#                   descriptor dependency as `skill-loader` — so its handoff
+#                   stage fails to start for the same reason. When it could
+#                   still start, its prompt additionally carried a persona
+#                   plus its own copy of what the skill already says, so the
+#                   duplication was back and a skill edit no longer fully
+#                   determined the stage's behaviour.
 #
 #                   Older tiers, kept for the record:
 #                   `recurrence` was the image for the handoff contract before
@@ -348,10 +354,11 @@ echo "1️⃣b RCA agent image + secret"
 # loader, the mounted skill is the whole playbook), the one-call handoff stage
 # (HANDOFF_ENABLED), the EXTERNAL_SKILLS_DIR loader that reads the AEP-mounted
 # coding-agent-handoff skill from step 3d, the configurable HANDOFF_MCP_PATH
-# (default /mcp), the recurrence contract (ADR-0021), the provider descriptor
-# (HANDOFF_PROVIDER_FILE) and the report sink — plus: classification and the
-# dispatch decision both moved to AE (this stage no longer re-derives either),
-# skill discovery by directory (a second mounted skill needs no image rebuild),
+# (default /mcp), the recurrence contract (ADR-0021), the generic header map
+# (HANDOFF_HEADER_MAP — no descriptor file to mount) and the report sink —
+# plus: classification and the dispatch decision both moved to AE (this stage
+# no longer re-derives either), skill discovery by directory (a second mounted
+# skill needs no image rebuild),
 # and a dedupe fingerprint hashed from raw captured logs instead of the
 # model's cited lines, so one repeated defect produces one issue, not one per
 # run. With this image, editing
@@ -878,6 +885,21 @@ echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 
 #
 # Only wired when HANDOFF_ENABLED=true — without the handoff stage the agent never
 # loads a skill, so there's nothing to mount.
+#
+# ⚠️  UPGRADING AN EXISTING DEPLOYMENT: an older version of this script created
+# a `rca-agent-handoff-provider` ConfigMap plus a `handoff-provider`
+# volume/volumeMount on the ai-rca-agent Deployment (the provider-descriptor
+# mount this step used to manage). This step no longer creates or updates
+# either — the header map (HANDOFF_HEADER_MAP, step 3b) replaced them — so on
+# a cluster where the old script already ran they are now ORPHANED: nothing
+# here deletes them, and they are harmless but stale. Clean them up by hand,
+# once, on such a cluster:
+#   kubectl delete configmap rca-agent-handoff-provider -n "$NS" --ignore-not-found
+#   kubectl edit deployment ai-rca-agent -n "$NS"   # remove the handoff-provider
+#                                                    # volume and volumeMount
+# (or apply an equivalent strategic-merge patch). Not run automatically here:
+# this script does not delete or patch away resources it does not itself own
+# the full lifecycle of.
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     echo ""
     echo "3️⃣d Handoff skills — one ConfigMap + mount per skill"
