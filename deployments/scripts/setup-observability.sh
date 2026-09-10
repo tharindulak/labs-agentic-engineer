@@ -239,8 +239,13 @@ NS="openchoreo-observability-plane"
 # agent reaches the docker-compose-hosted aep-mcp-server on the host.
 HANDOFF_ENABLED="${HANDOFF_ENABLED:-${AE_HANDOFF:-true}}"
 HANDOFF_API_URL="${HANDOFF_API_URL:-${AE_API_URL:-http://host.k3d.internal:3401}}"
-# Where the receiving platform's provider descriptor is mounted (step 3d).
-HANDOFF_PROVIDER_FILE="${HANDOFF_PROVIDER_FILE:-/etc/rca-agent/handoff/provider.json}"
+# What this agent's OWN vocabulary for a run's context maps onto, on the wire.
+# JSON object, field name -> header name; the field names are this agent's
+# (project, component, signature, action_statuses), the header names are
+# whatever the configured receiving platform expects. No file to mount: the
+# operator deploying AE alongside this agent sets the values that match AE's
+# own header constants (services/aep-mcp-server/src/handoffContext.ts).
+HANDOFF_HEADER_MAP="${HANDOFF_HEADER_MAP:-{\"project\":\"X-AEP-Incident-Project\",\"component\":\"X-AEP-Incident-Component\",\"signature\":\"X-AEP-Incident-Signature\",\"action_statuses\":\"X-AEP-Handoff-Action-Statuses\"}}"
 # Report publishing: the agent POSTs each completed report to a configured sink
 # and aep-api maps it onto its own row. REPORT_SINK_URL is the FULL endpoint —
 # the sink posts exactly there, it does not append a path — and is distinct from
@@ -710,8 +715,8 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #                              issues + duplicate coding-agent dispatches.
 #   rca-agent-config:
 #     HANDOFF_ENABLED          enables the RCA→platform handoff stage (file the issue)
-#     HANDOFF_PROVIDER_FILE    the platform's provider descriptor (names its tools
-#                              and arguments); the handoff refuses to run without it
+#     HANDOFF_HEADER_MAP       this agent's field names -> the platform's header
+#                              names (JSON object); no descriptor file to mount
 #     (Whether the filed issue is handed to the coding agent, vs. left as a
 #      ledger entry for a human to adopt, is AEP_HANDOFF_ADOPT on the
 #      aep-mcp-server deployment — see docker-compose.yml / helm values
@@ -738,10 +743,10 @@ kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 # on aep-mcp-server, not anything in this ConfigMap.
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
-        "{\"data\":{\"HANDOFF_ENABLED\":\"true\",\"HANDOFF_API_URL\":\"${HANDOFF_API_URL}\",\"HANDOFF_PROVIDER_FILE\":\"${HANDOFF_PROVIDER_FILE}\",\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\",\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"true\",\"AE_API_URL\":\"${HANDOFF_API_URL}\"}}"
+        "{\"data\":{\"HANDOFF_ENABLED\":\"true\",\"HANDOFF_API_URL\":\"${HANDOFF_API_URL}\",\"HANDOFF_HEADER_MAP\":$(printf '%s' "$HANDOFF_HEADER_MAP" | jq -Rs .),\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\",\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"true\",\"AE_API_URL\":\"${HANDOFF_API_URL}\"}}"
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/ai-rca-agent
     echo "   Handoff: enabled (mcp=${HANDOFF_API_URL})"
-    echo "   Provider descriptor: ${HANDOFF_PROVIDER_FILE}"
+    echo "   Header map: ${HANDOFF_HEADER_MAP}"
     echo "   Report sink: ${REPORT_SINK:-<none>} → ${REPORT_SINK_URL}"
 else
     echo "   Handoff: disabled (HANDOFF_ENABLED=false)"
@@ -891,7 +896,6 @@ if [ "$HANDOFF_ENABLED" = "true" ]; then
         echo "   skill. The agent's config validator refuses to start without"
         echo "   EXTERNAL_SKILLS_DIR, and an empty mount fails load_skills once per"
         echo "   incident — the report then records only that the stage failed."
-        echo "   Fatal here for the same reason a missing provider descriptor is."
         exit 1
     fi
 
@@ -959,46 +963,6 @@ spec:
             - name: EXTERNAL_SKILLS_DIR
               value: /etc/rca-agent/skills
 "
-    # The provider descriptor rides alongside the skill, for the same reason:
-    # both are the receiving platform's, both change without an SRE image
-    # rebuild, and the agent refuses to start the handoff without the
-    # descriptor — its header names are what let the agent's identity
-    # headers reach aep-mcp-server correctly — get one wrong and every
-    # incident falls back to whatever the model supplied.
-    PROVIDER_DESC="$SCRIPT_DIR/../../services/aep-mcp-server/handoff/provider.json"
-    if [ ! -f "$PROVIDER_DESC" ]; then
-        echo "❌ handoff provider descriptor not found at $PROVIDER_DESC"
-        echo "   HANDOFF_ENABLED is on, and the agent refuses to start the handoff"
-        echo "   without it — without it the agent cannot name its identity"
-        echo "   headers correctly (a dedupe key is still derived, just from"
-        echo "   whatever componentName the model supplied, not the intended"
-        echo "   identity source)."
-        exit 1
-    fi
-    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap rca-agent-handoff-provider \
-        --from-file=provider.json="$PROVIDER_DESC" \
-        --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
-    echo "✅ rca-agent-handoff-provider ConfigMap applied (from $PROVIDER_DESC)"
-
-    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment ai-rca-agent --type=strategic -p '
-spec:
-  template:
-    spec:
-      volumes:
-        - name: handoff-provider
-          configMap:
-            name: rca-agent-handoff-provider
-            items:
-              - key: provider.json
-                path: provider.json
-      containers:
-        - name: ai-rca-agent
-          volumeMounts:
-            - name: handoff-provider
-              mountPath: /etc/rca-agent/handoff
-              readOnly: true
-'
-    echo "✅ ai-rca-agent volume wired for the provider descriptor (/etc/rca-agent/handoff)"
     echo "✅ ai-rca-agent volumes/env wired for ${#HANDOFF_SKILL_NAMES[@]} skill(s) (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
     echo "   Edit a skill under services/aep-mcp-server/skills/, or add a sibling directory"
     echo "   holding its own SKILL.md, then re-run this script and restart the agent —"
