@@ -53,16 +53,20 @@ mechanism carries both incident identity and action-status facts, with no
 branch that treats one configured header differently from another.
 
 **The SRE-side handoff record is fully generic — no typed classification
-field survives.** `HandoffResult` (`src/models/rca_report.py`) holds exactly
-two things: `tool`, the name of the last tool call the handoff stage made,
-and `result`, that call's answer carried verbatim. `ToolCallRecorder`
-(`src/agent/middleware/tool_call_recorder.py`) is what populates it — it
-appends `{"tool": ..., "result": ...}` for every tool call the stage makes,
-in order, uninterpreted; nothing decides which call's answer matters, because
-the handoff skill's own constraint ("creating that issue is your only write")
-already guarantees the last call is the one that counts, so the caller reads
-`calls[-1]`. `HandoffResult.compose(outcome)` takes that one dict and does
-nothing to it beyond copying `tool` and `result` across. No
+field survives.** `HandoffResult` (`src/models/rca_report.py`) holds three
+fields, and no more. `tool`, the name of the last tool call the handoff stage
+made, and `result`, that call's answer carried verbatim, describe a completed
+run; `failure_reason` covers the other path — set only by
+`HandoffResult.failed()` when the stage crashed before it could file, and
+left absent on a completed run because the last tool call is itself the
+record of what happened. `ToolCallRecorder`
+(`src/agent/middleware/tool_call_recorder.py`) feeds the completed-run
+path — it appends `{"tool": ..., "result": ...}` for every tool call the
+stage makes, in order, uninterpreted; nothing decides which call's answer
+matters, because the handoff skill's own constraint ("creating that issue is
+your only write") already guarantees the last call is the one that counts, so
+the caller reads `calls[-1]`. `HandoffResult.compose(outcome)` takes that one
+dict and does nothing to it beyond copying `tool` and `result` across. No
 `HandoffClassification` enum, no `answer_fields` mapping, no `provider_facts`
 survive: if AE adds or renames a fact tomorrow, nothing in the SRE repo has to
 change to keep carrying it. The read side follows the same rule instead of
