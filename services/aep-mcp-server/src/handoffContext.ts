@@ -40,6 +40,16 @@
 export const HEADER_PROJECT = "x-aep-incident-project";
 export const HEADER_COMPONENT = "x-aep-incident-component";
 export const HEADER_SIGNATURE = "x-aep-incident-signature";
+/**
+ * Not identity, but travels the same way and for the same reason: the
+ * remediation agent's per-action status is a fact the calling PROCESS
+ * computed, and the receiver derives classification, adoption and dedupe from
+ * it — the same three things a re-read identity header could move (see the
+ * module doc above). A model that could restate it could move all three on
+ * the strength of a re-reading, so it rides the connection instead of the
+ * tool call.
+ */
+export const HEADER_ACTION_STATUSES = "x-aep-handoff-action-statuses";
 
 /**
  * Applied to every issue filed through this server.
@@ -71,6 +81,7 @@ export interface IncidentIdentity {
   project?: string;
   component?: string;
   signature?: string;
+  actionStatuses?: (string | null)[];
 }
 
 export interface ResolvedHandoff {
@@ -79,6 +90,7 @@ export interface ResolvedHandoff {
   dedupeKey?: string;
   labels: string[];
   adopt: boolean;
+  actionStatuses?: (string | null)[];
   /** Human-readable lines for the caller to log. Which path was taken, and any header it could not use. */
   notes: string[];
 }
@@ -119,6 +131,37 @@ const asIs = (trimmed: string): string => trimmed;
 const lower = (trimmed: string): string => trimmed.toLowerCase();
 
 /**
+ * The one identity-family header that is not a scalar. Parsed as JSON and
+ * validated shape-first (an array of string-or-null) rather than trusted,
+ * because it is caller-supplied and, unlike the others, structured — a
+ * malformed value here must degrade the same way a malformed scalar header
+ * does: dropped with a note, never thrown.
+ */
+function actionStatusesHeader(
+  headers: NodeJS.Dict<string | string[]>,
+  notes: string[],
+): (string | null)[] | undefined {
+  const raw = headers[HEADER_ACTION_STATUSES];
+  if (raw === undefined) return undefined;
+  if (Array.isArray(raw)) {
+    notes.push(`${HEADER_ACTION_STATUSES} arrived more than once and was ignored`);
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    notes.push(`${HEADER_ACTION_STATUSES} is not valid JSON and was ignored`);
+    return undefined;
+  }
+  if (!Array.isArray(parsed) || parsed.some((v) => typeof v !== "string" && v !== null)) {
+    notes.push(`${HEADER_ACTION_STATUSES} is not an array of strings/nulls and was ignored`);
+    return undefined;
+  }
+  return parsed as (string | null)[];
+}
+
+/**
  * Model-supplied tool arguments (unlike the identity headers, never checked
  * against `IDENTIFIER`) are interpolated verbatim into `notes` for logging.
  * Strip control characters — newlines above all — before that interpolation
@@ -140,9 +183,11 @@ export function readIncidentIdentity(headers: NodeJS.Dict<string | string[]>): {
   const project = single(headers, HEADER_PROJECT, IDENTIFIER, notes, asIs);
   const component = single(headers, HEADER_COMPONENT, IDENTIFIER, notes, asIs);
   const signature = single(headers, HEADER_SIGNATURE, SIGNATURE, notes, lower);
+  const actionStatuses = actionStatusesHeader(headers, notes);
   if (project !== undefined) identity.project = project;
   if (component !== undefined) identity.component = component;
   if (signature !== undefined) identity.signature = signature;
+  if (actionStatuses !== undefined) identity.actionStatuses = actionStatuses;
   return { identity, notes };
 }
 
@@ -171,6 +216,9 @@ export function resolveHandoff(
   }
 
   const resolved: ResolvedHandoff = { project, labels, adopt, notes };
+  if (identity.actionStatuses !== undefined) {
+    resolved.actionStatuses = identity.actionStatuses;
+  }
   if (componentName !== undefined) {
     resolved.componentName = componentName;
     resolved.dedupeKey = identity.signature

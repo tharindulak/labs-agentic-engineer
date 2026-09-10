@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   HANDOFF_LABELS,
+  HEADER_ACTION_STATUSES,
   HEADER_COMPONENT,
   HEADER_PROJECT,
   HEADER_SIGNATURE,
@@ -180,4 +181,38 @@ test("HANDOFF_LABELS is pinned, element for element and in order, to aep-api's l
   const labelSREAgent = readGoConstant(LABEL_SRE_AGENT_SOURCE, "LabelSREAgent");
 
   assert.deepEqual(HANDOFF_LABELS, [kindBug, labelSREAgent]);
+});
+
+test("action statuses travel as a header, not an argument the model can spell", () => {
+  const { identity, notes } = readIncidentIdentity({
+    [HEADER_ACTION_STATUSES]: JSON.stringify(["suggested", null, "revised"]),
+  });
+
+  assert.deepEqual(identity.actionStatuses, ["suggested", null, "revised"]);
+  assert.deepEqual(notes, []);
+
+  const resolved = resolveHandoff(identity, ARGS, true);
+  assert.deepEqual(resolved.actionStatuses, ["suggested", null, "revised"]);
+});
+
+test("a malformed action-statuses header is dropped with a note, not thrown", () => {
+  const cases = ["not json", "{}", JSON.stringify([1, 2]), JSON.stringify("suggested")];
+  for (const raw of cases) {
+    const { identity, notes } = readIncidentIdentity({ [HEADER_ACTION_STATUSES]: raw });
+    assert.equal(identity.actionStatuses, undefined);
+    assert.ok(notes.some((n) => n.includes(HEADER_ACTION_STATUSES)));
+  }
+});
+
+test("a repeated action-statuses header is rejected: one call, one answer", () => {
+  const { identity, notes } = readIncidentIdentity({
+    [HEADER_ACTION_STATUSES]: [JSON.stringify(["suggested"]), JSON.stringify(["revised"])],
+  });
+  assert.equal(identity.actionStatuses, undefined);
+  assert.ok(notes.some((n) => n.includes(HEADER_ACTION_STATUSES)));
+});
+
+test("without the header, resolveHandoff carries no action statuses at all", () => {
+  const resolved = resolveHandoff({}, ARGS, true);
+  assert.equal(resolved.actionStatuses, undefined);
 });
