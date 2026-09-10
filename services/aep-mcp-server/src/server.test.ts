@@ -146,3 +146,51 @@ test("no note is logged when the search project already matches the incident hea
     mock.restoreAll();
   }
 });
+
+test("the model is never shown actionStatuses either", () => {
+  const schema = toolSchema("ae_create_issue");
+  assert.equal("actionStatuses" in schema, false);
+});
+
+test("action statuses reach aep-api from the header, never from the call", async () => {
+  const { identity } = readIncidentIdentity({
+    [HEADER_PROJECT]: "myproj",
+    [HEADER_COMPONENT]: "service1",
+  });
+  identity.actionStatuses = ["suggested", null];
+  const seen: unknown[] = [];
+  const server = createAepMcpServer(
+    { baseUrl: "http://aep-api", bearer: "Bearer t" },
+    { identity, adopt: true },
+    async (_opts, project, req) => {
+      seen.push(req);
+      return { number: 1, url: "u", nodeId: "n" };
+    },
+  );
+  const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+  const handler = registered["ae_create_issue"]!.handler;
+
+  // A caller that tried to pass actionStatuses anyway has nowhere to put it —
+  // the schema below never declares it, so this call has no such field at all.
+  await handler({ project: "myproj", title: "t", body: "b" });
+
+  assert.deepEqual((seen[0] as { actionStatuses?: unknown }).actionStatuses, ["suggested", null]);
+});
+
+test("no action-statuses header means the argument is omitted, not sent empty", async () => {
+  const seen: unknown[] = [];
+  const server = createAepMcpServer(
+    { baseUrl: "http://aep-api", bearer: "Bearer t" },
+    { identity: {}, adopt: true },
+    async (_opts, project, req) => {
+      seen.push(req);
+      return { number: 1, url: "u", nodeId: "n" };
+    },
+  );
+  const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+  const handler = registered["ae_create_issue"]!.handler;
+
+  await handler({ project: "p", title: "t", body: "b" });
+
+  assert.equal("actionStatuses" in (seen[0] as object), false);
+});
