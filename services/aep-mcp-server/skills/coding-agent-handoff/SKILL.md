@@ -114,6 +114,21 @@ constraint every time. Everything under the headings comes from the RCA report.
   shown THAT it was handled and never the ReleaseBinding change itself, because
   the coding agent can only edit the repository — so ask for code.
 
+### What you see and must not carry forward
+
+The report you receive is complete, including two things that are never
+material to the code change you are filing:
+
+- **`observability_recommendations`.** Advice for making FUTURE analyses
+  easier ("add a metric", "raise the log level") — never this incident's fix.
+  Do not turn one into an issue heading or a bullet in the body.
+- **The `change` patch on an already-`revised` action.** You may say THAT
+  configuration already handled part of the incident (see "Mention each
+  `revised` action" above); never quote or describe the ReleaseBinding patch
+  itself. You can only edit the repository, so a concrete config patch in
+  front of you is an invitation to open a wrong pull request expressing
+  config as code.
+
 ## DEDUPLICATION
 
 Deduplication is settled server-side. AE derives a stable key from the incident

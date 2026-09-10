@@ -13,10 +13,10 @@ does not inject them into AEP's coding/design agents.
 `coding-agent-handoff/SKILL.md` tells the SRE agent's handoff sub-agent how to
 search for related GitHub issues and file the one issue that hands a code-level
 root cause over, with RCA context and cross-links. It deliberately does NOT
-classify the incident — code-level / config-level / mixed is derived in the agent
-from the remediation agent's action statuses before the stage runs, so the model
-is never asked to restate data it was handed, nor to re-decide whether it belongs
-here. Deduplication is likewise not the model's: AEP derives the key
+classify the incident — code-level / config-level / mixed is derived by AEP from
+the remediation agent's action statuses, which travel as a header the model
+never sees (`x-aep-handoff-action-statuses`), so the model is never asked to
+restate data it was handed, nor to re-decide whether it belongs here. Deduplication is likewise not the model's: AEP derives the key
 server-side, so the skill's rule is to file and let the receiver decide what
 happens next. Filing the issue IS the handoff, but adoption, suppression,
 recurrence reopening and any later issue activity are AE's code paths, not the
