@@ -50,7 +50,7 @@ import (
 // because the criterion may be the thing that is wrong — and a requirement
 // nobody is shown is a requirement nobody can correct. The coding agent has the
 // repository and the spec; it decides, and closing as not planned is a first
-// class answer (ADR-0023).
+// class answer (ADR-0034).
 //
 // The decision is read from FIELDS, not from prose. It used to be recovered from
 // `diagnosis` by regex, because that free-text blob was all the SRE agent sent;

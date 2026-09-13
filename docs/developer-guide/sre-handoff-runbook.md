@@ -124,7 +124,7 @@ case it waits for a human (below).
 
 A merged fix closes the issue, which is the platform ASSERTING the incident is
 over. When the same error signature recurs, that assertion was wrong, and the
-platform retracts it rather than starting a fresh thread (ADR-0021).
+platform retracts it rather than starting a fresh thread (ADR-0032).
 
 What you will see instead of a new issue:
 
@@ -177,8 +177,8 @@ reasoning.
 
 If you see an incident recur with no issue filed, look for a closed `not_planned`
 issue carrying the same `dedupe:` label — that is the platform pointing at an
-answer somebody already gave. See ADR-0023.
+answer somebody already gave. See ADR-0034.
 
 Holding the merge for a human was the earlier design and is **retired**: in a
 project with no test harness the confidence bar can never be met, so it held
-every fix and parked every build. See ADR-0022.
+every fix and parked every build. See ADR-0033.

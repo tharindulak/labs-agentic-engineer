@@ -49,7 +49,7 @@ action, and the costs are asymmetric: an unfiled defect is dropped for good, an 
 closed in minutes. Nor is a spec conflict grounds to withhold: "this would break an acceptance
 criterion" is stated IN the issue, because the criterion may be what is wrong and a requirement
 nobody is shown is a requirement nobody can correct. The coding agent has the repository and
-decides; `not_planned` is a first-class answer (ADR-0023).
+decides; `not_planned` is a first-class answer (ADR-0034).
 
 The rule lives here because this is the only path AEP sees every report on and the handoff cannot
 skip it. The skill tells the handoff that the classification is *settled* before its stage runs;

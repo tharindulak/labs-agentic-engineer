@@ -25,7 +25,7 @@ import (
 
 // RunPhase14RcaReportRecurrence adds rca_agent_reports.recurrence — which
 // attempt an incident is on, so the console's alert detail can say "attempt 3"
-// rather than showing a reopened incident as if it were a fresh one (ADR-0021).
+// rather than showing a reopened incident as if it were a fresh one (ADR-0032).
 //
 // It needs its own phase because phase10 CREATEs the table behind a hasTable
 // guard: on any database that already has rca_agent_reports, phase10 is a no-op

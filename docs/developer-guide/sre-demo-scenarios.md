@@ -5,7 +5,7 @@ running service becomes an alert, an RCA, a GitHub issue, and a coding-agent PR.
 
 - **How to wire the loop**: [`sre-handoff-runbook.md`](./sre-handoff-runbook.md)
 - **What the handoff decides, and how**: `services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md`
-- **Why filing an issue dispatches the agent**: [`ADR-0017`](../decisions/ADR-0017-filing-an-issue-is-the-dispatch.md)
+- **Why filing an issue dispatches the agent**: [`ADR-0031`](../decisions/ADR-0031-filing-an-issue-is-the-dispatch.md)
 
 ---
 
@@ -1250,10 +1250,10 @@ shipped behaviour rather than failure. Recognise them before debugging them.
   the handoff declined.
 - **Issue closed as `not_planned`** — the coding agent examined the work and
   concluded no code change is possible, usually because the spec forbids the only
-  remedy. The cycle ends cleanly (`cycleNoWork`, ADR-0023), the run settles
+  remedy. The cycle ends cleanly (`cycleNoWork`, ADR-0034), the run settles
   `succeeded` with no pull request, and the verdict suppresses re-filing on that
   dedupe key. This is the correct ending for a scenario that broke the rule at the
   top of this page.
 - **Merged, issue left OPEN** — the fix shipped without a high-confidence
-  declaration, so its issues stay open as an unverified fix (ADR-0022). Add
+  declaration, so its issues stay open as an unverified fix (ADR-0033). Add
   `Confidence: high` to close them on merge.

@@ -376,7 +376,7 @@ issue body, encoding its structured facts. Nothing parses an issue body for
 structure any more: **a Task body is prose**, and the platform's whole structure
 is labels plus milestone membership. The one deliberate exception is the
 **Recurrence section**, which the platform both writes and counts — see below,
-and see the caveat recorded in ADR-0021.
+and see the caveat recorded in ADR-0032.
 _Avoid_: reviving a body block as platform-readable structure.
 
 **Lineage**:
@@ -520,7 +520,7 @@ It could not survive a real repository: the confidence bar it read requires a
 regression test, and a project with no test harness cannot ever satisfy that — so
 it held every fix, discriminated between none of them, and parked the run each
 time. Replaced by the **Unverified fix**, which moves the safety from a human in
-front of the merge to an open issue behind it (ADR-0022).
+front of the merge to an open issue behind it (ADR-0033).
 _Avoid_: reviving a gate whose criteria a project can be structurally unable to
 meet.
 

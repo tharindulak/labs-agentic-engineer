@@ -74,7 +74,7 @@ const (
 	// cycleNoWork — the cycle's work disappeared without a merge: the agent
 	// examined the issues and closed them out as needing no code change. NOT a
 	// failure and NOT agent death, so the boundary simply re-polls, finds an
-	// empty working set and settles the run the ordinary way (ADR-0023).
+	// empty working set and settles the run the ordinary way (ADR-0034).
 	cycleNoWork
 )
 

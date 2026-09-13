@@ -28,7 +28,7 @@ import (
 
 // A cycle can end because its work was RESOLVED rather than merged: the coding
 // agent read the acceptance criteria, concluded no code change could help, and
-// closed the issue as `not_planned` (ADR-0023).
+// closed the issue as `not_planned` (ADR-0034).
 //
 // Before this, that agent was indistinguishable from a dead one. It exited
 // having done the right thing, the cycle sat until cycleLandingTimeout, the

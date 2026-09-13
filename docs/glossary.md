@@ -518,7 +518,7 @@ the milestone: arming IS the human's act, so nothing platform-side writes that
 label on an existing issue. An issue being filed through `create-issue` is
 adopted AS it is created — the milestone and `aep` ride the one create call —
 which is the default there: filing an issue through the API dispatches it unless
-the caller opts out. See ADR-0017.
+the caller opts out. See ADR-0031.
 
 Neither route stamps a **kind**. An armed issue carrying none reads as a `bug` to
 every working-set predicate, which is what an unclassified hand-over means.
@@ -537,7 +537,7 @@ settled by now) and adopted again. One incident, one thread, however many
 attempts. Not bounded by time. A human's `not_planned` close never recurs.
 
 **Escalation** past attempt 3 is loud and nothing more: the recurrence is
-reported on the issue and the console, and worked anyway. See ADR-0021.
+reported on the issue and the console, and worked anyway. See ADR-0032.
 
 ### Confidence declaration
 The `Confidence: high|low` line a coding agent puts in its pull request body,
@@ -567,7 +567,7 @@ closes it if the version moves on first.
 
 **Merge hold** is retired. Holding the merge could not survive a project with no
 test harness, where the confidence bar can never be met and every fix was held.
-See ADR-0022.
+See ADR-0033.
 
 ### Terminal reason
 Why a non-succeeded run stopped. Each value names exactly ONE failure class —

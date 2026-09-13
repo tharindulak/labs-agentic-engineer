@@ -109,7 +109,7 @@ func TestAppendRecurrenceSectionRoundTrips(t *testing.T) {
 // whether an incident fix auto-merges, and a recurrence deliberately does NOT
 // override that declaration — so this section is the only thing telling the
 // agent an earlier fix already failed. If it stops saying so, the loop quietly
-// loses its ability to learn (ADR-0021).
+// loses its ability to learn (ADR-0032).
 func TestAppendRecurrenceSectionTellsTheAgentTheLastFixFailed(t *testing.T) {
 	got := appendRecurrenceSection("original", 2, "the same stack trace")
 	for _, want := range []string{

@@ -26,7 +26,7 @@ import (
 )
 
 // The confidence declaration no longer decides WHETHER an incident fix merges —
-// it decides whether the issue behind it closes (ADR-0022). Holding the merge
+// it decides whether the issue behind it closes (ADR-0033). Holding the merge
 // was tried and withdrawn: it demanded a regression test in a repo with no test
 // harness, so it fired on every fix and stopped discriminating.
 

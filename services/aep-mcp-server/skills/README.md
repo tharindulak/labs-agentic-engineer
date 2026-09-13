@@ -52,7 +52,7 @@ anything in AEP's wider tree — an ADR number, a doc path, a package README —
 pointer the agent cannot resolve and pays tokens to carry. Provenance for the skill's rules
 belongs here instead:
 
-- **`not_planned` is a first-class outcome** — [ADR-0023](../../../docs/decisions/ADR-0023-a-cycle-can-end-because-no-code-change-is-possible.md).
+- **`not_planned` is a first-class outcome** — [ADR-0034](../../../docs/decisions/ADR-0034-a-cycle-can-end-because-no-code-change-is-possible.md).
   A cycle may end because no code change is possible; the skill states the rule
   without citing it.
 

@@ -20,7 +20,7 @@ that path, the descriptor had nothing left to describe.
 Incident identity (project, component, error signature) had already solved
 the identical problem: a fact the calling process computes, that the model
 must not be trusted to restate, carried as a per-run header instead of an
-argument (ADR-0025). Action statuses are the same shape of fact — computed
+argument (ADR-0035). Action statuses are the same shape of fact — computed
 deterministically by the remediation stage, never the model's — and belong on
 the same path.
 
@@ -92,12 +92,12 @@ an extra section is a paragraph the coding agent skips past, while there is
 no equivalent cheap recovery for a Python filter that had wrongly withheld
 information a fix actually needed. The same asymmetry already justified
 Option 1's earlier acceptance of soft recommended actions reaching the coding
-agent (ADR-0025's "known gaps" section); this extends the same reasoning to
+agent (ADR-0035's "known gaps" section); this extends the same reasoning to
 content-shaping.
 
 ## Known gaps, carried forward
 
-This design does not close the gaps ADR-0025 already recorded (the
+This design does not close the gaps ADR-0035 already recorded (the
 not-planned verdict having nowhere to land on the report row, `escalate.go`
 as a quiet backstop, `splitActions`' blind spot on an absent status) — none of
 them are touched by this change, so they remain open exactly as recorded

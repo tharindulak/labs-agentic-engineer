@@ -23,7 +23,7 @@ import (
 )
 
 // Recurrence: the same incident happening again after the platform believed it
-// had fixed it. See ADR-0021 — a merged fix is not a resolved incident.
+// had fixed it. See ADR-0032 — a merged fix is not a resolved incident.
 //
 // The decisions this file encodes, all of them deliberate:
 //
@@ -67,7 +67,7 @@ const (
 // it is a deliberate, bounded exception to `delivery/labels.go`'s rule that
 // bodies are prose: the platform both writes and reads this section, and no
 // other decision depends on it. A label is the fallback the moment a second one
-// does (ADR-0021).
+// does (ADR-0032).
 var recurrenceHeadingRE = regexp.MustCompile(`(?m)^##[ \t]+Recurrence[ \t]+\d+[ \t]*$`)
 
 // attemptNumber reports which attempt an issue is on: 1 before any recurrence,
@@ -101,7 +101,7 @@ func isRecurrenceOf(iss IssueInfo) bool {
 		return strings.EqualFold(iss.StateReason, stateReasonCompleted)
 	}
 	// OPEN, and the third state this predicate has to know about: an unverified
-	// fix (ADR-0022).
+	// fix (ADR-0033).
 	return IsUnverifiedFix(iss)
 }
 
@@ -153,7 +153,7 @@ func hasLabelFold(labels []string, want string) bool {
 //
 // It deliberately does not distinguish an agent's `not_planned` from a human's.
 // Both are a decision by someone who looked, and the platform overrules neither
-// (ADR-0023).
+// (ADR-0034).
 func IsNoChangeVerdict(iss IssueInfo) bool {
 	return strings.EqualFold(iss.State, "closed") &&
 		strings.EqualFold(iss.StateReason, stateReasonNotPlanned) &&

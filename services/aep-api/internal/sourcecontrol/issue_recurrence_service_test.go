@@ -197,7 +197,7 @@ func TestCreateIssue_NotPlannedIsNeverReopened(t *testing.T) {
 	// It used to file a fresh issue here. It no longer does: `not_planned` is
 	// somebody's decision that this needs no work, and asking again by filing a
 	// duplicate is how one fixture alert became an unbounded series of coding
-	// cycles (ADR-0023). The decision is returned instead.
+	// cycles (ADR-0034). The decision is returned instead.
 	if !got.Suppressed || got.Number != n {
 		t.Fatalf("got %+v, want suppression pointing at the decided issue %d", got, n)
 	}
@@ -320,7 +320,7 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
-// --- the unverified fix (ADR-0022) ------------------------------------------
+// --- the unverified fix (ADR-0033) ------------------------------------------
 //
 // A low-confidence fix merges and its issue is left OPEN with `aep` removed:
 // shipped, recorded, worked by nobody. When the incident comes back, that issue
@@ -422,7 +422,7 @@ func TestIsUnverifiedFix(t *testing.T) {
 	}
 }
 
-// --- the no-change verdict (ADR-0023) ---------------------------------------
+// --- the no-change verdict (ADR-0034) ---------------------------------------
 //
 // Some incidents cannot be fixed in code: the behaviour being reported is what
 // the acceptance criteria REQUIRE. A coding agent that works that out closes the
