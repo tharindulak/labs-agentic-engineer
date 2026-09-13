@@ -17,9 +17,11 @@ the issue, and the `componentName` you pass.
 
 ## WHY YOU ARE HERE
 
-The stage that runs you already classified this incident as needing code —
-`code_level` (configuration addressed none of it) or `mixed` (some of it).
-It comes from the remediation agent's verdict on each action, in the `status`:
+Every RCA report with an identified root cause reaches this stage — filing is
+unconditional, never gated on classification. AE derives the classification
+(`code_level`, `config_level`, `mixed`, or `none`) from the remediation
+agent's verdict on each action, in the `status`, and answers it back on the
+create call's response — after you file, never before:
 
 | `status` | What it means | What it is to you |
 |---|---|---|
@@ -27,9 +29,12 @@ It comes from the remediation agent's verdict on each action, in the `status`:
 | `suggested` | remediation could not express it as config | the code-level work |
 | absent | the remediation agent never ran at all | write from the root cause alone |
 
-The classification is settled. So is the worth of the fix, which the coding agent
-settles with the repository and the specification in front of it — closing an
-issue as not planned with its reasoning is a first-class outcome.
+The classification is not yours to compute or predict. Even a report
+remediation fully resolved through configuration still reaches you and still
+gets filed — AE answers that one `config_level`, a ledger entry it does not
+dispatch. So is the worth of the fix, which the coding agent settles with the
+repository and the specification in front of it — closing an issue as not
+planned with its reasoning is a first-class outcome.
 
 **Any code this report suspects is handed over.** A low-confidence root cause
 carrying a code-level action is still a code-level action, never a reason to
