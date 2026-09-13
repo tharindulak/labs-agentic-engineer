@@ -57,8 +57,6 @@ you edit a mermaid block, re-export — see [§8](#8-regenerating-the-png-export
 
 ### 2.1 Topology — who talks to whom, and over which trust boundary
 
-📎 PNG: [`images/sre-handoff-topology.png`](./images/sre-handoff-topology.png)
-
 ```mermaid
 flowchart TB
   subgraph K3D["k3d cluster — OpenChoreo observability plane"]
@@ -109,8 +107,6 @@ Two facts this diagram is the whole point of:
    the request.
 
 ### 2.2 The handoff, end to end
-
-📎 PNG: [`images/sre-handoff-sequence.png`](./images/sre-handoff-sequence.png)
 
 ```mermaid
 sequenceDiagram
@@ -183,8 +179,6 @@ This split is the single highest-value thing to review. `handoff_logic.py`
 exists precisely so that the invariants are structural rather than prompt
 instructions an off-prompt response can skip.
 
-📎 PNG: [`images/sre-handoff-guardrails.png`](./images/sre-handoff-guardrails.png)
-
 ```mermaid
 flowchart TD
   A["recommended_actions<br/>from remediation"] --> B{"classify_handoff_shortcut<br/>(pure code)"}
@@ -228,8 +222,6 @@ and is the code the only thing stopping it?* Every one of those wrappers exists
 because a live run got it wrong — the git history is the evidence trail.
 
 ### 2.4 Config and skill delivery (the part that silently breaks)
-
-📎 PNG: [`images/sre-handoff-skill-delivery.png`](./images/sre-handoff-skill-delivery.png)
 
 ```mermaid
 flowchart LR

@@ -15,8 +15,6 @@ Companions: [`sre-handoff-runbook.md`](./sre-handoff-runbook.md) (how to run it)
 
 ## 1. Trust zones
 
-📎 PNG: [`images/sre-handoff-trust-zones.png`](./images/sre-handoff-trust-zones.png)
-
 ```mermaid
 flowchart TB
   subgraph Z1["Zone 1 — OpenChoreo observability plane · holds NO GitHub credential"]
@@ -68,8 +66,6 @@ document implies is the **last** zone — see §3 and §4.
 There are **three separate authentication concerns**, and conflating them is the
 usual source of confusion: who may call the SRE agent (A), how the SRE agent
 proves *its own* identity (B), and how AEP verifies that proof (C).
-
-📎 PNG: [`images/sre-handoff-auth.png`](./images/sre-handoff-auth.png)
 
 ```mermaid
 sequenceDiagram
@@ -137,8 +133,6 @@ path. One line in `edge/surfaces.go` wraps the whole surface:
 ```go
 mux.Handle("/api/", jwt(ensureOrg(stampGateMode(apiV1))))
 ```
-
-📎 PNG: [`images/sre-handoff-ae-auth-chain.png`](./images/sre-handoff-ae-auth-chain.png)
 
 ```mermaid
 flowchart LR
