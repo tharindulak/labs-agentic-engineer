@@ -54,18 +54,34 @@ export function countUnseen(items: AttentionIssue[], seenKeys: ReadonlySet<strin
   return items.filter((item) => !seenKeys.has(attentionKey(item))).length;
 }
 
+// Same members, not merely the same count — a replace can swap one key for
+// another and leave the size untouched, so a size check would miss it.
+function sameKeys(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  return a.size === b.size && [...a].every((key) => b.has(key));
+}
+
+// The seen set is exactly "the keys that were on screen the last time the
+// user looked" — a replace, not a union. A union would grow in localStorage
+// forever, and (the reason the set exists at all) would keep an issue silent
+// when it clears an attention state and later re-enters the SAME one: the
+// stale key would still be there. Pruning happens here, on the user's own
+// act of looking, rather than reactively on `items` — `items` goes empty on
+// every refetch blip, and pruning on that would keep re-announcing events
+// the user has already seen.
+export function nextSeenKeys(items: AttentionIssue[]): Set<string> {
+  return new Set(items.map(attentionKey));
+}
+
 export function useAttentionUnread(items: AttentionIssue[]) {
   const [seenKeys, setSeenKeys] = useState<Set<string>>(readSeenKeys);
 
   const unreadCount = useMemo(() => countUnseen(items, seenKeys), [items, seenKeys]);
 
   const markAllSeen = useCallback(() => {
-    const next = new Set(seenKeys);
-    for (const item of items) next.add(attentionKey(item));
-    if (next.size !== seenKeys.size) {
-      writeSeenKeys(next);
-      setSeenKeys(next);
-    }
+    const next = nextSeenKeys(items);
+    if (sameKeys(next, seenKeys)) return;
+    writeSeenKeys(next);
+    setSeenKeys(next);
   }, [items, seenKeys]);
 
   return { unreadCount, markAllSeen };

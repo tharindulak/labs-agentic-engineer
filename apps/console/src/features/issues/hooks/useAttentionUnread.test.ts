@@ -16,9 +16,14 @@
  * under the License.
  */
 
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+// jsdom for the hook cases below: `useAttentionUnread` reads and writes the
+// seen set through localStorage. The pure helpers need nothing.
+
+import { act, renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { AttentionIssue } from "../api/queries";
-import { attentionKey, countUnseen } from "./useAttentionUnread";
+import { attentionKey, countUnseen, useAttentionUnread } from "./useAttentionUnread";
 
 const item = (over: Partial<AttentionIssue> = {}): AttentionIssue => ({
   project: "demo-shop",
@@ -61,7 +66,73 @@ describe("countUnseen", () => {
     expect(countUnseen(recurred, resolved)).toBe(1);
   });
 
+  it("keeps an unchanged item seen when it reappears identically", () => {
+    const seen = new Set([attentionKey(item({ number: 1, reason: "unverified_fix" }))]);
+    expect(countUnseen([item({ number: 1, reason: "unverified_fix" })], seen)).toBe(0);
+  });
+
   it("returns 0 for an empty list", () => {
     expect(countUnseen([], new Set())).toBe(0);
+  });
+});
+
+const SEEN_KEYS_STORAGE_KEY = "aep:issues:seenKeys";
+
+function storedKeys(): string[] {
+  return JSON.parse(localStorage.getItem(SEEN_KEYS_STORAGE_KEY) ?? "[]") as string[];
+}
+
+describe("useAttentionUnread", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("clears the badge for everything on screen when the bell is opened", () => {
+    const items = [item({ number: 1 }), item({ number: 2 })];
+    const { result } = renderHook(() => useAttentionUnread(items));
+
+    expect(result.current.unreadCount).toBe(2);
+    act(() => result.current.markAllSeen());
+    expect(result.current.unreadCount).toBe(0);
+  });
+
+  it("re-badges an issue that re-enters the SAME reason it was seen under", () => {
+    const a = item({ number: 1, reason: "unverified_fix" });
+    const { result, rerender } = renderHook(
+      ({ items }: { items: AttentionIssue[] }) => useAttentionUnread(items),
+      { initialProps: { items: [a] } },
+    );
+
+    // The user opens the bell: A is seen.
+    act(() => result.current.markAllSeen());
+    expect(result.current.unreadCount).toBe(0);
+
+    // A is adopted and closed — it leaves the attention list. The user opens
+    // the bell again and finds it empty, which is what prunes A's key.
+    rerender({ items: [] });
+    act(() => result.current.markAllSeen());
+    expect(storedKeys()).toEqual([]);
+
+    // The same incident recurs through the same failure mode: same project,
+    // same issue number, same reason. That is news again, not old news.
+    rerender({ items: [a] });
+    expect(result.current.unreadCount).toBe(1);
+  });
+
+  it("replaces the stored seen set rather than growing it forever", () => {
+    const { result, rerender } = renderHook(
+      ({ items }: { items: AttentionIssue[] }) => useAttentionUnread(items),
+      { initialProps: { items: [item({ number: 1 })] } },
+    );
+    act(() => result.current.markAllSeen());
+    expect(storedKeys()).toEqual([attentionKey(item({ number: 1 }))]);
+
+    // One issue swapped for another: the new set is the SAME SIZE as the old
+    // but has different members, so a size-only guard would skip the write
+    // and leave issue 1's key stranded in storage.
+    rerender({ items: [item({ number: 2 })] });
+    act(() => result.current.markAllSeen());
+
+    expect(storedKeys()).toEqual([attentionKey(item({ number: 2 }))]);
   });
 });
