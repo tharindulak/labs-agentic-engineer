@@ -1,6 +1,11 @@
 # ADR-0008: Console gains an Alerts surface — non-goal narrowed, IA extended
 
-- **Status:** Accepted
+- **Status:** Accepted — the bell's half of "two entry points" superseded
+  2026-09-16 by
+  [ADR-0032](ADR-0032-the-bell-rings-for-attention-not-for-every-report.md):
+  the bell now carries issue attention events, not every RCA report. The
+  left-nav section, the read-only stance and the non-goal narrowing below are
+  unchanged.
 - **Date:** 2026-07-09 (grilling of the RCA-agent alert notification
   features, [#154](https://github.com/wso2/labs-agentic-engineer/issues/154),
   [#155](https://github.com/wso2/labs-agentic-engineer/issues/155))

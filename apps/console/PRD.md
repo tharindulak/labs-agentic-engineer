@@ -85,8 +85,10 @@ Approved at section level; per-section detail is defined feature-by-feature.
   - **Deployments** — dev environment state and URLs.
   - **Validations** — the runs checking a build against the spec's validation
     criteria.
-  - **Issues** — issues the SRE agent raises against the running project
-    (placeholder until its feature lands).
+  - **Issues** — the issues the SRE agent has filed against the running
+    project, listed live from GitHub (the `sre-agent` label), each row opening
+    the issue itself. The ones needing a human also reach the top-nav bell
+    (ADR-0032).
 - **Admin** — agent customization (instructions, skills). Architect/SRE only.
 
 ## Feature inventory
@@ -96,6 +98,19 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Issues, and a bell that rings only for a person — the project's **Issues**
+  section stops being a placeholder: it lists the issues the SRE agent filed
+  (`sre-agent` label, read live from GitHub), each row opening the issue
+  itself. The top-nav bell stops mirroring every RCA report and carries
+  exactly the three issue-lifecycle events that want a human — an
+  **unverified fix**, a **no-change verdict**, an **escalated recurrence** —
+  counted per issue *and reason*, so the same issue re-entering an attention
+  state is news again. The dedicated **Alerts** section is untouched and
+  still shows every report
+  ([ADR-0032](design/decisions/ADR-0032-the-bell-rings-for-attention-not-for-every-report.md)) —
+  fills the placeholder from
+  [#173](https://github.com/wso2/labs-agentic-engineer/issues/173)
+  (contract: `IssueInfo.StateReason` + `IssueInfo.AttentionReason`, additive)
 - Build asks in a dialog — one click, one surface, never a drawer for some
   projects and a modal for the rest. An open dependency opens **Resolve
   dependencies** (the names, and one **Resolve** that runs the guided flow over
@@ -432,7 +447,8 @@ here: they're the open `console` + `feature` issues.
   (org-wide, read-only, client-tracked unread state) —
   [#154](https://github.com/wso2/labs-agentic-engineer/issues/154)
   (BE handshake: [#156](https://github.com/wso2/labs-agentic-engineer/issues/156),
-  ADR-0008)
+  ADR-0008; the bell's contents were later narrowed to issue attention
+  events — see the Issues entry above and ADR-0032)
 - Alerts — dedicated left-nav section (cursor-paginated list + per-alert
   Stepper progress view: Alert Received / Issue Created / Coding Handover
   / Verify Fix) —

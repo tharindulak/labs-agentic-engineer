@@ -65,7 +65,8 @@
   and nowhere else.
 - The "not looking" surface is the overview's Build leg (`Build failed ·
   <what>`); the backend also emits a `run_failed` activity event so a feed
-  panel, if one returns, is fed. The bell stays RCA-only (ADR-0008).
+  panel, if one returns, is fed. A failed run does not reach the bell: the
+  bell carries issue attention events only (ADR-0032).
 - Live-verified 2026-09-11 on the local plane with the `sendgrid` stub: one
   attempt (not three — the schema refusal is now classified permanent),
   `Failed · Dependency could not be provisioned` on the ledger and header, the

@@ -1219,12 +1219,14 @@ answers *"has anything moved since we built?"*, which is a different question.
 ## Notifications
 
 **One bell, for both.** The global `NotificationBell` already sits in the header on every page and
-already carries the SRE agent's RCA reports. It also carries **the agent asking for input** —
-design-time questions, dependency declarations, anything blocked on the user. Two bells would be
-worse than one mixed list, and this is the only surface visible from outside the spec view.
+already carries **the issues that want a human** — an unverified fix, a no-change verdict, an
+escalated recurrence (ADR-0032; every RCA report stays on the Alerts section, not the bell). It
+also carries **the agent asking for input** — design-time questions, dependency declarations,
+anything blocked on the user. Two bells would be worse than one mixed list, and this is the only
+surface visible from outside the spec view.
 
-**Outstanding, not unread.** Alerts track unread client-side, which is right for a report you have
-seen. It is wrong here: glancing at a request does not answer it. A request for input is
+**Outstanding, not unread.** The bell tracks seen client-side, which is right for an event you have
+looked at. It is wrong here: glancing at a request does not answer it. A request for input is
 **outstanding until the thing is done** — an unanswered question form, an undeclared dependency —
 which the platform can derive. It clears when the user acts, never when they look.
 
@@ -1305,8 +1307,10 @@ without saying how to fill it, so it conforms as written
 **Retired from these strings**: *published* / *publish the plan* / *the published design* (there is
 no publish step — Build is the act), *plan* (not a term in this file), *AEP*.
 
-**Not an empty state:** *"Issues is on its way"* — a feature that does not exist yet is a different
-thing from a surface with nothing in it, and reads differently on purpose.
+**Not an empty state:** a *"… is on its way"* card — a feature that does not exist yet is a
+different thing from a surface with nothing in it, and reads differently on purpose. Issues was the
+last of these; now that it lists real issues, a project with none reads *No issues yet* — an empty
+state, in the ordinary voice.
 
 Ghost card lines on the overview (*Nothing built yet*, *Nothing deployed yet*) are the same voice at
 card size — see **The project overview**.
