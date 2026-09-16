@@ -19,30 +19,31 @@
 import {
   Badge,
   Box,
-  Button,
   IconButton,
   NotificationPanel,
   Tooltip,
   Typography,
-  formatRelativeTime,
   useAppShell,
 } from "@wso2/oxygen-ui";
 import { Bell } from "@wso2/oxygen-ui-icons-react";
-import { useNavigate } from "@tanstack/react-router";
-import { useRecentAlerts } from "../features/alerts/api/queries";
-import { useAlertsUnread } from "../features/alerts/hooks/useAlertsUnread";
-import { classificationLabel } from "../features/alerts/classification";
+import { useAttentionIssues } from "../features/issues/api/queries";
+import { useAttentionUnread } from "../features/issues/hooks/useAttentionUnread";
+import { attentionReasonLabel } from "../features/issues/attention";
 
-// Top-nav notification bell (#154) — global, read-only, client-tracked
-// unread state (no server read-state; see the issue's grilling decisions).
-// Must be a child of AppShell to reach useAppShell()'s panel toggle.
+// Top-nav notification bell (#154, repointed): global, read-only,
+// client-tracked unread state — but now fed by issue-lifecycle attention
+// events (unverified fix, no-change verdict, escalated recurrence) instead
+// of every RCA report. The Alerts bell's original job — surfacing every
+// report — stays on the dedicated Alerts left-nav page, unchanged; this
+// bell now answers a narrower question: does anything need a human to look
+// at it right now.
 export function NotificationButton() {
   const { actions } = useAppShell();
-  const { data: reports = [] } = useRecentAlerts();
-  const { unreadCount, markAllSeen } = useAlertsUnread(reports);
+  const { items } = useAttentionIssues();
+  const { unreadCount, markAllSeen } = useAttentionUnread(items);
 
   return (
-    <Tooltip title="Alerts">
+    <Tooltip title="Notifications">
       <IconButton
         onClick={() => {
           actions.toggleNotificationPanel();
@@ -50,7 +51,7 @@ export function NotificationButton() {
         }}
         size="small"
         sx={{ color: "text.secondary" }}
-        aria-label="Alerts"
+        aria-label="Notifications"
       >
         <Badge badgeContent={unreadCount} color="error" max={99} invisible={unreadCount === 0}>
           <Bell size={20} />
@@ -61,56 +62,52 @@ export function NotificationButton() {
 }
 
 // Panel body — no per-item read state (the badge clears as a whole on open,
-// per #154's decision), so this only needs the report list itself.
+// per #154's decision), so this only needs the attention-issue list itself.
+// Issues have no console-side detail page (see the design doc's non-goals),
+// so each item opens straight to the issue's GitHub URL.
 export function AlertsNotificationPanel() {
-  const navigate = useNavigate();
-  const { actions } = useAppShell();
-  const { data: reports = [], isPending, isError, error, refetch } = useRecentAlerts();
+  const { state, actions } = useAppShell();
+  const { isPending, items, failedCount } = useAttentionIssues();
 
-  const openAlert = (alertId: string) => {
-    // Close the overlay so it doesn't linger over the destination page.
+  const openIssue = (url: string) => {
     actions.toggleNotificationPanel();
-    void navigate({ to: "/alerts/$alertId", params: { alertId } });
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   return (
-    <NotificationPanel>
+    <NotificationPanel open={state.notificationPanelOpen} onClose={actions.toggleNotificationPanel}>
       <NotificationPanel.Header>
         <NotificationPanel.HeaderIcon>
           <Bell size={20} />
         </NotificationPanel.HeaderIcon>
-        <NotificationPanel.HeaderTitle>Alerts</NotificationPanel.HeaderTitle>
+        <NotificationPanel.HeaderTitle>Notifications</NotificationPanel.HeaderTitle>
         <NotificationPanel.HeaderClose />
       </NotificationPanel.Header>
       {isPending ? (
         <NotificationPanel.EmptyState />
-      ) : isError && reports.length === 0 ? (
-        // Initial load failed with no last-known data to fall back on —
-        // surface it distinctly from "no alerts yet" (api-guidelines: every
-        // view ships an error state, not just empty/loading).
-        <Box sx={{ px: 3, py: 4, textAlign: "center" }}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            Failed to load alerts
-            {error instanceof Error && error.message ? `: ${error.message}` : ""}
-          </Typography>
-          <Button size="small" onClick={() => void refetch()}>
-            Retry
-          </Button>
-        </Box>
-      ) : reports.length === 0 ? (
+      ) : items.length === 0 ? (
         <NotificationPanel.EmptyState />
       ) : (
         <NotificationPanel.List>
-          {reports.map((report) => (
-            <NotificationPanel.Item key={report.id} id={report.id!} type="info" read>
-              <NotificationPanel.ItemTitle>{report.title}</NotificationPanel.ItemTitle>
+          {failedCount > 0 && (
+            <Box sx={{ px: 3, py: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                Some projects could not be checked — showing what loaded.
+              </Typography>
+            </Box>
+          )}
+          {items.map((item) => (
+            <NotificationPanel.Item
+              key={`${item.project}-${item.number}`}
+              id={`${item.project}-${item.number}`}
+              type="info"
+              read
+            >
+              <NotificationPanel.ItemTitle>{item.title}</NotificationPanel.ItemTitle>
               <NotificationPanel.ItemMessage>
-                {report.project} · {classificationLabel(report.classification)}
+                {item.project} · {attentionReasonLabel(item.reason)}
               </NotificationPanel.ItemMessage>
-              <NotificationPanel.ItemTimestamp>
-                {report.createdAt ? formatRelativeTime(new Date(report.createdAt)) : ""}
-              </NotificationPanel.ItemTimestamp>
-              <NotificationPanel.ItemAction onClick={() => openAlert(report.id!)}>
+              <NotificationPanel.ItemAction onClick={() => openIssue(item.url)}>
                 View
               </NotificationPanel.ItemAction>
             </NotificationPanel.Item>
