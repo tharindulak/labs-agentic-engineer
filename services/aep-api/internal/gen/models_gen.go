@@ -1976,14 +1976,19 @@ type IssueComment struct {
 	URL      string `json:"url"`
 }
 
-// IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (historical shape the deployed aep-mcp-server parses — do not "fix" without a coordinated MCP-server release).
+// IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (historical shape the deployed aep-mcp-server parses — do not "fix" without a coordinated MCP-server release; StateReason and AttentionReason are later, additive fields and follow the same casing for consistency, not because anything parses them positionally).
 type IssueInfo struct {
-	Body   string   `json:"Body"`
-	Labels []string `json:"Labels"`
-	Number int64    `json:"Number"`
-	State  string   `json:"State"`
-	Title  string   `json:"Title"`
-	URL    string   `json:"URL"`
+	// AttentionReason Which human-attention event this issue is currently in, if any. "unverified_fix" — a coding-agent PR merged without Confidence:high, and the platform reopened the issue and removed the aep label. "no_change_verdict" — closed not_planned; the recurrence loop is stopped for this signature until a human reopens it. "escalated" — the same incident has recurred through attempt 4 or later. Empty when none apply.
+	AttentionReason string   `json:"AttentionReason"`
+	Body            string   `json:"Body"`
+	Labels          []string `json:"Labels"`
+	Number          int64    `json:"Number"`
+	State           string   `json:"State"`
+
+	// StateReason GitHub's own state_reason on a closed issue — "completed" or "not_planned". Empty on an open issue, or on one closed before GitHub added the field.
+	StateReason string `json:"StateReason"`
+	Title       string `json:"Title"`
+	URL         string `json:"URL"`
 }
 
 // IssueResult Issue metadata after create. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it. reopened=true means the opposite kind of match — a CLOSED issue under the same dedupeKey, i.e. the incident recurring — so it was appended to, reopened and re-adopted. adopted answers the only other question a caller has — will anything work this issue?

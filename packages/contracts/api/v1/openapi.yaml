@@ -5350,7 +5350,9 @@ components:
       additionalProperties: false
       description: 'One issue from list/search. Field names are CAPITALIZED on
         the wire (historical shape the deployed aep-mcp-server parses — do not
-        "fix" without a coordinated MCP-server release).'
+        "fix" without a coordinated MCP-server release; StateReason and
+        AttentionReason are later, additive fields and follow the same casing
+        for consistency, not because anything parses them positionally).'
       properties:
         Number:
           format: int64
@@ -5363,6 +5365,20 @@ components:
           type: string
         State:
           type: string
+        StateReason:
+          description: GitHub's own state_reason on a closed issue —
+            "completed" or "not_planned". Empty on an open issue, or on one
+            closed before GitHub added the field.
+          type: string
+        AttentionReason:
+          description: Which human-attention event this issue is currently in,
+            if any. "unverified_fix" — a coding-agent PR merged without
+            Confidence:high, and the platform reopened the issue and removed
+            the aep label. "no_change_verdict" — closed not_planned; the
+            recurrence loop is stopped for this signature until a human
+            reopens it. "escalated" — the same incident has recurred through
+            attempt 4 or later. Empty when none apply.
+          type: string
         Labels:
           items:
             type: string
@@ -5374,6 +5390,8 @@ components:
       - Body
       - URL
       - State
+      - StateReason
+      - AttentionReason
       - Labels
       type: object
     LLMProjection:
