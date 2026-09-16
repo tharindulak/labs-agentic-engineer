@@ -160,6 +160,44 @@ func IsNoChangeVerdict(iss IssueInfo) bool {
 		hasLabelFold(iss.Labels, LabelSREAgent)
 }
 
+// AttentionReason vocabulary — the one wire value ListIssues exposes so the
+// console can flag exactly these human-attention events without
+// reimplementing the predicates above in TypeScript.
+const (
+	AttentionUnverifiedFix   = "unverified_fix"
+	AttentionNoChangeVerdict = "no_change_verdict"
+	AttentionEscalated       = "escalated"
+)
+
+// AttentionReasonFor reports which of the three human-attention events, if
+// any, an issue is currently in. It composes the existing predicates rather
+// than re-deriving them, so the rule stays in exactly one place.
+//
+// IsNoChangeVerdict is checked first: a closed, not_planned issue is a
+// human's terminal decision, and that is the more specific, more actionable
+// fact than "this also happened to recur four times before it was closed" —
+// escalation is about an incident the platform is still working, and this
+// one no longer is.
+//
+// The other two are gated on the issue being OPEN, the same way
+// isRecurrenceOf only ever calls IsUnverifiedFix from its own open branch:
+// neither an unverified-fix label pattern nor a high recurrence count means
+// anything once the issue is closed — it is either fixed and done, or
+// already caught by the not_planned case above.
+func AttentionReasonFor(iss IssueInfo) string {
+	open := strings.EqualFold(iss.State, "open")
+	switch {
+	case IsNoChangeVerdict(iss):
+		return AttentionNoChangeVerdict
+	case open && IsUnverifiedFix(iss):
+		return AttentionUnverifiedFix
+	case open && attemptNumber(iss.Body) >= recurrenceEscalation:
+		return AttentionEscalated
+	default:
+		return ""
+	}
+}
+
 // appendRecurrenceSection returns the issue body with a `## Recurrence <n>`
 // section added, carrying the new evidence.
 //

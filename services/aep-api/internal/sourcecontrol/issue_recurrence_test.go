@@ -150,3 +150,63 @@ func TestAppendRecurrenceSectionOmitsEmptyEvidence(t *testing.T) {
 		t.Error("blank findings must not produce an empty evidence section")
 	}
 }
+
+// AttentionReasonFor is the one thing ListIssues exposes to the console, so
+// it has to agree with the predicates it composes rather than re-deriving
+// them.
+func TestAttentionReasonFor(t *testing.T) {
+	sre := []string{LabelSREAgent}
+	sreAdopted := []string{LabelSREAgent, LabelAdopt}
+	sreWorking := []string{LabelSREAgent, LabelAdopt, LabelAgentWork}
+	cases := []struct {
+		name string
+		iss  IssueInfo
+		want string
+	}{
+		{"an ordinary open issue has no attention reason", IssueInfo{
+			State: "open", Labels: sreWorking, Body: "body"}, ""},
+		{"a merged fix without confidence is unverified", IssueInfo{
+			State: "open", Labels: sreAdopted, Body: "body"}, AttentionUnverifiedFix},
+		{"not_planned is a no-change verdict", IssueInfo{
+			State: "closed", StateReason: stateReasonNotPlanned, Labels: sre,
+			Body: "body"}, AttentionNoChangeVerdict},
+		{"completed close has no attention reason", IssueInfo{
+			State: "closed", StateReason: stateReasonCompleted, Labels: sre,
+			Body: "body"}, ""},
+		{"attempt 4 is escalated", IssueInfo{
+			State: "open", Labels: sreWorking,
+			Body: "b\n\n## Recurrence 2\n\nx\n\n## Recurrence 3\n\ny\n\n## Recurrence 4\n\nz\n",
+		}, AttentionEscalated},
+		{"attempt 3 is not yet escalated", IssueInfo{
+			State: "open", Labels: sreWorking,
+			Body: "b\n\n## Recurrence 2\n\nx\n\n## Recurrence 3\n\ny\n",
+		}, ""},
+		{"a no-change verdict wins over an escalated attempt count", IssueInfo{
+			State: "closed", StateReason: stateReasonNotPlanned, Labels: sre,
+			Body: "b\n\n## Recurrence 2\n\nx\n\n## Recurrence 3\n\ny\n\n## Recurrence 4\n\nz\n",
+		}, AttentionNoChangeVerdict},
+		{"non-incident work never gets an attention reason", IssueInfo{
+			State: "open", Labels: []string{LabelAdopt}, Body: "body"}, ""},
+		// IsUnverifiedFix and the escalation count are only meaningful for an
+		// issue the platform is still actively working — isRecurrenceOf only
+		// ever calls IsUnverifiedFix from its already-open branch, and never
+		// treats a closed issue as a live escalation. AttentionReasonFor must
+		// gate both the same way, or a closed issue that happens to carry a
+		// stale label combination (should not occur in practice, since the
+		// success path never removes `aep`) or a high recurrence count from
+		// before it was finally fixed would be wrongly flagged after the fact.
+		{"an unverified-fix label pattern on a closed+completed issue is not flagged", IssueInfo{
+			State: "closed", StateReason: stateReasonCompleted, Labels: sreAdopted, Body: "body"}, ""},
+		{"an escalated recurrence count is not flagged once completed and closed", IssueInfo{
+			State: "closed", StateReason: stateReasonCompleted, Labels: sreWorking,
+			Body: "b\n\n## Recurrence 2\n\nx\n\n## Recurrence 3\n\ny\n\n## Recurrence 4\n\nz\n",
+		}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := AttentionReasonFor(c.iss); got != c.want {
+				t.Fatalf("AttentionReasonFor = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
