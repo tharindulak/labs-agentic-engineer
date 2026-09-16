@@ -177,12 +177,14 @@ func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestO
 	out := make([]gen.IssueInfo, 0, len(ranked))
 	for _, iss := range ranked {
 		out = append(out, gen.IssueInfo{
-			Number: int64(iss.Number),
-			Title:  iss.Title,
-			Body:   iss.Body,
-			URL:    iss.URL,
-			State:  iss.State,
-			Labels: iss.Labels,
+			Number:          int64(iss.Number),
+			Title:           iss.Title,
+			Body:            iss.Body,
+			URL:             iss.URL,
+			State:           iss.State,
+			StateReason:     iss.StateReason,
+			AttentionReason: sourcecontrol.AttentionReasonFor(iss),
+			Labels:          iss.Labels,
 		})
 	}
 	return gen.ListIssues200JSONResponse(out), nil

@@ -213,3 +213,61 @@ func TestCreateIssueBindsNullStatusesFromJSON(t *testing.T) {
 		t.Errorf("dedupeKey = %q, want it unchanged", adopter.got.DedupeKey)
 	}
 }
+
+type fakeListIssues struct {
+	sourcecontrol.IssueService
+	items []sourcecontrol.IssueInfo
+}
+
+func (f *fakeListIssues) ListIssues(
+	_ context.Context, _, _ string, _ []string,
+) ([]sourcecontrol.IssueInfo, error) {
+	return f.items, nil
+}
+
+func TestListIssuesCarriesStateReasonAndAttentionReason(t *testing.T) {
+	issues := &fakeListIssues{items: []sourcecontrol.IssueInfo{
+		{
+			Number:      12,
+			Title:       "escalated incident",
+			Body:        "b\n\n## Recurrence 2\n\nx\n\n## Recurrence 3\n\ny\n\n## Recurrence 4\n\nz\n",
+			URL:         "https://github.com/acme/demo/issues/12",
+			State:       "open",
+			StateReason: "",
+			Labels:      []string{sourcecontrol.LabelSREAgent, sourcecontrol.LabelAdopt, sourcecontrol.LabelAgentWork},
+		},
+		{
+			Number:      7,
+			Title:       "no fix warranted",
+			Body:        "body",
+			URL:         "https://github.com/acme/demo/issues/7",
+			State:       "closed",
+			StateReason: "not_planned",
+			Labels:      []string{sourcecontrol.LabelSREAgent},
+		},
+	}}
+	h := New(issues, nil)
+
+	resp, err := h.ListIssues(context.Background(), gen.ListIssuesRequestObject{
+		ProjectName: "demo",
+		Params:      gen.ListIssuesParams{},
+	})
+	if err != nil {
+		t.Fatalf("ListIssues returned error: %v", err)
+	}
+	out, ok := resp.(gen.ListIssues200JSONResponse)
+	if !ok {
+		t.Fatalf("response = %#v, want gen.ListIssues200JSONResponse", resp)
+	}
+	if len(out) != 2 {
+		t.Fatalf("len(out) = %d, want 2", len(out))
+	}
+	if out[0].StateReason != "" || out[0].AttentionReason != "escalated" {
+		t.Fatalf("issue 12: StateReason=%q AttentionReason=%q, want \"\"/\"escalated\"",
+			out[0].StateReason, out[0].AttentionReason)
+	}
+	if out[1].StateReason != "not_planned" || out[1].AttentionReason != "no_change_verdict" {
+		t.Fatalf("issue 7: StateReason=%q AttentionReason=%q, want \"not_planned\"/\"no_change_verdict\"",
+			out[1].StateReason, out[1].AttentionReason)
+	}
+}
