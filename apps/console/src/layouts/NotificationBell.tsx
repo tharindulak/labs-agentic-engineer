@@ -67,12 +67,22 @@ export function NotificationButton() {
 // so each item opens straight to the issue's GitHub URL.
 export function AlertsNotificationPanel() {
   const { state, actions } = useAppShell();
-  const { isPending, items, failedCount } = useAttentionIssues();
+  const { isPending, items, failedCount, isError } = useAttentionIssues();
 
   const openIssue = (url: string) => {
     actions.toggleNotificationPanel();
     window.open(url, "_blank", "noopener,noreferrer");
   };
+
+  // An empty panel must never stand in for a failed check. `isError` is the
+  // project list itself failing (nothing was checked); `failedCount` is a
+  // subset of projects failing (what loaded is still shown). Both are said
+  // above the list, not inside it, because either can leave `items` empty.
+  const failureNote = isError
+    ? "Notifications could not be checked right now."
+    : failedCount > 0
+      ? "Some projects could not be checked — showing what loaded."
+      : null;
 
   return (
     <NotificationPanel open={state.notificationPanelOpen} onClose={actions.toggleNotificationPanel}>
@@ -85,34 +95,38 @@ export function AlertsNotificationPanel() {
       </NotificationPanel.Header>
       {isPending ? (
         <NotificationPanel.EmptyState />
-      ) : items.length === 0 ? (
-        <NotificationPanel.EmptyState />
       ) : (
-        <NotificationPanel.List>
-          {failedCount > 0 && (
+        <>
+          {failureNote && (
             <Box sx={{ px: 3, py: 1 }}>
               <Typography variant="caption" color="text.secondary">
-                Some projects could not be checked — showing what loaded.
+                {failureNote}
               </Typography>
             </Box>
           )}
-          {items.map((item) => (
-            <NotificationPanel.Item
-              key={`${item.project}-${item.number}`}
-              id={`${item.project}-${item.number}`}
-              type="info"
-              read
-            >
-              <NotificationPanel.ItemTitle>{item.title}</NotificationPanel.ItemTitle>
-              <NotificationPanel.ItemMessage>
-                {item.project} · {attentionReasonLabel(item.reason)}
-              </NotificationPanel.ItemMessage>
-              <NotificationPanel.ItemAction onClick={() => openIssue(item.url)}>
-                View
-              </NotificationPanel.ItemAction>
-            </NotificationPanel.Item>
-          ))}
-        </NotificationPanel.List>
+          {items.length === 0 ? (
+            <NotificationPanel.EmptyState />
+          ) : (
+            <NotificationPanel.List>
+              {items.map((item) => (
+                <NotificationPanel.Item
+                  key={`${item.project}-${item.number}`}
+                  id={`${item.project}-${item.number}`}
+                  type="info"
+                  read
+                >
+                  <NotificationPanel.ItemTitle>{item.title}</NotificationPanel.ItemTitle>
+                  <NotificationPanel.ItemMessage>
+                    {item.project} · {attentionReasonLabel(item.reason)}
+                  </NotificationPanel.ItemMessage>
+                  <NotificationPanel.ItemAction onClick={() => openIssue(item.url)}>
+                    View
+                  </NotificationPanel.ItemAction>
+                </NotificationPanel.Item>
+              ))}
+            </NotificationPanel.List>
+          )}
+        </>
       )}
     </NotificationPanel>
   );

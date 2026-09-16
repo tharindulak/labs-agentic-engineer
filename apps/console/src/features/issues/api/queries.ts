@@ -55,15 +55,31 @@ export interface AttentionIssue {
 }
 
 // No pagination, last N projects — the same "no pagination, last N" shape
-// the alerts bell already uses (BELL_LIMIT), since this feeds a bell too.
+// the bell has had since #154, since this feeds a bell too.
 const ATTENTION_PROJECTS_LIMIT = 50;
+
+// Bell poll cadence (#154's decision: 60s, matching the ~3-4 min RCA→handoff
+// completion time from the SRE-handoff runbook). It is also the stale window:
+// the fan-out is one request per project, so without a stale window every
+// mount and every window focus would refire all of them.
+const BELL_POLL_MS = 60_000;
+
+export interface AttentionIssuesResult {
+  isPending: boolean;
+  items: AttentionIssue[];
+  // Projects whose own issue fetch failed — the rest of the list still loaded.
+  failedCount: number;
+  // The project list itself failed, so nothing was checked at all. Distinct
+  // from an empty `items`: "we couldn't look" is not "nothing needs you".
+  isError: boolean;
+}
 
 // Top-nav bell: every sre-agent issue, across every project, currently in
 // one of the three human-attention states. list-issues is project-scoped,
 // so this fans out one call per project and merges — a deliberate N+1 from
 // the browser (see the design doc's "Bell scope" section), not a new
 // backend aggregate endpoint.
-export function useAttentionIssues() {
+export function useAttentionIssues(): AttentionIssuesResult {
   const projectsQuery = useProjectsList("", ATTENTION_PROJECTS_LIMIT);
   const projects = (projectsQuery.data?.pages[0]?.items ?? [])
     .map((p) => p.name)
@@ -92,11 +108,14 @@ export function useAttentionIssues() {
             reason: issue.AttentionReason,
           }));
       },
+      staleTime: BELL_POLL_MS,
+      refetchInterval: BELL_POLL_MS,
     })),
-    combine: (results) => ({
+    combine: (results): AttentionIssuesResult => ({
       isPending: projectsQuery.isPending || results.some((r) => r.isPending),
       items: results.flatMap((r) => r.data ?? []),
       failedCount: results.filter((r) => r.isError).length,
+      isError: projectsQuery.isError,
     }),
   });
 }

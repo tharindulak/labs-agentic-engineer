@@ -37,11 +37,13 @@ vi.mock("@wso2/oxygen-ui", async (importOriginal) => {
 let mockItems: AttentionIssue[] = [];
 let mockPending = false;
 let mockFailedCount = 0;
+let mockIsError = false;
 vi.mock("../features/issues/api/queries", () => ({
   useAttentionIssues: () => ({
     isPending: mockPending,
     items: mockItems,
     failedCount: mockFailedCount,
+    isError: mockIsError,
   }),
 }));
 
@@ -65,6 +67,7 @@ beforeEach(() => {
   mockItems = [];
   mockPending = false;
   mockFailedCount = 0;
+  mockIsError = false;
   toggleNotificationPanel.mockClear();
 });
 
@@ -91,6 +94,25 @@ describe("AlertsNotificationPanel", () => {
       screen.getByText("checkout-service: apply discount before tax"),
     ).toBeInTheDocument();
     expect(screen.getByText(/No change needed/)).toBeInTheDocument();
+  });
+
+  it("says the check itself failed rather than showing a silent empty panel", () => {
+    mockIsError = true;
+    render(<AlertsNotificationPanel />);
+    expect(screen.getByText(/could not be checked right now/)).toBeInTheDocument();
+  });
+
+  it("still reports partial failure when no project's issues loaded at all", () => {
+    mockFailedCount = 3;
+    mockItems = [];
+    render(<AlertsNotificationPanel />);
+    expect(screen.getByText(/Some projects could not be checked/)).toBeInTheDocument();
+  });
+
+  it("says nothing about failure when everything was checked", () => {
+    mockItems = [issue()];
+    render(<AlertsNotificationPanel />);
+    expect(screen.queryByText(/could not be checked/)).not.toBeInTheDocument();
   });
 
   it("opens the issue's GitHub URL, not a console route", () => {

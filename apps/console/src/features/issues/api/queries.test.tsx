@@ -39,6 +39,15 @@ function wrapper({ children }: { children: ReactNode }) {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
+// A wrapper whose QueryClient survives across mounts — the cache is the thing
+// under test in the staleTime case below.
+function sharedClientWrapper() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
+
 beforeEach(() => {
   getMock.mockReset();
 });
@@ -109,8 +118,57 @@ describe("useAttentionIssues", () => {
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
     expect(result.current.failedCount).toBe(1);
+    expect(result.current.isError).toBe(false);
     expect(result.current.items).toEqual([
       { project: "gym-tracker", number: 3, title: "c", url: "u3", reason: "escalated" },
     ]);
+  });
+
+  it("reports isError when the project list itself fails, so an empty result is not read as 'nothing needs you'", async () => {
+    getMock.mockImplementation((path: string) => {
+      if (path === "/projects") {
+        return Promise.resolve({ data: undefined, error: { code: "internal_error", message: "boom" } });
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { result } = renderHook(() => useAttentionIssues(), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    // Nothing was fanned out, so failedCount stays 0 — isError is the only
+    // signal that the check never happened.
+    expect(result.current.isPending).toBe(false);
+    expect(result.current.items).toEqual([]);
+    expect(result.current.failedCount).toBe(0);
+  });
+
+  it("does not refire the whole per-project fan-out on a remount", async () => {
+    getMock.mockImplementation((path: string) => {
+      if (path === "/projects") {
+        return Promise.resolve({
+          data: { items: [{ name: "demo-shop" }, { name: "gym-tracker" }] },
+          error: undefined,
+        });
+      }
+      return Promise.resolve({ data: [], error: undefined });
+    });
+
+    const sharedWrapper = sharedClientWrapper();
+    const first = renderHook(() => useAttentionIssues(), { wrapper: sharedWrapper });
+    await waitFor(() => expect(first.result.current.isPending).toBe(false));
+
+    const issueCalls = () =>
+      getMock.mock.calls.filter((c) => c[0] === "/projects/{projectName}/issues").length;
+    expect(issueCalls()).toBe(2);
+
+    // The bell lives in the header, so it mounts on every page. Without a
+    // stale window each mount would re-fan-out one request per project — up
+    // to ATTENTION_PROJECTS_LIMIT requests, each pulling full issue bodies.
+    first.unmount();
+    const second = renderHook(() => useAttentionIssues(), { wrapper: sharedWrapper });
+    await waitFor(() => expect(second.result.current.isPending).toBe(false));
+
+    expect(issueCalls()).toBe(2);
   });
 });
