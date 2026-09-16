@@ -278,11 +278,42 @@ function statusFromOutcome(outcome: string): string {
   return "completed";
 }
 
-/** Epoch ms of an event's producer timestamp, or undefined if it carried none. */
+/**
+ * The earliest instant an event of this platform can honestly claim.
+ *
+ * A MISSING time dressed as a date is the shape this exists for, and every
+ * language spells it: Go's `time.Time{}` marshals as `0001-01-01T00:00:00Z`, a
+ * zero epoch is 1970, .NET's `DateTime.MinValue` is Go's again. Each is
+ * perfectly well-formed, so `Date.parse` accepts it and the subtraction below
+ * turns it into a duration in millennia. That happened live (2026-09-09): a
+ * platform notice narrating the dark zone left its `ts` at Go's zero value, and
+ * because that notice belongs to the lead, the lead's age column read
+ * `1065409035m47s` — 2026 years — next to a heartbeat line that was correct.
+ *
+ * The floor is deliberately far below any run and far above every zero value,
+ * so it can exclude no real event: this platform did not exist in 2019, and
+ * nothing that ran on it can be stamped before then. An event under it
+ * therefore carries no clock at all, which is a case the model already has an
+ * answer for — no lane, no age, and a row all the same.
+ */
+const EARLIEST_EVENT_MS = Date.parse("2020-01-01T00:00:00Z");
+
+/**
+ * Epoch ms of an event's producer timestamp, or undefined if it carried none
+ * the model may believe.
+ *
+ * The one door every clock in this file comes through, which is why the
+ * plausibility rule lives here rather than beside each reading: the same stamp
+ * feeds the age column, the silence, the lane and the axis both lanes and the
+ * timeline are drawn against, and one implausible instant at the head of a
+ * recording used to stretch that axis over two millennia — drawing every real
+ * lane as a hairline.
+ */
 function timeOf(e: RunEventView): number | undefined {
   if (!e.ts) return undefined;
   const ms = Date.parse(e.ts);
-  return Number.isNaN(ms) ? undefined : ms;
+  if (Number.isNaN(ms) || ms < EARLIEST_EVENT_MS) return undefined;
+  return ms;
 }
 
 /** What one agent's events say about its timing, its silence and its tasks. */

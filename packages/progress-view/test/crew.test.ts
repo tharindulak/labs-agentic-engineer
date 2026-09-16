@@ -242,6 +242,52 @@ test("crew: an agent nothing timestamped gets no lane and no age, and still gets
   assert.deepEqual(crew.window, { startMs: 0, endMs: 0 });
 });
 
+test("crew: a zero-value date is absent data and never an instant", () => {
+  // The first line is VERBATIM what aep-api put on a live console feed: a
+  // platform notice narrating the dark zone, whose `ts` was left at Go's zero
+  // value and marshalled into a perfectly well-formed date. The lead's age
+  // column read `1065409035m47s` — 2026 years, the interval from Go's zero
+  // time to the afternoon someone was watching — beside a heartbeat line that
+  // was correct, because that one reads an elapsed the producer measured.
+  const now = Date.parse("2026-09-09T09:15:47Z");
+  const startedAt = Date.parse("2026-09-09T09:00:00Z");
+  const crew = buildCrew(
+    [
+      { kind: "notice", agentId: "lead", seq: -11, code: "runner_pulling_image", ts: "0001-01-01T00:00:00Z" },
+      { kind: "run_started", agentId: "lead", seq: 1, ts: "2026-09-09T09:00:00Z" },
+      { kind: "heartbeat", agentId: "lead", seq: 2, waitingOn: "model", elapsedMs: 13_000, ts: "2026-09-09T09:15:34Z" },
+    ],
+    now,
+  );
+  // The age is measured from the first instant the run can be shown to have
+  // reached — never from a stamp that predates the platform.
+  assert.equal(crew.lead.elapsedMs, now - startedAt);
+  // And the axis both lanes and the timeline are drawn against stays inside the
+  // run: a zero-value date at the head of a recording used to stretch it over
+  // two millennia — the timeline read "1065409043m56s across 3 agents" and drew
+  // the lead across the whole width, with every real agent a sliver.
+  assert.deepEqual(crew.window, { startMs: startedAt, endMs: now });
+  assert.equal(crew.lead.spans[0]?.startMs, startedAt);
+});
+
+test("crew: a row whose only stamp is a zero-value date shows no age at all", () => {
+  // Same rule as an agent nothing timestamped: the surface falls back to no age
+  // rather than inventing one. A date it cannot believe is not better evidence
+  // than no date, and a number a reader trusts is worse than a blank.
+  const crew = buildCrew(
+    [
+      { kind: "agent_started", agentId: "a1", label: "zero-stamped", depth: 1 },
+      { kind: "notice", agentId: "a1", detail: "npm notice", ts: "0001-01-01T00:00:00Z" },
+    ],
+    Date.parse("2026-09-09T09:15:47Z"),
+  );
+  const member = memberOf(crew, "a1");
+  assert.equal(member.elapsedMs, undefined);
+  assert.equal(member.silentForMs, undefined);
+  assert.deepEqual(member.spans, []);
+  assert.equal(member.agent.label, "zero-stamped");
+});
+
 // --- liveness: the amber rule ------------------------------------------------
 
 test("crew: the amber rule fires at exactly 60s of silence with a call unanswered", () => {

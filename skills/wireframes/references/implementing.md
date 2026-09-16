@@ -39,8 +39,10 @@ over the issue text when the two differ.
   Read the role in the SPA from the sign-in identity the auth
   dependency provides (`user.profile.groups`; see `thunder-authentication`),
   and treat it as **presentation only** — the backend enforces permission and
-  answers 403. A component with no auth dependency has no roles: build the
-  screen as drawn.
+  answers 403. Groups matching no declared role fall to the design's
+  `coldStartRole`, the same rule the backend applies, so a first-time person
+  sees the base experience rather than an empty shell. A component with no auth
+  dependency has no roles: build the screen as drawn.
 
 ## Element for element
 

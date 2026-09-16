@@ -58,16 +58,20 @@ type DeploymentService struct {
 	// files computes the literal files a component needs mounted
 	// (env-config.js). Optional, same unmanaged-vs-empty rule.
 	files RuntimeFileProvider
-	// gatewayHost is host:port of the API gateway runtime, published to a
-	// consumer of a protected sibling as `<DEP>_GATEWAY_URL`. Empty leaves every
-	// consumer on the direct-Service lane (see gateway_address.go).
-	gatewayHost string
+	// gatewayHostOverride pins host:port of the API gateway runtime for every
+	// environment, overriding the per-(org, environment) derivation. Empty — the
+	// normal case — derives it (see gateway_address.go).
+	gatewayHostOverride string
 	// catalog, resourceClient, and thunder are the thunder-callback wait
 	// ports. Any nil (including a nil store) skips the wait so existing
 	// OC-only DeploymentState tests stay green without new wiring.
 	catalog        resourceMarkerCatalog
 	resourceClient bindingEnvironmentPatcher
 	thunder        ThunderApplicationReader
+	// endpoint gates a Ready binding on its public URL actually answering. Nil
+	// skips the gate, and the SAME gate is held by the status reader so the two
+	// cannot answer differently — see endpoint_wait.go.
+	endpoint *EndpointGate
 }
 
 // ComponentEnvVarReader is the user's component config, consumer-side.
@@ -106,14 +110,14 @@ func (s *DeploymentService) SetConfigSources(envVars ComponentEnvVarReader, file
 	}
 }
 
-// SetAPIGatewayHost wires the address a consumer reaches a protected sibling's
-// managed API on. Empty (the zero value) publishes no gateway address at all,
-// which leaves consumers on the unauthenticated direct-Service lane — so the
-// composition root passes projects.DefaultAPIGatewayHost unless the deployment
-// overrides it.
-func (s *DeploymentService) SetAPIGatewayHost(host string) {
+// SetAPIGatewayHostOverride pins the address a consumer reaches a protected
+// sibling's managed API on, for every environment. Empty (the zero value) is the
+// normal case: the address is then derived per (org, environment), because the
+// platform runs one gateway per environment and no single literal addresses two
+// of them. The composition root passes API_GATEWAY_HOST straight through.
+func (s *DeploymentService) SetAPIGatewayHostOverride(host string) {
 	if s != nil {
-		s.gatewayHost = host
+		s.gatewayHostOverride = host
 	}
 }
 
@@ -268,9 +272,9 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 		Files:         s.filesFor(ctx, orgID, projectID, componentName),
 		// The org IS the OC namespace components are created in, and that
 		// namespace is a segment of every managed API's gateway context path.
-		ComponentNamespace: orgID,
-		GatewayHost:        s.gatewayHost,
-		ProtectedSiblings:  ProtectedSiblingsOf(design, *comp),
+		ComponentNamespace:  orgID,
+		GatewayHostOverride: s.gatewayHostOverride,
+		ProtectedSiblings:   ProtectedSiblingsOf(design, *comp),
 	})
 	if err := s.components.ApplyReleaseBinding(ctx, orgID, projectID, desired.Binding); err != nil {
 		return outcome, fmt.Errorf("apply release binding: %w", permanentIfMissing(err))
@@ -291,6 +295,12 @@ func (s *DeploymentService) deployOne(ctx context.Context, orgID, projectID, com
 // CRT carries ConsumerURLEnvConfig is not Ready until the ThunderApplication
 // CR has the SPA callback (see applyThunderWait). Nil wait ports keep today's
 // OC-only verdict.
+//
+// Then a component that advertises an external URL is not Ready until that URL
+// ANSWERS (see applyEndpointWait). OpenChoreo reports the binding Ready when the
+// control plane is done, which on a cloud plane is minutes before a first-ever
+// hostname has a certificate — and `serving` is read by the validation sweep,
+// the console and a person clicking the link as a claim about the edge.
 func (s *DeploymentService) DeploymentState(ctx context.Context, orgID, projectID string, components []string) ([]delivery.ComponentDeploy, error) {
 	if s == nil || s.components == nil {
 		return nil, fmt.Errorf("deployment: not configured")
@@ -305,6 +315,7 @@ func (s *DeploymentService) DeploymentState(ctx context.Context, orgID, projectI
 		if err := s.applyThunderWait(ctx, orgID, projectID, name, summary, &st); err != nil {
 			return nil, err
 		}
+		s.applyEndpointWait(ctx, orgID, projectID, name, summary, &st)
 		out = append(out, st)
 	}
 	return out, nil

@@ -318,14 +318,21 @@ export async function startCodingRun(
   mcpAuth?: McpAuthOpts,
   runtime: Runtime = createRuntime(runtimeNameFromEnv()),
 ): Promise<StartedRun> {
-  // Spawn env: bearer + git-service URL passed by file path / URL only.
-  // No tokens cross via env, so transcripts cannot leak credentials.
-  // The Anthropic credential flows through from process.env (container env).
+  // Spawn env. The AEP bearer is passed by FILE PATH (AEP_BEARER_FILE), so it
+  // stays out of transcripts and out of a `ps` listing.
+  //
+  // Everything ELSE in the container environment does reach the agent: the
+  // spread below is deny-nothing, so ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN,
+  // GITHUB_TOKEN (which `gh auth git-credential` reads from env by design — see
+  // gh_git_auth.ts) and the per-dependency secrets are all readable by the
+  // agent's own Bash. This pod is a TRUST boundary, not a containment one, and
+  // the controls sit on the way OUT rather than on concealment: the fail-closed
+  // WebSearch/WebFetch DLP hooks below, and the progress scrubber primed from
+  // credential_env.ts before this process logs anything.
   // F3c — surface AEP_TASK_ID and AEP_PLATFORM_URL to the agent's
   // child env so the aep skill's verification-failed shell snippet can
   // hit POST $AEP_PLATFORM_URL/api/v1/tasks/$AEP_TASK_ID/verification-failed.
-  // The bearer rides through a file (AEP_BEARER_FILE) so the agent's
-  // transcripts can't leak it; the curl snippet reads the file at call time.
+  // The curl snippet reads AEP_BEARER_FILE at call time.
   const childEnv: Record<string, string> = {
     ...(process.env as Record<string, string>),
     PATH: `${layout.aepDir}:${process.env.PATH ?? ""}`,

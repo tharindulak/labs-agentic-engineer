@@ -353,6 +353,28 @@ Four further gaps, all verified rather than assumed:
     Deliberately not fed to `watchdog.observe` — none is the agent making
     progress, and an idle report that fires slightly early is the safe direction.
 
+19. **Redaction needs the credential ENROLLED; shape is only a backstop.**
+    `GITHUB_TOKEN` was enrolled nowhere for as long as the mount existed, and the
+    failure was invisible in the way that matters: the tokens people tested with
+    carried `ghp_`/`github_pat_` prefixes a shape pattern caught, so the feed
+    looked correct while any credential outside those families passed through
+    whole. Shape was never the layer holding this — the BFF's own second line of
+    defense says so: `delivery/codingagent/redact.go`, "It cannot catch an opaque
+    token (that is the runner's job)." Three rejected alternatives, each a
+    re-litigation risk. Enrolling from the deny-by-default sweep
+    `websearch_dlp.ts` runs over the same environment: a false positive there
+    costs one denied web call, where a literal rewrites every line containing it
+    — the over-redaction that disabled the entropy backstop above. Lowering
+    `MIN_LITERAL_LEN` so short values enroll: four characters would redact those
+    characters everywhere they appear in ordinary text. Failing a run whose
+    credential is too short to enroll: that is a misconfiguration, not a
+    disclosure, and ending a cycle over a placeholder in a local run is the worse
+    trade — so it is reported by NAME and the run warns. KNOWN GAP: the credhelper
+    git path mints its token inside bash, so nothing can enroll it; its at-rest
+    copy in `.gh-config/hosts.yml` is covered by an `oauth_token:` shape pattern
+    on both sides and nothing more. Closing it means giving the helper a way to
+    hand the runner what it minted.
+
 8. **`console.*` is converted, not merely scrubbed.** It shares the fd with the
    feed, so a bare line makes the stream unparseable — and a watchdog cannot
    watch a feed it cannot parse. Every call becomes a typed `log` event. The

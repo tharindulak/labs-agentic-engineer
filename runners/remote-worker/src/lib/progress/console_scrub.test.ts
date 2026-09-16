@@ -18,7 +18,7 @@
 
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { installConsoleScrubber, type ConsoleLike } from "./console_scrub.js";
+import { installConsoleScrubber, installLogRedaction, type ConsoleLike } from "./console_scrub.js";
 import { _resetEmitterForTesting } from "./emitter.js";
 import { scrubber } from "./scrubber.js";
 
@@ -174,4 +174,34 @@ test("installConsoleScrubber: is idempotent — no double wrapping", () => {
   const lines = summaries();
   assert.equal(lines.length, 1);
   assert.equal(lines[0], "x [REDACTED] y");
+});
+
+test("installLogRedaction: enrolls the mounted credentials and says nothing when all are covered", () => {
+  const c = fakeConsole();
+  installLogRedaction(c, { GITHUB_TOKEN: OPAQUE_TOKEN });
+
+  // No warning: everything mounted is enrolled, so a healthy run stays quiet.
+  assert.equal(events().length, 0);
+  // And the enrollment is real — the shape of this token matches no pattern.
+  c.log(`remote: ${OPAQUE_TOKEN}`);
+  assert.ok(!summaries()[0]?.includes(OPAQUE_TOKEN));
+});
+
+test("installLogRedaction: warns by NAME when a mounted credential is too short to enroll", () => {
+  const c = fakeConsole();
+  installLogRedaction(c, { GITHUB_TOKEN: "short-tok" });
+
+  const warned = events();
+  assert.equal(warned.length, 1);
+  assert.equal(warned[0]?.kind, "notice");
+  assert.equal(warned[0]?.level, "warn");
+  // Code-LESS on purpose: `code` names closed conditions a consumer branches
+  // on, and this is prose for whoever reads the log.
+  assert.equal(warned[0]?.code, undefined);
+  const detail = String(warned[0]?.detail);
+  // The NAME is what makes the warning actionable...
+  assert.match(detail, /GITHUB_TOKEN/);
+  // ...and the value must never ride along: this line goes to the build log,
+  // so putting it there would be the disclosure the module exists to prevent.
+  assert.ok(!detail.includes("short-tok"));
 });

@@ -176,19 +176,38 @@ type LiveLogSource interface {
 }
 
 // RecordingLogSource is the same pod log read for the RECORDER rather than for
-// a viewer, and the two differences are the whole point of a separate port.
+// a viewer, and three differences are the whole point of a separate port.
 //
-// It reads with a TIME cursor (sinceSeconds; 0 = everything the platform still
-// holds) instead of a byte window, and it applies NO byte cut. LiveLogSource
-// keeps the newest 64KiB because a viewer wants fresh content and re-reads two
-// seconds later; that same cut silently DROPPED a burst larger than 64KiB
-// between two polls, which is one of the five losses the recording exists to
-// close. A recorder that cut bytes would write the loss into the file, where it
-// can never be recovered.
+// It reads with a TIME cursor instead of a byte window, and it applies NO byte
+// cut. LiveLogSource keeps the newest 64KiB because a viewer wants fresh content
+// and re-reads two seconds later; that same cut silently DROPPED a burst larger
+// than 64KiB between two polls, which is one of the five losses the recording
+// exists to close. A recorder that cut bytes would write the loss into the file,
+// where it can never be recovered.
+//
+// The cursor is an ABSOLUTE INSTANT, not the OpenChoreo API's coarse
+// `sinceSeconds`. That is a measured fix, not a tidy-up: the recorder used to
+// compute `sinceSeconds` and then spend three sequential OpenChoreo round trips
+// getting to the log call, so a slow binding list or resource tree moved the
+// window's START past lines nobody had read — a permanent hole, since the cursor
+// only ever moves forward. Handing over an instant makes the conversion the
+// source's job, done in the breath before the log call, and no latency in front
+// of it can eat the window.
+//
+// The BINDING is resolved separately and by the caller, because it is FIXED for
+// the attempt: a session resolves it once and re-resolves only when a read says
+// it is gone, which takes a whole round trip out of every poll.
 //
 // Satisfied by *OCLogSource.
 type RecordingLogSource interface {
-	ReadSince(ctx context.Context, orgName, projectName, componentName string, sinceSeconds int64) (LiveTail, error)
+	// Binding resolves the cycle Component's release binding in the run
+	// environment. A wrapped ErrComponentGone means the Component (or its
+	// binding) has been deleted, which is a fact about the world.
+	Binding(ctx context.Context, orgName, projectName, componentName string) (string, error)
+
+	// ReadSince reads everything the pod logged at or after `since` (the zero
+	// time = the whole log the platform still holds), with no byte cut.
+	ReadSince(ctx context.Context, orgName, releaseBindingName string, since time.Time) (LiveTail, error)
 }
 
 // ArchiveScope names one cycle's archived log: its component, and the window

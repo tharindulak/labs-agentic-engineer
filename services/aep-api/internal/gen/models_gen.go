@@ -58,6 +58,48 @@ func (e AgentStatus) Valid() bool {
 	}
 }
 
+// Defines values for BuildChangeKind.
+const (
+	BuildChangeKindComponent        BuildChangeKind = "component"
+	BuildChangeKindExternal         BuildChangeKind = "external"
+	BuildChangeKindPlatformResource BuildChangeKind = "platform-resource"
+)
+
+// Valid indicates whether the value is a known member of the BuildChangeKind enum.
+func (e BuildChangeKind) Valid() bool {
+	switch e {
+	case BuildChangeKindComponent:
+		return true
+	case BuildChangeKindExternal:
+		return true
+	case BuildChangeKindPlatformResource:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BuildChangeState.
+const (
+	Changed BuildChangeState = "changed"
+	New     BuildChangeState = "new"
+	Removed BuildChangeState = "removed"
+)
+
+// Valid indicates whether the value is a known member of the BuildChangeState enum.
+func (e BuildChangeState) Valid() bool {
+	switch e {
+	case Changed:
+		return true
+	case New:
+		return true
+	case Removed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for BuildInputItemKind.
 const (
 	BuildInputItemKindExternalConfig   BuildInputItemKind = "external-config"
@@ -1164,16 +1206,16 @@ func (e TurnInputMultipartIntent) Valid() bool {
 
 // Defines values for WorkloadDependencyDTOKind.
 const (
-	OrgService WorkloadDependencyDTOKind = "org-service"
-	Resource   WorkloadDependencyDTOKind = "resource"
+	WorkloadDependencyDTOKindOrgService WorkloadDependencyDTOKind = "org-service"
+	WorkloadDependencyDTOKindResource   WorkloadDependencyDTOKind = "resource"
 )
 
 // Valid indicates whether the value is a known member of the WorkloadDependencyDTOKind enum.
 func (e WorkloadDependencyDTOKind) Valid() bool {
 	switch e {
-	case OrgService:
+	case WorkloadDependencyDTOKindOrgService:
 		return true
-	case Resource:
+	case WorkloadDependencyDTOKindResource:
 		return true
 	default:
 		return false
@@ -1251,9 +1293,12 @@ type ActivityEvent struct {
 	ID          string    `json:"id"`
 	Issue       int64     `json:"issue,omitempty"`
 	OccurredAt  time.Time `json:"occurredAt"`
-	Tag         string    `json:"tag,omitempty"`
-	Title       string    `json:"title,omitempty"`
-	Type        string    `json:"type"`
+
+	// Reason `run_failed` only: the run's failure code (RunFailure.code) when the platform recorded one, else its terminal reason. A code, never prose — the console owns the sentence, the same rule RunEvent.notice follows.
+	Reason string `json:"reason,omitempty"`
+	Tag    string `json:"tag,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Type   string `json:"type"`
 }
 
 // ActivityFeed A page of activity events plus the cursor for the next (older) page.
@@ -1304,6 +1349,22 @@ type ApplyResult struct {
 	Warnings  []Warning  `json:"warnings,omitempty"`
 }
 
+// BuildChange One thing this version changes, compared with the newest version — the row the Start build dialog lists. Every row names something that EXISTS once the version is built, which is why the requirements are not one of them — they are the input, not the output. `removed` is a statement rather than an action — a build deprovisions nothing, so a removed dependency's resource stays.
+type BuildChange struct {
+	// Kind What the name belongs to, and the group the dialog lists it under. The two dependency kinds carry opposite obligations — an `external` needs a provider and its keys from the user, a `platform-resource` is provisioned by the build — so they are never one group.
+	Kind BuildChangeKind `json:"kind"`
+
+	// Name The component, dependency or resource name, as the design writes it.
+	Name  string           `json:"name"`
+	State BuildChangeState `json:"state"`
+}
+
+// BuildChangeKind What the name belongs to, and the group the dialog lists it under. The two dependency kinds carry opposite obligations — an `external` needs a provider and its keys from the user, a `platform-resource` is provisioned by the build — so they are never one group.
+type BuildChangeKind string
+
+// BuildChangeState defines model for BuildChange.State.
+type BuildChangeState string
+
 // BuildInputItem defines model for BuildInputItem.
 type BuildInputItem struct {
 	Approved bool `json:"approved,omitempty"`
@@ -1348,13 +1409,24 @@ type BuildLogs struct {
 
 // BuildPreflight defines model for BuildPreflight.
 type BuildPreflight struct {
-	Items []PreflightItem `json:"items"`
+	// Changes What this version changes against the newest one, computed from the diff between that version's tag and HEAD. Empty when specUnchanged, and every row is `new` when the project has no version yet.
+	Changes []BuildChange `json:"changes,omitempty"`
+
+	// CurrentVersion The newest version's tag name, or empty when the project has never been built. Ordered by tag creation time, not by any number in the name.
+	CurrentVersion string          `json:"currentVersion,omitempty"`
+	Items          []PreflightItem `json:"items"`
 
 	// NeedsInput Whether preflight emitted any item at all. Kept as the broad "there is something to show" flag; it does NOT gate Build, because an external dependency's values are collected on the Builds page while the coding agent runs and are enforced at the deploy gate instead.
 	NeedsInput bool `json:"needsInput"`
 
 	// NeedsResolution Whether any emitted item blocks the version cut — a dependency the design itself cannot resolve (unresolved, missing spec, or an org service awaiting access). This is the ONLY flag a client may block Build on.
 	NeedsResolution bool `json:"needsResolution"`
+
+	// SpecUnchanged Whether the `specs/` tree at HEAD matches the newest version's, so a build reuses that version and reopens its milestone instead of cutting a new one. The client locks the version field and says Rebuild.
+	SpecUnchanged bool `json:"specUnchanged,omitempty"`
+
+	// SuggestedVersion What the version field is prefilled with — `v<count of versions + 1>`, incremented until the name is free. A suggestion only; the user may replace it.
+	SuggestedVersion string `json:"suggestedVersion,omitempty"`
 }
 
 // BuildProgressEvent One SSE frame on the VERSION progress stream, which spans every run that has worked the version. `type` discriminates the payload: `cycle` carries a RunCycleView (client upserts by id), `line` one RunProgressLine, and `done` says why the stream ended (the server then closes it). `cycle` and `line` frames also carry `run` — a version's story spans several executions, so a cycle is only identified once you know which run opened it.
@@ -1397,6 +1469,9 @@ type BuildProgressRunKind string
 // BuildRequest defines model for BuildRequest.
 type BuildRequest struct {
 	Inputs []BuildInputItem `json:"inputs,omitempty"`
+
+	// Version The tag name to cut for this version. Empty takes the suggested one. Must be a valid tag name; a name already in use is a 409. Ignored when the spec tree is unchanged, because that build reuses the existing version.
+	Version string `json:"version,omitempty"`
 }
 
 // BuildResponse defines model for BuildResponse.
@@ -1416,6 +1491,9 @@ type BuildRunList struct {
 
 // BuildStage Build-stage aggregate on ProjectStatus (#184) — the version the newest milestone run is working, and how that run is doing. Deliberately count-free - the only honest source of a per-version task tally is the version's milestone on GitHub, and this endpoint is polled at 5s. The console renders counts from the list-tasks response it already holds, on the surface that already pays for it.
 type BuildStage struct {
+	// FailureCode Why the build failed, as RunFailure.code, when status is `failed` and the platform recorded a failure — so the overview's track can say what went wrong in the same words as the build page. Empty otherwise.
+	FailureCode string `json:"failureCode,omitempty"`
+
 	// Status idle (never built), running, failed, cancelled, succeeded. `cancelled` is its own value for the same reason it is on BuildSummary — a person abandoning an increment is a different fact from the platform failing to deliver one, and the project badge read "Build failed" over a build somebody had deliberately stopped.
 	Status string `json:"status"`
 
@@ -1426,6 +1504,9 @@ type BuildStage struct {
 // BuildSummary One entry of the version ledger — a spec version tag and the state of the newest milestone run that has worked it. A ledger read has no live workflow query, so "started" never occurs here.
 type BuildSummary struct {
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+
+	// FailureCode The failure class of a failed version, as RunFailure.code, when the platform recorded one (empty otherwise). Finer than `reason` — `plan-failed` says which phase, this says what went wrong in it — and cheap for the ledger, which is built from the run row that holds it.
+	FailureCode string `json:"failureCode,omitempty"`
 
 	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle list-build-runs is read by.
 	MilestoneNumber int64 `json:"milestoneNumber"`
@@ -1954,7 +2035,10 @@ type MilestoneRunView struct {
 	// Cycles Oldest first — one record per dispatch.
 	Cycles  []RunCycleView `json:"cycles"`
 	EndedAt *time.Time     `json:"endedAt,omitempty"`
-	ID      string         `json:"id"`
+
+	// Failure The fault this run is failing, or failed, on. Absent when it met none.
+	Failure *RunFailure `json:"failure,omitempty"`
+	ID      string      `json:"id"`
 
 	// Kind What this run DOES, and the value every platform predicate is written on. `dev` delivers a version — it plans its own milestone, and is the only kind that takes the one-active-build-per-project mutex. `task` works a defect inside a version already delivered; task runs execute concurrently on their own milestones. `validation` asks a shipped version's validation criteria again — it has no working set, builds nothing, and is outside the mutex so it never holds up the next build.
 	Kind            MilestoneRunViewKind `json:"kind"`
@@ -2194,13 +2278,10 @@ type ProjectStatus struct {
 	Build BuildStage `json:"build"`
 
 	// Deploy Deploy-stage aggregate on ProjectStatus (#184) — what's live in dev and rollout progress.
-	Deploy DeployStage `json:"deploy"`
-
-	// DesignStatus "", draft, approved
-	DesignStatus string `json:"designStatus"`
-	HasDesign    bool   `json:"hasDesign"`
-	HasSpec      bool   `json:"hasSpec"`
-	HasTasks     bool   `json:"hasTasks"`
+	Deploy    DeployStage `json:"deploy"`
+	HasDesign bool        `json:"hasDesign"`
+	HasSpec   bool        `json:"hasSpec"`
+	HasTasks  bool        `json:"hasTasks"`
 
 	// Phase Repo and artifact rungs only: no-repo, repo-cloning, repo-error, prompt (no spec), spec (spec, no design), tasks (both). "tasks" is terminal — delivery state lives in the build and deploy aggregates, which is what a caller should render past the spec.
 	Phase string `json:"phase"`
@@ -2272,7 +2353,7 @@ type ProjectUsageList struct {
 
 // ProvisionBody defines model for ProvisionBody.
 type ProvisionBody struct {
-	// Environments Environments to provision (default: [development])
+	// Environments Environments to provision (defaults to ["default"])
 	Environments []string `json:"environments,omitempty"`
 
 	// Params Provisioning parameters (override the design defaults)
@@ -2642,6 +2723,38 @@ type RunEventWaitingOn string
 // `run_started` opens an attempt and states its runtime, model and task kind. `agent_started`, `agent_progress` and `agent_settled` are one agent's life — the lead's or a spawned one's — carrying its label, role, depth and parent, then its live phrase, then its status, report and counters. `tool_use` and `tool_result` pair a call with its outcome through `toolUseId`. `task_started` and `task_settled` are a backgrounded shell command, which outlives the tool call that started it and so needs its own `taskId`. `git_commit`, `git_push` and `gh_action` are the run's effects on the repository and its host. `work_item` is a named unit of work whose status changed — a validation criterion, or an entry of an agent's own plan. `heartbeat` says the run is alive and what it is waiting on, so silence is never ambiguous. `notice` is an out-of-band condition (a retry, a refusal, a denied write) under a closed `code`. `turn_ended` closes one model turn with its outcome and usage, and `run_settled` closes the attempt.
 type RunEventKind string
 
+// RunFailure The platform's own record of why a run is failing — the facts that used to survive only as one aep-api log line once the run settled. Present on a run that has met a fault: while the run is still non-terminal it is the fault being RETRIED (read `attempts` against `maxAttempts`); on a failed run it is the terminal fault `terminalReason` names. Absent on a run that met none, on a cancelled run (a person stopping an increment is not a fault), and on every run failed before this record existed — a consumer renders the terminal reason alone and says the platform recorded no further details. `code` is a closed set and the console owns each code's sentence, the rule RunEvent.notice established; `detail` is the platform's recorded error text — never model output or a request body — scrubbed and capped by the producer, for a reader who wants the platform's exact words.
+type RunFailure struct {
+	// Attempts Attempts that have hit this fault so far.
+	Attempts int64 `json:"attempts"`
+
+	// Code Which failure class. `dependency-unprovisionable` a dependency the platform cannot author however often it tries (a schema the ResourceType builder refuses, a ClusterResourceType nobody installed, a Resource that never cuts a release) — the design has to change; `dependency-provision-failed` provisioning failed for a reason the platform could not call permanent, and the bounded retry is being or has been spent; `plan-turn-failed` the planning turn errored (an LLM or transport error, retried); `repository-unavailable` the run's repository, issue or credential is gone.
+	Code string `json:"code"`
+
+	// Component The component that declared the failing dependency, when the fault has one.
+	Component string `json:"component,omitempty"`
+
+	// Dependency The dependency the platform could not provision, when the fault has one.
+	Dependency string `json:"dependency,omitempty"`
+
+	// Detail The platform's recorded error text, scrubbed and capped at the producer.
+	Detail  string    `json:"detail,omitempty"`
+	FirstAt time.Time `json:"firstAt"`
+	LastAt  time.Time `json:"lastAt"`
+
+	// MaxAttempts The activity's retry bound; 0 when unbounded.
+	MaxAttempts int64 `json:"maxAttempts"`
+
+	// Permanent Repeating cannot change the answer. The producer's own classification — the one that also decided the retry policy — so "retrying cannot fix this" and the single attempt it took are two readings of one fact.
+	Permanent bool `json:"permanent"`
+
+	// Phase The run phase the fault was met in.
+	Phase string `json:"phase"`
+
+	// WorkflowID The run's workflow id — the handle an operator reads history by. Derived at read time, never stored.
+	WorkflowID string `json:"workflowId,omitempty"`
+}
+
 // RunProgressEvent One SSE frame on the run progress stream. `type` discriminates the payload: `cycle` carries a RunCycleView (the client upserts by id and renders one accordion section per cycle), `event` one RunEvent — the v2 feed — stamped with the cycle and attempt that produced it, `line` one RunProgressLine attributed to its own cycle, and `done` the terminal run state, after which the server closes the stream.
 // `event` and `line` are the same feed in two envelope versions and a single stream can carry both: a run whose earlier cycles were dispatched before the v2 cutover replays them as `line` frames and its later ones as `event` frames. A consumer must therefore handle whichever it is given rather than choosing one, for as long as the compatibility window lasts.
 type RunProgressEvent struct {
@@ -2854,7 +2967,7 @@ type SpecStage struct {
 	// Exists Any spec file created; false renders the Generate-spec CTA.
 	Exists bool `json:"exists"`
 
-	// Version Latest v<N> spec tag; "" if never published.
+	// Version The newest spec version's name; "" if never published.
 	Version string `json:"version"`
 }
 
@@ -2882,7 +2995,7 @@ type TagList struct {
 	// SpecDirty True when specs/ changed after latest was tagged.
 	SpecDirty bool `json:"specDirty,omitempty"`
 
-	// Tags Spec version tags (v<N>), newest first.
+	// Tags Spec version tags, newest first. A version carries the name the user gave it at build time (`v<N>` when they kept the suggestion), and "newest" is the tags' creation order, not any number in the name.
 	Tags []string `json:"tags"`
 }
 
@@ -3348,13 +3461,13 @@ type GetBuildLogsParams struct {
 
 // GetDependencyStatusParams defines parameters for GetDependencyStatus.
 type GetDependencyStatusParams struct {
-	// Environment Environment (default: development)
+	// Environment Environment (defaults to "default")
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
 // GetProjectDependencyReadinessParams defines parameters for GetProjectDependencyReadiness.
 type GetProjectDependencyReadinessParams struct {
-	// Environment Environment (default: development)
+	// Environment Environment (defaults to "default")
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
@@ -3407,7 +3520,7 @@ type ListTasksParams struct {
 	// State Which Tasks to return (default open)
 	State ListTasksParamsState `form:"state,omitempty" json:"state,omitempty"`
 
-	// Tag Filter to the Tasks of one spec/build version tag (e.g. v3). The tag is resolved to a milestone number through the platform's run rows and the filter is milestone MEMBERSHIP — never a title match against GitHub. Empty returns every version.
+	// Tag Filter to the Tasks of one spec/build version tag (e.g. m1). The tag is resolved to a milestone number through the platform's run rows and the filter is milestone MEMBERSHIP — never a title match against GitHub. Empty returns every version.
 	Tag string `form:"tag,omitempty" json:"tag,omitempty"`
 
 	// Comments Include each issue's newest comments (defaults true). Honoured only on a `tag`-scoped read — the comment fetch is anchored on the milestone, so a read spanning versions has no bounded set to ask for. Pass false to skip the GitHub round trip when the caller does not render them.

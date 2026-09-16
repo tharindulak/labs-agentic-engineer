@@ -18,6 +18,7 @@ package build
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -106,6 +107,29 @@ type BuildPreflight struct {
 	NeedsInput      bool            `json:"needsInput"`
 	NeedsResolution bool            `json:"needsResolution"`
 	Items           []PreflightItem `json:"items"`
+	// The version half of the same answer (console ADR-0029/ADR-0030): what the
+	// newest version is called, what to prefill the name field with, whether the
+	// tree has moved at all, and what this version would change. Empty when the
+	// version read could not be made — a degraded dialog, never a refused build.
+	CurrentVersion   string        `json:"currentVersion,omitempty"`
+	SuggestedVersion string        `json:"suggestedVersion,omitempty"`
+	SpecUnchanged    bool          `json:"specUnchanged,omitempty"`
+	Changes          []BuildChange `json:"changes,omitempty"`
+}
+
+// BuildChange is one row of the Start build dialog's change list: what this
+// version does to one component, dependency, resource, or to the requirements.
+type BuildChange struct {
+	Name  string `json:"name"`
+	Kind  string `json:"kind" enum:"component,external,platform-resource,requirements"`
+	State string `json:"state" enum:"new,changed,removed"`
+}
+
+// VersionFactsReader reports what the next version would be called and carry.
+// Satisfied by the app-root adapter over spec.ArtifactService. Nil leaves the
+// version half of the preflight empty — the feature unwired, not broken.
+type VersionFactsReader interface {
+	BuildVersionFacts(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error)
 }
 
 // resolutionBlockerKinds are the item kinds that gate the version cut: the
@@ -119,9 +143,10 @@ var resolutionBlockerKinds = map[string]bool{
 
 // PreflightDeps carries the preflight service's ports.
 type PreflightDeps struct {
-	Design  PreflightDesignReader
-	Status  ProvisionStatusReader
-	Catalog OrgCatalogReader
+	Design   PreflightDesignReader
+	Status   ProvisionStatusReader
+	Catalog  OrgCatalogReader
+	Versions VersionFactsReader
 }
 
 // PreflightService computes the build preflight from the design at HEAD —
@@ -130,14 +155,15 @@ type PreflightDeps struct {
 // collects: resolution blockers gate the version cut, while external config
 // values are gathered on the Builds page and enforced at the deploy gate.
 type PreflightService struct {
-	design  PreflightDesignReader
-	status  ProvisionStatusReader
-	catalog OrgCatalogReader
+	design   PreflightDesignReader
+	status   ProvisionStatusReader
+	catalog  OrgCatalogReader
+	versions VersionFactsReader
 }
 
 // NewPreflightService wires the preflight service.
 func NewPreflightService(d PreflightDeps) *PreflightService {
-	return &PreflightService{design: d.Design, status: d.Status, catalog: d.Catalog}
+	return &PreflightService{design: d.Design, status: d.Status, catalog: d.Catalog, versions: d.Versions}
 }
 
 // Preflight walks every component's dependencies at HEAD — service AND
@@ -194,7 +220,31 @@ func (s *PreflightService) Preflight(ctx context.Context, orgID, projectID strin
 		}
 	}
 
-	return BuildPreflight{NeedsInput: len(items) > 0, NeedsResolution: needsResolution, Items: items}, nil
+	out := BuildPreflight{NeedsInput: len(items) > 0, NeedsResolution: needsResolution, Items: items}
+
+	// What the click is about to DO, beside what it still needs. It is the same
+	// answer to the same press, so it rides the same response rather than a
+	// second request the console would have to wait on (console ADR-0029).
+	//
+	// Best-effort: a version read that fails costs the dialog its name field and
+	// its change list, which is a degraded dialog — refusing the whole preflight
+	// would instead refuse the BUILD, over a list nobody has to act on.
+	if s.versions != nil {
+		facts, ferr := s.versions.BuildVersionFacts(ctx, orgID, projectID)
+		if ferr != nil {
+			slog.WarnContext(ctx, "preflight: version facts read failed",
+				"project", projectID, "error", ferr)
+			return out, nil
+		}
+		out.CurrentVersion = facts.CurrentVersion
+		out.SuggestedVersion = facts.SuggestedVersion
+		out.SpecUnchanged = facts.SpecUnchanged
+		out.Changes = make([]BuildChange, 0, len(facts.Changes))
+		for _, c := range facts.Changes {
+			out.Changes = append(out.Changes, BuildChange{Name: c.Name, Kind: c.Kind, State: c.State})
+		}
+	}
+	return out, nil
 }
 
 // itemsFor computes the 0, 1, or 2 preflight items a single dependency raises.

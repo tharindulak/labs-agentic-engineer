@@ -83,21 +83,21 @@ The dependency is the *service* the product needs (`currency-service`); the
 - **Accept the assumption** appears inline, only for an interface the agent
   wrote, and is the only way the `assumed` record gets written.
 
-**The Build drawer lists; it does not resolve.** One row per blocking
-dependency, each with **Open** to its definition (an org-service has no
-directory and stays a design-view matter), and one button — **Resolve all in
-chat** — that runs the flow over every open dependency and ends back at
-Build. Opening a definition or starting the batch closes the drawer, which as
-an overlay would otherwise cover what it just opened. The paste-a-spec form is
-gone from the drawer.
+**The Build drawer lists; it does not resolve.** — *superseded by
+[ADR-0029](ADR-0029-build-asks-in-a-dialog-that-lists.md).* The rule holds;
+the container does not. Build now opens a **Resolve dependencies** dialog —
+one row per blocking dependency, names only, and one button, **Resolve**,
+which runs the flow over every open dependency. There is no per-row **Open**
+(the rail reaches each definition), and the paste-a-spec form is gone.
 
 **One state per dependency.** The dependencies read model is per component;
 the definition is one file, so the console folds the rows by name
-(`dependencyStates.ts`) and the rail, the view and the drawer read one answer.
+(`dependencyStates.ts`) and the rail, the view and the resolve dialog read one
+answer.
 
 ## Consequences
 
-- "Resolve via chat" is gone from the drawer and from the lexicon; the
+- "Resolve via chat" is gone from the lexicon; the
   design view's dependency cards keep their chat button, now sending the
   skill command.
 - `SpecSelection` is unchanged; `followSelection` sends a `dependency.json`

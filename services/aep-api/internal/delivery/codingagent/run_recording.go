@@ -178,6 +178,18 @@ type recordingMeta struct {
 //     accounts for the seq-less lines it used to ignore. Dark-zone markers are
 //     the one exception — they keep their stable negative seqs and consume no
 //     position.
+//   - LastLineTS is the pod-clock timestamp of the newest line INGESTED, seq
+//     -carrying ones included, and it is what the next read's window is measured
+//     from. It has to be the DATA's clock and not the platform's: the window used
+//     to start at the instant the previous read RETURNED, which assumes the
+//     answer described that instant. It does not — an OpenChoreo log call took a
+//     measured 13.22 s, and nothing says which moment inside it the log was read
+//     at — so the assumption moved the window's start past lines that had never
+//     been read, and a cursor that only moves forward never asked for them
+//     again. Anchored on the data, a stalled read makes the next window WIDER by
+//     exactly the length of the stall, which costs a re-read that dedupe throws
+//     away. (It is a superset of ProseTS, which is kept because it is the cursor
+//     that dedupes the seq-LESS lines; this one dedupes nothing.)
 //   - BootSeq is the last dark-zone marker written. Those markers carry stable
 //     NEGATIVE seqs and are re-derived on every poll, so recording one per poll
 //     would write the same row hundreds of times; only a state TRANSITION is
@@ -185,6 +197,7 @@ type recordingMeta struct {
 type recordCursor struct {
 	ProducerSeq int64     `json:"producerSeq"`
 	ProseTS     time.Time `json:"proseTs,omitempty"`
+	LastLineTS  time.Time `json:"lastLineTs,omitempty"`
 	LastSeq     int64     `json:"lastSeq"`
 	BootSeq     int64     `json:"bootSeq"`
 }

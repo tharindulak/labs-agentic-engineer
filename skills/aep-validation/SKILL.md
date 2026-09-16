@@ -269,6 +269,10 @@ Then: write the test plan, author one spec per uncovered e2e criterion
 live app is the only trustworthy source), and remember the bar: a spec
 counts only after passing twice consecutively against the live app.
 
+- **One browser at a time.** Work the criteria in sequence, in this agent
+  — a live Chromium is the largest thing in the cycle's pod, and a second
+  session OOM-kills the run mid-phase. Splitting the criteria across
+  dispatched agents looks like parallel work and buys an OOM instead.
 - Plan artifact: `tests/validation/test-plan.md` — one section per
   criterion (id, must, target, numbered steps, expected assertion).
   Commit it before writing specs. On re-validation, append new sections;

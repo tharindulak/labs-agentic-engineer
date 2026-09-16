@@ -31,11 +31,18 @@ into the runner pod at `/app/skills` for live skill edits (see
   in argv or URL. Don't add a third path. Changes to the generated refresh
   scripts must keep `credhelper.test.ts` green — it drives them with real `git`.
 - Runner `console.*` is a **user-facing** channel, and it shares the file
-  descriptor the NDJSON progress feed writes to. `installConsoleScrubber()` at
-  each entry point converts every call into a scrubbed `notice` run event, so
+  descriptor the NDJSON progress feed writes to. `installConsoleScrubber()`
+  converts every call into a scrubbed `notice` run event, so
   the feed stays parseable NDJSON end to end; don't bypass it by writing to
   `process.stdout` directly. The BFF still wraps any non-NDJSON pod line into a
   build-log event, but that is now a safety net, not the normal path.
+  **Redaction needs the credential ENROLLED, not just the console wrapped.**
+  `installLogRedaction()` does both in one call so every entrypoint gets both,
+  enrolling from `lib/credential_env.ts` — which MIRRORS the Go dispatch
+  constants with nothing mechanical between them, so a credential added there
+  is added here too. One the scrubber cannot enroll is reported by name rather
+  than dropped in silence. Rationale, and the credhelper path this cannot
+  reach: ADR-0002 decision 19.
 - **The progress contract is RUN EVENTS v2, and it is GENERATED, not written
   here.** `RunEvent` lives in `packages/contracts/api/v1/openapi.yaml` and
   reaches this package through `openapi-typescript` (see the generated-types

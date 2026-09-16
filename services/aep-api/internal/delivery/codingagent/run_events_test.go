@@ -18,10 +18,12 @@ package codingagent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
@@ -51,9 +53,10 @@ func TestBootstrapRunEventNarratesTheDarkZone(t *testing.T) {
 		{"no capacity", true, "Pending", "Unschedulable", "0/3 nodes are available: Too many pods.", seqBootUnschedulable, gen.RunEventCodeRunnerUnschedulable, gen.RunEventLevelWarn},
 		{"booting", true, "Running", "", "", seqBootStarting, gen.RunEventCodeRunnerStarting, gen.RunEventLevelInfo},
 	}
+	observedAt := time.Date(2026, 9, 9, 9, 15, 47, 0, time.UTC)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ev := bootstrapRunEvent(tc.podFound, tc.phase, tc.reason, tc.message)
+			ev := bootstrapRunEvent(observedAt, tc.podFound, tc.phase, tc.reason, tc.message)
 			if ev.Kind != gen.RunEventKindNotice || ev.AgentID != leadAgentID {
 				t.Errorf("dark-zone event = %+v, want a notice on the lead", ev)
 			}
@@ -69,8 +72,54 @@ func TestBootstrapRunEventNarratesTheDarkZone(t *testing.T) {
 			if ev.Level != tc.wantLevel {
 				t.Errorf("level = %q, want %q", ev.Level, tc.wantLevel)
 			}
-			if !ev.TS.IsZero() {
-				t.Errorf("dark-zone notice carries a clock (%s) — it would advance a reader past unseen output", ev.TS)
+			if !ev.TS.Equal(observedAt) {
+				t.Errorf("ts = %s, want the instant the platform read the pod (%s) — see TestPlatformNoticeCarriesARealInstant", ev.TS, observedAt)
+			}
+		})
+	}
+}
+
+// TestPlatformNoticeCarriesARealInstant pins the ONE fact every platform-minted
+// event on this feed has to get right, and it is pinned on the WIRE FORM because
+// that is where it went wrong.
+//
+// `RunEvent.ts` is required by the contract and generates as a `time.Time`, so a
+// notice built without one does not omit the field: it marshals Go's zero value
+// into `0001-01-01T00:00:00Z`, a perfectly well-formed date that no consumer can
+// tell from a real one. A console did exactly what it should with it and
+// subtracted it from the clock, and because these notices belong to the lead,
+// the lead's age column read `1065409035m47s` — the 2026 years from Go's zero
+// time to the afternoon someone was watching a live run.
+//
+// So: a real instant, or the field would have to be absent, and the contract
+// does not allow absent. The platform is the producer of these events and it
+// knows when it derived each one, which makes the real instant the honest answer
+// rather than merely the safe one.
+func TestPlatformNoticeCarriesARealInstant(t *testing.T) {
+	t.Parallel()
+
+	at := time.Date(2026, 9, 9, 9, 15, 47, 0, time.UTC)
+	notices := map[string]gen.RunEvent{
+		// The dark zone, which is at the head of very nearly every recording:
+		// the recorder writes it before the runner has said anything at all.
+		"dark zone":       bootstrapRunEvent(at, true, "Pending", "ContainerCreating", ""),
+		"lost recording":  logsUnavailableRunEvent(at, "the recording could not be read"),
+		"gap in the feed": gapNotice(at, 7, 3),
+		"bare":            platformNotice(at, 9, gen.RunEventLevelInfo, "something the platform wants to say"),
+	}
+	for name, ev := range notices {
+		t.Run(name, func(t *testing.T) {
+			if !ev.TS.Equal(at) {
+				t.Errorf("%s notice is stamped %s, want the instant its caller derived it (%s)", name, ev.TS, at)
+			}
+			// The wire form, because a struct field that reads fine in Go is what
+			// marshalled into a date two millennia old.
+			b, err := json.Marshal(ev)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(b), "0001-01-01") {
+				t.Errorf("%s notice on the wire carries Go's zero time: %s", name, b)
 			}
 		})
 	}
@@ -82,14 +131,15 @@ func TestBootstrapRunEventNarratesTheDarkZone(t *testing.T) {
 func TestBootstrapRunEvent_DetailOnlyWhereTheCodeCannotSpeak(t *testing.T) {
 	t.Parallel()
 
-	if ev := bootstrapRunEvent(true, "Running", "", ""); ev.Detail != "" {
+	at := time.Date(2026, 9, 9, 9, 15, 47, 0, time.UTC)
+	if ev := bootstrapRunEvent(at, true, "Running", "", ""); ev.Detail != "" {
 		t.Errorf("booting notice carried prose %q — the code says it", ev.Detail)
 	}
-	full := bootstrapRunEvent(true, "Pending", "Unschedulable", "0/3 nodes are available: Too many pods.\nsecond line")
+	full := bootstrapRunEvent(at, true, "Pending", "Unschedulable", "0/3 nodes are available: Too many pods.\nsecond line")
 	if !strings.Contains(full.Detail, "Too many pods") || strings.Contains(full.Detail, "second line") {
 		t.Errorf("unschedulable detail = %q, want the scheduler's FIRST line", full.Detail)
 	}
-	odd := bootstrapRunEvent(true, "Pending", "SomeBrandNewReason", "")
+	odd := bootstrapRunEvent(at, true, "Pending", "SomeBrandNewReason", "")
 	if odd.Code != gen.RunEventCodeRunnerPullingImage || odd.Detail != "SomeBrandNewReason" {
 		t.Errorf("unknown waiting reason = %+v, want it bucketed under pulling with the reason as detail", odd)
 	}

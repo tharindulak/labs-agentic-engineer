@@ -141,7 +141,6 @@ export const projectStatuses: Record<
     hasDesign: false,
     hasTasks: false,
     specStatus: "pending",
-    designStatus: "pending",
     spec: { ...noSpec, agent: "working" },
     build: idleBuild,
     deploy: noDeploy,
@@ -155,7 +154,6 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "draft",
-    designStatus: "in_progress",
     spec: { exists: true, version: "", dirty: false, design: true, agent: "" },
     build: idleBuild,
     deploy: noDeploy,
@@ -172,7 +170,6 @@ export const projectStatuses: Record<
     hasDesign: false,
     hasTasks: false,
     specStatus: "failed",
-    designStatus: "",
     spec: { ...noSpec, agent: "failed" },
     build: idleBuild,
     deploy: noDeploy,
@@ -186,7 +183,6 @@ export const projectStatuses: Record<
     hasDesign: false,
     hasTasks: false,
     specStatus: "failed",
-    designStatus: "failed",
     spec: { exists: true, version: "", dirty: false, design: false, agent: "" },
     build: idleBuild,
     deploy: noDeploy,
@@ -201,7 +197,6 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    designStatus: "approved",
     spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
     build: {
       version: "v1",
@@ -218,7 +213,6 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    designStatus: "approved",
     spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
     build: {
       version: "v1",
@@ -240,7 +234,6 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    designStatus: "approved",
     spec: { exists: true, version: "v1", dirty: true, design: true, agent: "" },
     build: {
       version: "v1",
@@ -264,7 +257,6 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    designStatus: "approved",
     spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
     build: {
       version: "v1",
@@ -287,7 +279,6 @@ export const projectStatuses: Record<
     hasDesign: false,
     hasTasks: false,
     specStatus: "pending",
-    designStatus: "pending",
     spec: noSpec,
     build: idleBuild,
     deploy: noDeploy,
@@ -344,9 +335,9 @@ const deploymentsByScenario: Partial<
   deploying: {
     storefront: [
       {
-        name: "demo-shop-storefront-development",
+        name: "demo-shop-storefront-default",
         componentName: "storefront",
-        environment: "development",
+        environment: "default",
         status: "Progressing",
         releaseName: "demo-shop-storefront-a1b2c3",
         createdAt: "2026-07-12T05:04:00Z",
@@ -354,9 +345,9 @@ const deploymentsByScenario: Partial<
     ],
     "catalog-api": [
       {
-        name: "demo-shop-catalog-api-development",
+        name: "demo-shop-catalog-api-default",
         componentName: "catalog-api",
-        environment: "development",
+        environment: "default",
         status: "Ready",
         releaseName: "demo-shop-catalog-api-d4e5f6",
         endpointUrl: "https://catalog-api.dev.acme-aep.io",
@@ -365,9 +356,9 @@ const deploymentsByScenario: Partial<
     ],
     "orders-api": [
       {
-        name: "demo-shop-orders-api-development",
+        name: "demo-shop-orders-api-default",
         componentName: "orders-api",
-        environment: "development",
+        environment: "default",
         createdAt: "2026-07-12T05:05:30Z",
       },
     ],
@@ -375,9 +366,9 @@ const deploymentsByScenario: Partial<
   deployed: {
     storefront: [
       {
-        name: "demo-shop-storefront-development",
+        name: "demo-shop-storefront-default",
         componentName: "storefront",
-        environment: "development",
+        environment: "default",
         status: "Ready",
         releaseName: "demo-shop-storefront-a1b2c3",
         endpointUrl: "https://storefront.dev.acme-aep.io",
@@ -386,9 +377,9 @@ const deploymentsByScenario: Partial<
     ],
     "catalog-api": [
       {
-        name: "demo-shop-catalog-api-development",
+        name: "demo-shop-catalog-api-default",
         componentName: "catalog-api",
-        environment: "development",
+        environment: "default",
         status: "Ready",
         releaseName: "demo-shop-catalog-api-d4e5f6",
         endpointUrl: "https://catalog-api.dev.acme-aep.io",
@@ -399,9 +390,9 @@ const deploymentsByScenario: Partial<
     // all-settled while still showing the Undeployed chip.
     "orders-api": [
       {
-        name: "demo-shop-orders-api-development",
+        name: "demo-shop-orders-api-default",
         componentName: "orders-api",
-        environment: "development",
+        environment: "default",
         status: "Undeployed",
         createdAt: "2026-07-12T05:01:00Z",
       },
@@ -410,9 +401,9 @@ const deploymentsByScenario: Partial<
   "deploy-failed": {
     storefront: [
       {
-        name: "demo-shop-storefront-development",
+        name: "demo-shop-storefront-default",
         componentName: "storefront",
-        environment: "development",
+        environment: "default",
         status: "ReleaseFailed",
         releaseName: "demo-shop-storefront-a1b2c3",
         createdAt: "2026-07-12T05:04:00Z",
@@ -420,9 +411,9 @@ const deploymentsByScenario: Partial<
     ],
     "catalog-api": [
       {
-        name: "demo-shop-catalog-api-development",
+        name: "demo-shop-catalog-api-default",
         componentName: "catalog-api",
-        environment: "development",
+        environment: "default",
         status: "Ready",
         releaseName: "demo-shop-catalog-api-d4e5f6",
         endpointUrl: "https://catalog-api.dev.acme-aep.io",
@@ -433,9 +424,9 @@ const deploymentsByScenario: Partial<
     // mid-rollout picture (error + success + transitional).
     "orders-api": [
       {
-        name: "demo-shop-orders-api-development",
+        name: "demo-shop-orders-api-default",
         componentName: "orders-api",
-        environment: "development",
+        environment: "default",
         status: "Progressing",
         releaseName: "demo-shop-orders-api-g7h8i9",
         createdAt: "2026-07-12T05:01:00Z",

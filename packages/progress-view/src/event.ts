@@ -166,7 +166,12 @@ const NOTICE_LABELS: Record<string, string> = {
   permission_denied: "a tool call was denied",
   terminated: "the run was terminated from outside",
   workspace_guard: "a write outside the workspace was denied",
-  gap: "events were lost from this feed",
+  // Deliberately "missing" and not "lost": the platform raises this code the
+  // moment it notices a hole, with the pod still running and the recorder about
+  // to ask for that stretch of log again. Whether the events are GONE is the
+  // producer's to say in `detail` — "not captured yet" while they can still be
+  // fetched, "nothing can recover it now" once the recording closes short.
+  gap: "events are missing from this feed",
   artifact_failed: "an artifact could not be stored",
   ...LIFECYCLE_LABELS,
 };

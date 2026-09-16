@@ -36,12 +36,23 @@ type fakeRuntime struct {
 	logs       []openchoreo.PodLogLine
 	events     []openchoreo.RuntimeEvent
 
+	// delay runs before every call that precedes a log read. A test sets it to
+	// advance a fake clock, which is the only way to pin that the log window is
+	// computed AFTER the round trips in front of it rather than before them.
+	delay func()
+	// logSince is the sinceSeconds of the last PodLogs call — the coarse window
+	// the API actually received.
+	logSince int64
+
 	bindingCalls int
 	logCalls     int
 }
 
 func (f *fakeRuntime) ReleaseBindingName(context.Context, string, string, string, string) (string, error) {
 	f.bindingCalls++
+	if f.delay != nil {
+		f.delay()
+	}
 	if f.bindingErr != nil {
 		return "", f.bindingErr
 	}
@@ -49,11 +60,15 @@ func (f *fakeRuntime) ReleaseBindingName(context.Context, string, string, string
 }
 
 func (f *fakeRuntime) PodSnapshot(context.Context, string, string) (openchoreo.RuntimePod, error) {
+	if f.delay != nil {
+		f.delay()
+	}
 	return f.pod, f.podErr
 }
 
-func (f *fakeRuntime) PodLogs(context.Context, string, string, string, int64) ([]openchoreo.PodLogLine, error) {
+func (f *fakeRuntime) PodLogs(_ context.Context, _, _, _ string, sinceSeconds int64) ([]openchoreo.PodLogLine, error) {
 	f.logCalls++
+	f.logSince = sinceSeconds
 	return f.logs, nil
 }
 
@@ -308,5 +323,77 @@ func TestTick_SkipsCyclesThatNeverDispatchedAJob(t *testing.T) {
 
 	if rt.bindingCalls != 0 {
 		t.Fatalf("a cycle with no Job must not be looked up, got %d lookups", rt.bindingCalls)
+	}
+}
+
+// An empty snapshot is not "no pod was ever scheduled". A pod the watcher has
+// seen running cannot become a startup failure when a later read comes back
+// empty — that is the platform under load, not the cycle.
+func TestTick_EmptySnapshotAfterThePodWasSeenIsNoVerdict(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running"}}
+	cycles := newWatchedCycles(dispatchedCycle("c10", 20*time.Minute))
+	w := newTestWatcher(rt, cycles)
+
+	w.Tick(context.Background())
+	rt.pod = openchoreo.RuntimePod{}
+	for i := 0; i < 5; i++ {
+		w.Tick(context.Background())
+	}
+
+	if len(cycles.finished) != 0 {
+		t.Fatalf("a seen pod must never yield a startup verdict on empty snapshots: %+v", cycles.finished)
+	}
+}
+
+// A pod that was never seen still gets the no-pod verdict past the grace, but
+// only once the empty snapshot has held for as many ticks as a sustained 404.
+func TestTick_NoPodVerdictNeedsSustainedEmptySnapshots(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{}}
+	cycles := newWatchedCycles(dispatchedCycle("c11", 20*time.Minute))
+	w := newTestWatcher(rt, cycles)
+
+	for i := 1; i < missingTicksToFail; i++ {
+		w.Tick(context.Background())
+		if len(cycles.finished) != 0 {
+			t.Fatalf("tick %d: an empty snapshot must not be a verdict yet: %+v", i, cycles.finished)
+		}
+	}
+	w.Tick(context.Background())
+	if got := cycles.finished["c11"]; got != "startup_failed:no_pod_scheduled" {
+		t.Fatalf("finished = %q, want startup_failed:no_pod_scheduled after %d empty ticks", got, missingTicksToFail)
+	}
+}
+
+// One pod sighting in the middle of the empty streak resets it: the streak is
+// consecutive, like the 404 streak, and the sighting also marks the pod seen —
+// so the empties that follow never add up to a verdict either.
+func TestTick_EmptySnapshotStreakResetsWhenThePodAppears(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{}}
+	cycles := newWatchedCycles(dispatchedCycle("c12", 20*time.Minute))
+	w := newTestWatcher(rt, cycles)
+
+	w.Tick(context.Background())
+	w.Tick(context.Background())
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running"}
+	w.Tick(context.Background())
+	rt.pod = openchoreo.RuntimePod{}
+	for i := 0; i < 4; i++ {
+		w.Tick(context.Background())
+	}
+	if len(cycles.finished) != 0 {
+		t.Fatalf("a sighted pod resets the streak and marks the pod seen: %+v", cycles.finished)
+	}
+}
+
+// Positive evidence past the grace is still a verdict: a pod that exists but
+// never reached Running is what the startup grace is for.
+func TestTick_FoundPendingPodPastGraceFailsAtOnce(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Pending"}}
+	cycles := newWatchedCycles(dispatchedCycle("c13", 20*time.Minute))
+
+	newTestWatcher(rt, cycles).Tick(context.Background())
+
+	if got := cycles.finished["c13"]; got != "startup_failed:pod_not_running" {
+		t.Fatalf("finished = %q, want startup_failed:pod_not_running on the first tick", got)
 	}
 }

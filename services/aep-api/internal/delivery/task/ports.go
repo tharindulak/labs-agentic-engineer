@@ -80,19 +80,26 @@ type RepoResolver interface {
 	GetRepo(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error)
 }
 
-// VersionReader lists approved (tagged) spec/design versions and reads a bundle
-// at a tag — the lineage stamps and the incremental-plan baseline diff (§6).
+// ComponentEnsurer idempotently provisions the OpenChoreo Component CR for a
+// design component, erroring if no design component exists by that name.
+// projects.ComponentService satisfies it. PromoteAndExecute calls it
+// synchronously, so an unknown componentName (e.g. a caller's prefix-stripping
+// bug) fails that call rather than surfacing later inside a cycle.
+type ComponentEnsurer interface {
+	EnsureComponent(ctx context.Context, orgID, projectID, componentName string) error
+}
+
+// VersionReader lists the project's spec versions and reads a bundle at one —
+// the plan gate's build-first check and the incremental-plan baseline diff (§6).
 type VersionReader interface {
-	ListRequirementsVersions(ctx context.Context, orgID, projectID string) ([]spec.RequirementsVersionInfo, error)
-	// LatestSpecTag is the newest spec tag name (`v<N>`) read WITHOUT a
-	// network fetch — the best-effort input to the stale-spec attention flag.
-	// The list read path (ListRequirementsVersions) still fetches; this one
-	// must not, so a task-list page load pays no per-read GitHub round-trip.
-	LatestSpecTag(ctx context.Context, orgID, projectID string) string
+	// ListSpecVersionTags is the project's versions, newest first, with the
+	// newest one named. A version is identified by its ANNOTATION, not by the
+	// shape of its name (ADR-0030), so this is the only listing that sees a
+	// version the user named — the retired `v<N>` scans did not.
+	ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*spec.TagList, error)
 	// BuildScopeAtTag reads a tag's story scope (#369) — the plan turn's
 	// story set and per-component claims.
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error)
-	GetRequirementsAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 }
 
 // GitReader is the workspace-backed git surface the plan turn drives: the
@@ -129,7 +136,18 @@ type TurnClient interface {
 	Turn(ctx context.Context, conversationID, orgID, anthropicKey string, req agentsvc.TurnRequest) (io.ReadCloser, error)
 }
 
-// MilestoneResolver resolves a `?tag=v<N>` query to the milestone NUMBER the
+// Adopter hands an issue to the coding agent: file it under the deployed
+// version's milestone and start an incident run over that milestone unless one
+// is already live. *eventcore.Events satisfies it, wired at the composition
+// root — this package names no sibling slice (the task ⊥ run arch lock).
+//
+// The issue is assumed to be BARE (no milestone): the one caller is the SRE/RCA
+// handoff, which files the issue and immediately promotes it.
+type Adopter interface {
+	AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error
+}
+
+// MilestoneResolver resolves a `?tag=<name>` query to the milestone NUMBER the
 // version's Tasks live in, THROUGH THE PLATFORM'S RUN ROWS — never by matching
 // titles against GitHub. delivery.MilestoneRunRepository satisfies it.
 type MilestoneResolver interface {

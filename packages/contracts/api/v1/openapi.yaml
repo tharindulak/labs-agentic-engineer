@@ -822,6 +822,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/BuildResponse'
           description: OK
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The requested `version` name is already in use, or a build is already
+            running for this project. Nothing was cut.
         default:
           content:
             application/json:
@@ -912,13 +919,19 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows —
           never by matching titles against GitHub.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       responses:
         '200':
@@ -949,13 +962,19 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows —
           never by matching titles against GitHub.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       responses:
         '200':
@@ -1018,13 +1037,19 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows —
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows —
           never by matching titles against GitHub.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       requestBody:
         required: false
@@ -1066,12 +1091,18 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
-      - description: Spec version tag (`v<N>`), resolved to a milestone number through the run rows.
+      - description: Spec version tag — the name the user gave the version, resolved to a milestone number through the run rows.
         in: path
         name: tag
         required: true
         schema:
-          description: Spec version tag
+          description: >-
+            Spec version tag — the name the user gave the version. The pattern is
+            the character set; the server applies the same full rule it applies
+            when a version is created, which additionally refuses a leading `-`
+            or `.`, a trailing `.` or `.lock`, and `..` anywhere. A name that
+            could never have been created is refused here too.
+          pattern: ^[A-Za-z0-9._-]+$
           type: string
       - description: Cycle id, as carried by RunCycleView.id on the run read.
         in: path
@@ -1481,12 +1512,12 @@ paths:
         schema:
           description: Dependency name
           type: string
-      - description: 'Environment (default: development)'
+      - description: 'Environment (defaults to "default")'
         explode: false
         in: query
         name: environment
         schema:
-          description: 'Environment (default: development)'
+          description: 'Environment (defaults to "default")'
           type: string
       responses:
         '200':
@@ -1627,7 +1658,7 @@ paths:
         required: true
         schema:
           type: string
-      - description: 'Environment (default: development)'
+      - description: 'Environment (defaults to "default")'
         in: query
         name: environment
         schema:
@@ -2562,14 +2593,14 @@ paths:
           - closed
           - all
           type: string
-      - description: Filter to the Tasks of one spec/build version tag (e.g. v3). The tag is resolved
+      - description: Filter to the Tasks of one spec/build version tag (e.g. m1). The tag is resolved
           to a milestone number through the platform's run rows and the filter is milestone
           MEMBERSHIP — never a title match against GitHub. Empty returns every version.
         explode: false
         in: query
         name: tag
         schema:
-          description: Filter to the Tasks of one spec/build version tag (e.g. v3), by milestone
+          description: Filter to the Tasks of one spec/build version tag (e.g. m1), by milestone
             membership. Empty returns every version.
           type: string
       - description: Include each issue's newest comments (defaults true). Honoured only on a
@@ -3280,9 +3311,14 @@ components:
         id:
           type: string
         type:
-          enum: [spec_updated, spec_published, plan_derived, task_started, task_deployed, task_failed]
+          enum: [spec_updated, spec_published, plan_derived, task_started, task_deployed, task_failed, run_failed]
           type: string
           x-go-type: string
+        reason:
+          description: '`run_failed` only: the run''s failure code (RunFailure.code) when the platform
+            recorded one, else its terminal reason. A code, never prose — the console owns the
+            sentence, the same rule RunEvent.notice follows.'
+          type: string
         actorKind:
           enum: [user, agent]
           type: string
@@ -3528,9 +3564,53 @@ components:
       - logs
       - complete
       type: object
+    BuildChange:
+      additionalProperties: false
+      description: One thing this version changes, compared with the newest version — the row the
+        Start build dialog lists. Every row names something that EXISTS once the version is built,
+        which is why the requirements are not one of them — they are the input, not the output.
+        `removed` is a statement rather than an action — a build deprovisions nothing, so a removed
+        dependency's resource stays.
+      properties:
+        kind:
+          description: What the name belongs to, and the group the dialog lists it under. The two
+            dependency kinds carry opposite obligations — an `external` needs a provider and its
+            keys from the user, a `platform-resource` is provisioned by the build — so they are
+            never one group.
+          enum:
+          - component
+          - external
+          - platform-resource
+          type: string
+        name:
+          description: The component, dependency or resource name, as the design writes it.
+          type: string
+        state:
+          enum:
+          - new
+          - changed
+          - removed
+          type: string
+      required:
+      - name
+      - kind
+      - state
+      type: object
     BuildPreflight:
       additionalProperties: false
       properties:
+        changes:
+          description: What this version changes against the newest one, computed from the diff
+            between that version's tag and HEAD. Empty when specUnchanged, and every row is `new`
+            when the project has no version yet.
+          items:
+            $ref: '#/components/schemas/BuildChange'
+          type: array
+          nullable: true
+        currentVersion:
+          description: The newest version's tag name, or empty when the project has never been
+            built. Ordered by tag creation time, not by any number in the name.
+          type: string
         items:
           items:
             $ref: '#/components/schemas/PreflightItem'
@@ -3547,6 +3627,15 @@ components:
             itself cannot resolve (unresolved, missing spec, or an org service awaiting
             access). This is the ONLY flag a client may block Build on.
           type: boolean
+        specUnchanged:
+          description: Whether the `specs/` tree at HEAD matches the newest version's, so a build
+            reuses that version and reopens its milestone instead of cutting a new one. The client
+            locks the version field and says Rebuild.
+          type: boolean
+        suggestedVersion:
+          description: What the version field is prefilled with — `v<count of versions + 1>`,
+            incremented until the name is free. A suggestion only; the user may replace it.
+          type: string
       required:
       - needsInput
       - needsResolution
@@ -3560,6 +3649,11 @@ components:
             $ref: '#/components/schemas/BuildInputItem'
           type: array
           nullable: true
+        version:
+          description: The tag name to cut for this version. Empty takes the suggested one. Must be
+            a valid tag name; a name already in use is a 409. Ignored when the spec tree is
+            unchanged, because that build reuses the existing version.
+          type: string
       type: object
     BuildResponse:
       additionalProperties: false
@@ -3595,6 +3689,11 @@ components:
           x-go-type: string
         version:
           description: Spec tag the current/last build built; "" if never built.
+          type: string
+        failureCode:
+          description: Why the build failed, as RunFailure.code, when status is `failed` and the
+            platform recorded a failure — so the overview's track can say what went wrong in the
+            same words as the build page. Empty otherwise.
           type: string
       required:
       - version
@@ -3705,6 +3804,12 @@ components:
             resolves to, and the handle list-build-runs is read by.
           format: int64
           type: integer
+        failureCode:
+          description: The failure class of a failed version, as RunFailure.code, when the platform
+            recorded one (empty otherwise). Finer than `reason` — `plan-failed` says which phase,
+            this says what went wrong in it — and cheap for the ledger, which is built from the
+            run row that holds it.
+          type: string
         reason:
           description: The run's terminal reason for a failed version (empty otherwise), surfaced
             beside the Failed badge in the console. A cancelled version carries none — a person
@@ -5406,6 +5511,11 @@ components:
           items:
             type: string
           type: array
+        failure:
+          allOf:
+          - $ref: '#/components/schemas/RunFailure'
+          description: The fault this run is failing, or failed, on. Absent when it met none.
+          x-go-type-skip-optional-pointer: false
         validation:
           $ref: '#/components/schemas/RunValidation'
       required:
@@ -5771,9 +5881,6 @@ components:
           $ref: '#/components/schemas/BuildStage'
         deploy:
           $ref: '#/components/schemas/DeployStage'
-        designStatus:
-          description: '"", draft, approved'
-          type: string
         hasDesign:
           type: boolean
         hasSpec:
@@ -5808,7 +5915,6 @@ components:
       - hasDesign
       - hasTasks
       - specStatus
-      - designStatus
       - spec
       - build
       - deploy
@@ -5912,7 +6018,7 @@ components:
       additionalProperties: false
       properties:
         environments:
-          description: 'Environments to provision (default: [development])'
+          description: 'Environments to provision (defaults to ["default"])'
           items:
             type: string
           type: array
@@ -7015,6 +7121,85 @@ components:
       - kind
       - emitter
       type: object
+    RunFailure:
+      additionalProperties: false
+      description: >-
+        The platform's own record of why a run is failing — the facts that used
+        to survive only as one aep-api log line once the run settled. Present on
+        a run that has met a fault: while the run is still non-terminal it is the
+        fault being RETRIED (read `attempts` against `maxAttempts`); on a failed
+        run it is the terminal fault `terminalReason` names. Absent on a run
+        that met none, on a cancelled run (a person stopping an increment is not
+        a fault), and on every run failed before this record existed — a
+        consumer renders the terminal reason alone and says the platform recorded
+        no further details.
+        `code` is a closed set and the console owns each code's sentence, the
+        rule RunEvent.notice established; `detail` is the platform's recorded
+        error text — never model output or a request body — scrubbed and capped
+        by the producer, for a reader who wants the platform's exact words.
+      properties:
+        code:
+          description: >-
+            Which failure class. `dependency-unprovisionable` a dependency the
+            platform cannot author however often it tries (a schema the
+            ResourceType builder refuses, a ClusterResourceType nobody installed,
+            a Resource that never cuts a release) — the design has to change;
+            `dependency-provision-failed` provisioning failed for a reason the
+            platform could not call permanent, and the bounded retry is being or
+            has been spent; `plan-turn-failed` the planning turn errored (an LLM
+            or transport error, retried); `repository-unavailable` the run's
+            repository, issue or credential is gone.
+          enum:
+          - dependency-unprovisionable
+          - dependency-provision-failed
+          - plan-turn-failed
+          - repository-unavailable
+          type: string
+          x-go-type: string
+        phase:
+          description: The run phase the fault was met in.
+          type: string
+        component:
+          description: The component that declared the failing dependency, when the fault has one.
+          type: string
+        dependency:
+          description: The dependency the platform could not provision, when the fault has one.
+          type: string
+        permanent:
+          description: Repeating cannot change the answer. The producer's own classification — the
+            one that also decided the retry policy — so "retrying cannot fix this" and the single
+            attempt it took are two readings of one fact.
+          type: boolean
+        attempts:
+          description: Attempts that have hit this fault so far.
+          format: int64
+          type: integer
+        maxAttempts:
+          description: The activity's retry bound; 0 when unbounded.
+          format: int64
+          type: integer
+        firstAt:
+          format: date-time
+          type: string
+        lastAt:
+          format: date-time
+          type: string
+        detail:
+          description: The platform's recorded error text, scrubbed and capped at the producer.
+          type: string
+        workflowId:
+          description: The run's workflow id — the handle an operator reads history by. Derived at
+            read time, never stored.
+          type: string
+      required:
+      - code
+      - phase
+      - permanent
+      - attempts
+      - maxAttempts
+      - firstAt
+      - lastAt
+      type: object
     RunValidation:
       additionalProperties: false
       description: The run's validation outcome. The verdict is a RUN property, not a per-issue one, and
@@ -7301,7 +7486,7 @@ components:
           description: Any spec file created; false renders the Generate-spec CTA.
           type: boolean
         version:
-          description: Latest v<N> spec tag; "" if never published.
+          description: The newest spec version's name; "" if never published.
           type: string
       required:
       - exists
@@ -7344,7 +7529,9 @@ components:
           description: True when specs/ changed after latest was tagged.
           type: boolean
         tags:
-          description: Spec version tags (v<N>), newest first.
+          description: Spec version tags, newest first. A version carries the name the user gave
+            it at build time (`v<N>` when they kept the suggestion), and "newest" is the tags'
+            creation order, not any number in the name.
           items:
             type: string
           type: array

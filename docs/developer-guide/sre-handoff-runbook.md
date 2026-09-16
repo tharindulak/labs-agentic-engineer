@@ -3,7 +3,7 @@
 Wire an OpenChoreo alert → AI RCA → GitHub issue → coding-agent PR, end to end.
 
 ```
-ERROR log → alert rule → observer → ai-rca-agent (RCA → remediation → handoff)
+ERROR log → alert rule → observer → sre-agent (RCA → remediation → handoff)
   → aep-mcp-server → aep-api → GitHub issue (filed already adopted)
   → coding-agent Job → PR → platform merges → build → deploy
 ```
@@ -19,7 +19,7 @@ rule that decides whether the handoff will act on it at all.
 ## Prerequisites
 
 1. Local AEP stack up (`deployments/docker-compose.yml`) and a k3d OpenChoreo with the
-   observability plane (`observer`, `opensearch`, `fluent-bit`, `ai-rca-agent`).
+   observability plane (`observer`, `opensearch`, `fluent-bit`, `sre-agent`).
 2. Both sides share one Thunder (`thunder.openchoreo.localhost:8080`).
 3. AEP org connected to GitHub + an Anthropic key in org settings.
 4. The target project/components were **created through AEP** and deployed; the OC project
@@ -59,43 +59,44 @@ kubectl edit deployment ai-rca-agent -n openchoreo-observability-plane
 ```bash
 # Deploy an RCA-agent image that includes the handoff stage.
 # Use the same repo:tag as RCA_IMAGE_REPO:RCA_IMAGE_TAG in
-# scripts/setup-observability.sh — tharindulak/sre-agent:fingerprint-fix — so a
+# scripts/setup-observability.sh — tharindulak/sre-agent:thin-handoff — so a
 # later setup-observability.sh re-run picks up this local build instead of
 # pulling. (When the preferred tag is neither built nor pullable that script
-# walks back through :skill-loader, :handoff-provider, :report-sink,
-# :recurrence, :hand0ff-new and finally :anthropic-patched, printing what each
-# one costs you.)
-# fingerprint-fix, skill-loader and handoff-provider are all published, so the
-# pull path works; a local build just takes precedence over it.
+# walks back through :fingerprint-fix, :skill-loader, :handoff-provider,
+# :report-sink, :recurrence, :hand0ff-new and finally :anthropic-patched,
+# printing what each one costs you.)
+# thin-handoff, fingerprint-fix, skill-loader and handoff-provider are all
+# published, so the pull path works; a local build just takes precedence
+# over it.
 #
 # Build context is agents/, NOT agents/sre-agent: the Dockerfile pulls in
 # siblings from the parent directory.
 cd <openchoreo-repo>/agents
-docker build -t tharindulak/sre-agent:fingerprint-fix -f sre-agent/Dockerfile .
-k3d image import tharindulak/sre-agent:fingerprint-fix -c <cluster>
-kubectl set image deploy/ai-rca-agent -n openchoreo-observability-plane \
-  "*=tharindulak/sre-agent:fingerprint-fix"
+docker build -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
+k3d image import tharindulak/sre-agent:thin-handoff -c <cluster>
+kubectl set image deploy/sre-agent -n openchoreo-observability-plane \
+  "*=tharindulak/sre-agent:thin-handoff"
 
 # Enable the handoff. There is no auto-dispatch switch any more: filing IS the
 # hand-over, and whether a coding run starts is what the create call answers
 # (adopted / adoptionError / suppressed), recorded on the RCA report.
 kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \
-  '{"data":{"HANDOFF_ENABLED":"true","HANDOFF_API_URL":"http://host.k3d.internal:3401","HANDOFF_PROVIDER_FILE":"/etc/rca-agent/handoff/provider.json"}}'
-# The descriptor and the skill are mounted by setup-observability.sh step 3d
-# (ConfigMaps + EXTERNAL_SKILLS_DIR). On :fingerprint-fix (as on :skill-loader)
-# the mounted skill is the stage's entire playbook, so a SKILL.md edit +
-# re-apply needs no image rebuild.
-kubectl rollout restart deploy/ai-rca-agent -n openchoreo-observability-plane
-kubectl logs -n openchoreo-observability-plane deploy/ai-rca-agent | grep -E "MCP connection|Handoff provider"
-# expect: the base tools + the 2 handoff tools the descriptor names, and
-# "Handoff provider loaded from /etc/rca-agent/handoff/provider.json"
+  '{"data":{"HANDOFF_ENABLED":"true","HANDOFF_API_URL":"http://host.k3d.internal:3401"}}'
+# The coding-agent-handoff skill is mounted by setup-observability.sh step 3e
+# (ConfigMaps + EXTERNAL_SKILLS_DIR); it is the stage's entire playbook, so a
+# SKILL.md edit + re-apply needs no image rebuild. There is no provider
+# descriptor any more — tools are discovered via standard MCP
+# (server_name="handoff").
+kubectl rollout restart deploy/sre-agent -n openchoreo-observability-plane
+kubectl logs -n openchoreo-observability-plane deploy/sre-agent | grep "MCP connection"
+# expect: the handoff MCP connection listed among the tool sources loaded
 ```
 
 The alert pipeline must actually evaluate rules — this is the step that is commonly broken:
 
 - observability-logs-opensearch module chart >= 0.5.1 (ships the logs-adapter)
 - `observer-config`: `LOGS_ADAPTER_ENABLED=true`,
-  `RCA_SERVICE_URL=http://ai-rca-agent:8080`, `ALERT_SUPPRESSION_WINDOW=1h`
+  `RCA_SERVICE_URL=http://sre-agent:8080`, `ALERT_SUPPRESSION_WINDOW=1h`
   (unset suppression ⇒ duplicate issues + dispatches)
 - an `ObservabilityAlertRule` scoped to the component (UID + name labels) with
   `actions.incident.enabled` + `triggerAiRca: true`
@@ -104,7 +105,7 @@ The alert pipeline must actually evaluate rules — this is the step that is com
 
 ```bash
 # Trigger the failure the rule matches, then watch:
-kubectl logs -f -n openchoreo-observability-plane deploy/ai-rca-agent | grep -vE "Pydantic V1"
+kubectl logs -f -n openchoreo-observability-plane deploy/sre-agent | grep -vE "Pydantic V1"
 # expect, in order: POST /analyze 200 → RCA completed → Remediation completed →
 #   Running handoff agent → "Handoff completed: classification=…, issue=…, adopted=True"
 #   adopted=False means the issue was filed but nothing will work it — the log

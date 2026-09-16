@@ -42,7 +42,9 @@
 // (the git token, minted mid-run) still redact earlier-wrapped methods.
 
 import { format } from "node:util";
-import { emit } from "./emitter.js";
+import { emit, primeScrubber } from "./emitter.js";
+import { MIN_LITERAL_LEN } from "./scrubber.js";
+import { scanCredentialEnv } from "../credential_env.js";
 
 type ConsoleMethod = "log" | "info" | "warn" | "error" | "debug";
 
@@ -64,6 +66,41 @@ const LEVELS: Record<ConsoleMethod, "info" | "warn" | "error"> = {
   warn: "warn",
   error: "error",
 };
+
+/**
+ * The whole log-safety install, in one call — for every entrypoint.
+ *
+ * Two steps that only work together: wrap console so output reaches the feed as
+ * scrubbed events, and ENROLL the mounted credentials so the scrubber has
+ * literals to match. Wrapping without enrolling is what shipped: the feed was
+ * well-formed and the git credential went through it intact, because shape
+ * patterns cover only the well-known GitHub prefixes.
+ *
+ * One function rather than two calls per entrypoint, for the same reason
+ * `requireWorkflowBodies` sits inside `runClaudeQuery`: a third entrypoint
+ * cannot then forget half of it. Ordering is fixed here too — enrolling after
+ * the first line is logged is a race nobody should have to remember.
+ */
+export function installLogRedaction(
+  target: ConsoleLike = console,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  installConsoleScrubber(target);
+  const { values, tooShort } = scanCredentialEnv(env);
+  primeScrubber(values);
+  if (tooShort.length > 0) {
+    // NAMES only, and deliberately not fatal. A value this short cannot be
+    // enrolled without the literal shredding ordinary log text, so the honest
+    // outcome is an unprotected credential the operator is TOLD about — a
+    // misconfiguration is not itself a disclosure, and failing a whole cycle
+    // over a placeholder in a local run would be the worse trade. Routed
+    // through `target` so it lands on the feed like every other line.
+    target.warn(
+      `[redaction] mounted credential(s) under ${MIN_LITERAL_LEN} chars cannot be enrolled; ` +
+        `their values will NOT be redacted from this log: ${tooShort.join(", ")}`,
+    );
+  }
+}
 
 export function installConsoleScrubber(target: ConsoleLike = console): void {
   if (wrapped.has(target)) return;

@@ -41,7 +41,7 @@ viewer then reads.
 
 | Loss | Old mechanism | The recorder's answer |
 |---|---|---|
-| a burst larger than one page between two polls | the read kept the last 64 KiB (`logPageBytes`) | reads with the client's `sinceSeconds` cursor and **no byte cut**; dedupes by `seq` |
+| a burst larger than one page between two polls | the read kept the last 64 KiB (`logPageBytes`) | reads with a time cursor and **no byte cut**; dedupes by `seq` |
 | a finished run's history was its newest 200 events | the archive read, capped at `legacyProgressLimit` | viewers read the recording, never the pod or the archive — **the window is gone** |
 | the pod exited between two polls | nothing read after the last tick | a terminal pod phase triggers **one final full read** |
 | cancel deletes the Component, so its log is unreadable from that instant | nothing | the recording closes with a runner-less `run_settled {outcome: cancelled}`, state `gaps` |
@@ -59,6 +59,33 @@ OpenChoreo log API still serves the pod while the Component exists), and closes
 the recording `complete` — or `gaps` if anything was known lost. A process
 restart leaves it OPEN: a restart re-`Begin`s the same attempt and resumes from
 the cursor persisted in `state.json`, so nothing is written twice.
+
+### The read window is measured from the DATA, and every poll is bounded
+
+Each incremental read asks from an **absolute instant**: the pod-clock timestamp
+of the newest line already ingested (`cursor.lastLineTs`), less a 3 s overlap for
+the log API's whole-second granularity. The recorder's binding name is resolved
+**once per session** — it is fixed for the attempt — and re-resolved only when a
+read reports it gone, and the absolute instant is converted into the API's coarse
+`sinceSeconds` **in the breath before the log call**, never earlier.
+
+All three are one measured fix. The window used to be measured from the
+platform's own clock, stamped when the previous read RETURNED, and converted
+before three sequential OpenChoreo round trips (binding list → resource tree →
+pod logs) consumed it. Both halves assert something untrue: that the answer
+described the instant the call returned, and that no time passes between choosing
+a window and applying one. One `logs` handler took 13.22 s and one poll spent
+6.4 s in front of a 5-second window, so three times in one run the next window
+began AFTER lines the recorder had never read — and because the cursor only ever
+moves forward, nothing asked for them again. Anchored on the data, a 13-second
+stall makes the next window 13 seconds wider, which costs a re-read that dedupe
+throws away.
+
+Each poll's OpenChoreo calls carry a **30 s deadline** (the client has none of
+its own, so a hung call used to block the session loop silently, leaving a
+recording that simply stopped growing and not one warning to say why). A poll
+that fails leaves the cursor where it was, so the next one asks for the same
+window — widened by however long the failure took.
 
 The runner makes **no network call** for any of this. Its stdout is still the
 one transport, which is what keeps a runner that cannot reach the platform from
@@ -85,7 +112,11 @@ more is coming.
 counts, and the recorder's own cursor. `events` counts ROWS across attempts while
 `cursor.lastSeq` is one attempt's highest position, so the two need not be equal
 — the dark-zone markers are counted and hold no position. What they must never
-do is disagree about whether an event exists. The state machine:
+do is disagree about whether an event exists. The cursor holds the producer seq
+and the two pod-clock timestamps a resumed session needs: `proseTs` (the last
+seq-LESS line recorded, which is how those are deduped) and `lastLineTs` (the
+newest line of ANY kind ingested, which is what the next read window is measured
+from). The state machine:
 
 ```text
 (no directory) ─── none
@@ -116,12 +147,30 @@ reading recorded seqs report a missing event between every pair. A seq-less line
 to fd 1, a crash tail) has no producer numbering at all, so its cursor is the
 kubelet's own monotonic timestamp.
 
-A detected gap tries the observability archive first (**its only remaining
-job**: it indexed the same pod's output all along, so a burst the platform's own
-read missed may still be there). What cannot be recovered becomes a
-`notice {code: gap}` written INTO the recording at the point the events went
-missing — a reader has to be able to see WHERE the hole is — and the recording
-is marked `gaps`.
+A detected gap is repaired from two sources, in order: the **live pod**, re-read
+with an explicit window reaching back to the last line ingested (while the
+Component exists its whole log is still served — the incident that motivated this
+was diagnosed by fetching a complete `1..478` after the fact, so a hole in the
+recording is usually a hole in what the platform ASKED FOR), and then the
+**observability archive** for what the pod can no longer give back — a stretch
+the kubelet has rotated away, or a Component already deleted. That is the
+archive's **only remaining job**. At most one repair per page, and a source that
+errors or answers empty is logged at WARN: the incident left no trace at all
+because the only log line on this path sat after an early return that both cases
+took.
+
+What is still missing becomes a `notice {code: gap}` written INTO the recording
+at the point the events went missing — a reader has to be able to see WHERE the
+hole is — and the recording is marked `gaps`.
+
+The notice is worded **by recoverability**, because the wording is a claim the
+platform has to be able to stand behind. Mid-run it says *"… N event(s) of this
+run have not been captured yet"*: the pod is running, its log is readable, and
+the recorder is about to ask for that stretch again. The unrecoverable sentence
+belongs to the one moment it is true — the recording closing as `gaps`, which
+writes a final row saying nothing can recover it now. `@aep/progress-view` owns
+the label for `code: gap` ("events are missing from this feed") and the producer
+owns the specifics; neither may assert a loss the other has not established.
 
 The **dark zone** (pod scheduling, image pull, container boot) is recorded too,
 one row per state rather than one per poll: a viewer that reads only the file
@@ -266,13 +315,23 @@ event exactly as the runner did, right up to the first seq-less line.
 
 Everything the platform itself puts on a feed — the dark zone (pod scheduling,
 image pull, container boot), a truncation, a lost log — is a `notice` on the
-lead, on a STABLE NEGATIVE seq, with NO timestamp:
+lead, on a STABLE NEGATIVE seq, stamped with the instant the platform derived it:
 
 - the negative seq is the marker's id: a client dedups on `(cycle, attempt, seq)`
   and a producer's seqs are positive, so the same state re-derived every 2s
   collapses to one row and a state TRANSITION shows exactly one new row;
-- the zero timestamp keeps a marker from advancing a reader's cursor past output
-  nobody has seen;
+- the timestamp is a REAL instant, passed in by whoever derived the marker — the
+  read that observed the pod, or the clock of the line that revealed a gap. These
+  markers once carried none, on the reasoning that ordering is `seq`'s job (it
+  is) so a marker needs no clock of its own. But `ts` is required by the contract
+  and generates as a `time.Time`, so "none" was never what went on the wire:
+  Go's zero value marshalled as `0001-01-01T00:00:00Z`, and because these
+  notices belong to the LEAD and the dark-zone one heads very nearly every
+  recording, a console subtracting it from its clock showed the lead agent 2026
+  years old and drew its timeline lane across the whole axis. A field a producer
+  cannot fill honestly has to be absent; this one cannot be absent, so it is
+  filled honestly. (`@aep/progress-view` refuses an implausible instant too — a
+  recording written before this fix still holds zero-stamped markers.)
 - `agentId: lead` because the field is required and any other value names a
   SPAWNED agent under the contract — a made-up id would have a console open a row
   for an agent that does not exist.

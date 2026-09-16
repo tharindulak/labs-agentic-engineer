@@ -41,12 +41,16 @@ BFF, which is its only backend.
 ## Spec versioning
 
 The whole spec — requirements, design, and validation files under the repo's
-`specs/` tree — is versioned as **one incrementing `v<N>` git tag sequence**,
-cut when the user approves/publishes. There are no per-artifact version
-trails (the earlier `v<N>-<M>` design-revision tags are legacy). The console
-reads this via `GET /projects/{p}/tags` (`latest` + `specDirty`): the
-"vN published" chip is the latest tag, and "draft changes" means `specs/`
-moved on GitHub after that tag.
+`specs/` tree — is versioned as **one tag per snapshot**, cut when the user
+approves/publishes. **The user names the version** in the Start build dialog;
+the box suggests `v<count of versions + 1>` and most projects keep it, so the
+sequence usually reads `v1`, `v2`, `v3`. Order is the tags' creation order,
+not the number
+([ADR-0030](design/decisions/ADR-0030-a-version-carries-the-name-the-user-gives-it.md)).
+There are no per-artifact version trails (the earlier `v<N>-<M>`
+design-revision tags are legacy). The console reads this via
+`GET /projects/{p}/tags` (`latest` + `specDirty`): the published chip names
+the latest tag, and "draft changes" means `specs/` moved on GitHub after it.
 
 ## Personas
 
@@ -92,6 +96,19 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- Build asks in a dialog — one click, one surface, never a drawer for some
+  projects and a modal for the rest. An open dependency opens **Resolve
+  dependencies** (the names, and one **Resolve** that runs the guided flow over
+  all of them); everything else opens **Start build**, which carries the
+  version's **name** — the user's, and the tag that gets cut — over what this
+  version changes, grouped **Components** · **External dependencies** ·
+  **Platform resources** so a name says what it is, chipped **new** and
+  **removed**. An unchanged spec tree rebuilds the version it matches rather
+  than cutting a second one
+  ([ADR-0029](design/decisions/ADR-0029-build-asks-in-a-dialog-that-lists.md),
+  [ADR-0030](design/decisions/ADR-0030-a-version-carries-the-name-the-user-gives-it.md)) —
+  [#749](https://github.com/wso2/labs-agentic-engineer/issues/749)
+  (contract: `BuildPreflight.changes` + the version fields, `BuildRequest.version`)
 - Spec view — the design reads as its parts: the rail's **DESIGN** section
   lists *Architecture · Domain model · Security* as documents, then a
   collapsible **Flows** group — one row per key flow, a ghost row while the

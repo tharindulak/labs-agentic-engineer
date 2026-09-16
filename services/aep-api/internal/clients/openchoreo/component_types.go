@@ -152,11 +152,14 @@ type ComponentTrait struct {
 
 // -- Deployment (ReleaseBinding) ---------------------------------------------
 
-// DevEnvironmentName is the platform's fixed dev environment — the OC
-// environment every project auto-deploys to. The single shared constant for
-// what was previously pinned per-feature (runtimeconfig, provisioning,
-// codingagent, project status).
-const DevEnvironmentName = "development"
+// DevEnvironmentName is the platform's fixed environment — the OC environment
+// every project auto-deploys to. The single shared constant for what was
+// previously pinned per-feature (runtimeconfig, provisioning, codingagent,
+// project status). Where Agent Manager is deployed alongside AEP this is the
+// same Environment object Agent Manager's platform-resources chart owns, so
+// both products share one environment, one environment Thunder and one
+// gateway.
+const DevEnvironmentName = "default"
 
 // ComponentSpecDesired is the platform-owned half of a Component's spec: the
 // trait shape and the build/deploy policy.
@@ -241,6 +244,17 @@ type ReleaseBindingSummary struct {
 	// and wrong. The run supervisor compares it against the release the
 	// component's newest succeeded build would cut (delivery.ReleaseNameFor).
 	ReleaseName string
+	// ExternalURL is the public URL this binding advertises, "" for a component
+	// that exposes none (a worker, an internal-only service).
+	//
+	// It rides the summary because it is a fact of the SAME object, read on the
+	// same call: `status.endpoints[].externalURLs`, picked by the same
+	// scheme preference as the deployments read (PreferPlainHTTPEndpoints).
+	// Carrying it is what lets a reader ask whether the binding's Ready claim is
+	// true at the EDGE without a second request — see the endpoint deploy-wait
+	// in `projects`, where Ready over an unanswerable URL is what dispatched
+	// validation against a system that could not be reached.
+	ExternalURL string
 }
 
 // -- ComponentOpenAPI (Test tab) ----------------------------------------------

@@ -47,6 +47,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
@@ -85,7 +86,7 @@ func (r *AgentProgressReader) CycleEvents(_ context.Context, cycle *delivery.Run
 		// The directory is there and the events are not: the platform HAD a record
 		// and cannot serve it. An empty feed would read as an agent that said
 		// nothing, which is the opposite fact.
-		return []gen.RunEvent{logsUnavailableRunEvent("the recording could not be read")}, cycle.Attempts, cursor, nil
+		return []gen.RunEvent{logsUnavailableRunEvent(time.Now(), "the recording could not be read")}, cycle.Attempts, cursor, nil
 	}
 
 	attempt, offset := parseFeedCursor(cursor)
@@ -96,7 +97,7 @@ func (r *AgentProgressReader) CycleEvents(_ context.Context, cycle *delivery.Run
 		events, next, err := r.recordings.ReadFrom(cycle.OrgID, cycle.ID, attempt, offset)
 		switch {
 		case errors.Is(err, ErrNoRecording):
-			return []gen.RunEvent{logsUnavailableRunEvent("the recording could not be read")}, attempt, cursor, nil
+			return []gen.RunEvent{logsUnavailableRunEvent(time.Now(), "the recording could not be read")}, attempt, cursor, nil
 		case err != nil:
 			return nil, attempt, cursor, fmt.Errorf("read cycle recording: %w", err)
 		}
@@ -187,22 +188,41 @@ func nextAttempt(attempts []int, attempt int) (int, bool) {
 //     on (cycle, attempt, seq) and a producer's seqs are positive, so the same
 //     state re-derived every tick collapses to one row and a state TRANSITION
 //     shows exactly one new row;
-//   - the ZERO timestamp: these are transient markers, not wall-clock log lines.
-//     A recorded marker (the recorder writes the dark zone into the file) is
-//     ordered by its position in the file, so it needs no clock of its own;
+//   - `at`, the instant the platform DERIVED this marker, passed in by the
+//     caller that derived it — see below;
 //   - `agentId: lead`. The field is required and there is no honest third value:
 //     any id other than `lead` names a SPAWNED agent under the contract, so a
 //     made-up one would make a console open a row for an agent that does not
 //     exist.
 //
+// `at` is a parameter and not a `time.Now()` in here because the caller always
+// knows a truer instant than this function could read: the recorder stamps the
+// read that observed the pod, and a gap takes the clock of the line that
+// revealed it, which stays exact even when the page is a backfill read minutes
+// later.
+//
+// IT MUST BE A REAL INSTANT. These markers used to carry no timestamp at all, on
+// the reasoning that a recorded marker is ordered by its position in the file
+// and needs no clock of its own — and ordering is indeed `seq`'s job, the
+// contract says so. But `RunEvent.ts` is required and generates as a
+// `time.Time`, so "no timestamp" was never on the wire: Go's zero value
+// marshalled as `0001-01-01T00:00:00Z`, a well-formed date no consumer can tell
+// from a real one. Because these notices belong to the lead, and the dark-zone
+// one sits at the head of very nearly every recording, a console subtracting it
+// from the clock showed the lead agent as 2026 years old (`1065409035m47s`)
+// while its two children read `2m45s` and `2m25s`, and drew the lead's timeline
+// lane across the whole axis. A field a producer cannot honestly fill has to be
+// absent; this one cannot be absent, so it is filled honestly.
+//
 // Notices the RECORDER writes at a point in the run (a gap, the size cap) break
 // the negative-seq rule on purpose: they are one-time facts about a position in
 // the feed rather than a state re-derived every poll, so they take the next free
 // positive seq and stay where they happened.
-func platformNotice(seq int64, level gen.RunEventLevel, detail string) gen.RunEvent {
+func platformNotice(at time.Time, seq int64, level gen.RunEventLevel, detail string) gen.RunEvent {
 	return gen.RunEvent{
 		V:       gen.RunEventV2,
 		Seq:     seq,
+		TS:      at.UTC(),
 		Kind:    gen.RunEventKindNotice,
 		AgentID: leadAgentID,
 		Level:   level,
@@ -215,12 +235,12 @@ func platformNotice(seq int64, level gen.RunEventLevel, detail string) gen.RunEv
 // losing events, which is exactly what has happened: an empty feed and a lost
 // one look identical to a reader and mean opposite things about the agent, so
 // the platform never lets "gone" render as "silent".
-func logsUnavailableRunEvent(reason string) gen.RunEvent {
+func logsUnavailableRunEvent(at time.Time, reason string) gen.RunEvent {
 	detail := "The recording of this cycle is no longer available."
 	if reason != "" {
 		detail += " (" + reason + ")"
 	}
-	ev := platformNotice(seqLogsUnavailable, gen.RunEventLevelWarn, detail)
+	ev := platformNotice(at, seqLogsUnavailable, gen.RunEventLevelWarn, detail)
 	ev.Code = gen.RunEventCodeGap
 	return ev
 }
@@ -249,13 +269,13 @@ func logsUnavailableRunEvent(reason string) gen.RunEvent {
 // them: a viewer that reads only the file would otherwise see nothing at all
 // until the runner's first line, which is the very silence this narration
 // exists to fill.
-func bootstrapRunEvent(podFound bool, phase, waitingReason, message string) gen.RunEvent {
+func bootstrapRunEvent(at time.Time, podFound bool, phase, waitingReason, message string) gen.RunEvent {
 	st := bootstrapState(podFound, phase, waitingReason, message)
 	level := gen.RunEventLevelInfo
 	if st.alarming {
 		level = gen.RunEventLevelWarn
 	}
-	ev := platformNotice(st.seq, level, st.detail)
+	ev := platformNotice(at, st.seq, level, st.detail)
 	if code := gen.RunEventCode(st.name); code.Valid() {
 		ev.Code = code
 	}

@@ -23,7 +23,6 @@ import {
   Button,
   CircularProgress,
   Stack,
-  Typography,
 } from "@wso2/oxygen-ui";
 import { FileText, ScrollText, X } from "@wso2/oxygen-ui-icons-react";
 import { Link } from "@tanstack/react-router";
@@ -42,6 +41,7 @@ import { PageHeader, type PageHeaderStatus } from "../../../components/PageHeade
 import type { StatusTone } from "../../../components/StatusChip";
 import { EmptyState } from "../../../components/EmptyState";
 import { GitHubRefChip } from "../../../components/GitHubRefChip";
+import { SectionCaption } from "../../../components/SectionCaption";
 import { useProjectStatus } from "../../projects/api/queries";
 import { useBuildRuns, useCancelRun } from "../../builds/api/queries";
 import { useValidationLive } from "../hooks/useValidationLive";
@@ -84,16 +84,6 @@ const VALIDATION_CYCLE = ["validation"] as const;
 // value in the enum is a verdict, and a verdict is something the run already reached.
 const VALIDATION_LIFECYCLE_STATES = new Set(["running", "awaiting-fix"]);
 
-// Hoisted rather than written inline: an sx literal is a new object every render,
-// which emotion has to re-serialize each time.
-const CAPTION_SX = {
-  display: "block",
-  mb: 1,
-  fontWeight: 700,
-  letterSpacing: "0.08em",
-  color: "text.secondary",
-} as const;
-
 /**
  * The line over the version's earlier validation runs.
  *
@@ -101,17 +91,9 @@ const CAPTION_SX = {
  * the Builds page draws its own ("EARLIER RUNS OF V1", `RunHistoryList`). That keeps
  * the caption on a boundary this page already owns — between feeds — so no feed has
  * to know what is rendered above it.
- *
- * Local, and matching the Builds page's captions by hand: three copies of this markup
- * now exist, and they should collapse into a shared component once a fourth caller
- * appears rather than dragging two Builds-page files into a validation change.
  */
 function EarlierRunsCaption() {
-  return (
-    <Typography variant="caption" sx={CAPTION_SX}>
-      EARLIER VALIDATION RUNS
-    </Typography>
-  );
+  return <SectionCaption>EARLIER VALIDATION RUNS</SectionCaption>;
 }
 
 // StageTone → StatusTone. The two unions differ only in `ghost`, which the shared
