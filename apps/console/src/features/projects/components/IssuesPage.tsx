@@ -17,17 +17,13 @@
  */
 
 import { Link } from "@tanstack/react-router";
-import { CircleAlert } from "@wso2/oxygen-ui-icons-react";
-import { EmptyState } from "../../../components/EmptyState";
 import { PageHeader } from "../../../components/PageHeader";
+import { IssuesList } from "../../issues/components/IssuesList";
 import { useProject } from "../api/queries";
 
-// Placeholder by decision (#173): Issues is the future surface for issues
-// the SRE agent raises against the running project; its own feature will
-// land the content. It gets the same PageHeader every other project
-// sub-page does (Task 5) — the EmptyState body keeps just the icon, title,
-// and description; the one-off orange "Back to overview" action it used to
-// carry is now the shared back link in the header.
+// Fills the placeholder from decision #173: issues the SRE agent raises
+// against the running project, listed live from GitHub (list-issues,
+// filtered to the sre-agent label) rather than a static "on its way" card.
 export function IssuesPage({ projectName }: { projectName: string }) {
   const project = useProject(projectName);
 
@@ -43,11 +39,7 @@ export function IssuesPage({ projectName }: { projectName: string }) {
           label: "Back to Overview",
         }}
       />
-      <EmptyState
-        icon={<CircleAlert size={48} />}
-        title="Issues is on its way"
-        description="Issues the SRE agent raises against the running project will land here — triage them and follow their fixes."
-      />
+      <IssuesList projectName={projectName} />
     </>
   );
 }
