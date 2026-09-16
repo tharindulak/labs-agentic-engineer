@@ -21,31 +21,6 @@ import { client } from "../../../api/client";
 import { alertKeys } from "./keys";
 import { apiErrorMessage } from "../../../api/errors";
 
-// Bell badge poll interval (#154 decision: 60s, matches the ~3-4 min
-// RCA→handoff completion time from the SRE-handoff runbook).
-const BELL_POLL_MS = 60_000;
-
-// Last N reports the bell dropdown shows/counts (#154 decision: 50, no pagination).
-export const BELL_LIMIT = 50;
-
-// Top-nav bell (#154): last N reports, no pagination — a single page is the
-// entire surface the dropdown shows.
-export function useRecentAlerts(limit: number = BELL_LIMIT) {
-  return useQuery({
-    queryKey: alertKeys.recent(limit),
-    queryFn: async () => {
-      const { data, error } = await client.GET("/rca-agent/reports", {
-        params: { query: { limit } },
-      });
-      if (error) {
-        throw new Error(apiErrorMessage(error, "Failed to load alerts"));
-      }
-      return data.items ?? [];
-    },
-    refetchInterval: BELL_POLL_MS,
-  });
-}
-
 // Alerts list page (#155): cursor-based infinite scroll, mirrors
 // useProjectsList's pagination shape.
 export function useAlertsInfinite(limit?: number) {

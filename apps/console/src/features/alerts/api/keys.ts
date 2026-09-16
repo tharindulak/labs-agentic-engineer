@@ -20,7 +20,6 @@ export const alertKeys = {
   all: ["alerts"] as const,
   lists: () => [...alertKeys.all, "list"] as const,
   list: (limit?: number) => [...alertKeys.lists(), { limit }] as const,
-  recent: (limit: number) => [...alertKeys.all, "recent", limit] as const,
   details: () => [...alertKeys.all, "detail"] as const,
   detail: (id: string) => [...alertKeys.details(), id] as const,
 };
