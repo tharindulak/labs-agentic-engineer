@@ -125,6 +125,23 @@ kubectl wait -n openchoreo-control-plane --for=condition=available --timeout=300
     deployment/cluster-gateway \
     deployment/gateway-default
 echo "✅ Control Plane ready"
+
+# The chart's own bootstrap hook (openchoreo.io/bootstrap: "true") applies
+# rca-agent-binding with entitlement `claim: sub` — but openchoreo-api-config's
+# authz mechanisms only recognize `client_id` (Service Account) and `groups`
+# (User); there is no `sub`-based mechanism at all. That claim mismatch means
+# the binding never actually matches anything, so the RCA agent has only ever
+# had rca-agent-dispatch-binding's component:create — never rca-agent's own
+# project:view/namespace:view/component:view/etc., which
+# resolve_component_scope (agent_routes.py, every /analyze call) needs just to
+# start. Patched here, after every control-plane install/upgrade, because the
+# bootstrap hook re-applies its own (broken) version on each one — this is
+# not a one-time fix. Upstream OpenChoreo bug, not something this repo's own
+# chart values can configure around.
+echo "🔧 Patching rca-agent-binding entitlement (chart bootstrap ships claim: sub, which openchoreo-api-config doesn't recognize — see comment above)"
+kubectl patch clusterauthzrolebinding rca-agent-binding --type merge -p \
+    '{"spec":{"entitlement":{"claim":"client_id","value":"openchoreo-rca-agent"}}}'
+echo "✅ rca-agent-binding entitlement corrected"
 echo ""
 
 # ============================================================================
