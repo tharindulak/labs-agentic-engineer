@@ -198,6 +198,22 @@ spec:
                 secretKeyRef:
                   name: postgres-secrets
                   key: POSTGRES_PASSWORD
+            # SRE-MCP static bearer credential (auth.ServiceTokenMiddleware in
+            # config.go) — the RCA/remediation agent's long-lived token for
+            # calling back into aep-api. optional: true (unlike the
+            # secretKeyRefs above): aectl init does not yet seed
+            # aep/aep-mcp-token in OpenBao (see the ExternalSecret in
+            # ../external-secrets/external-secrets.yaml), so this Secret may
+            # not exist on a fresh install — an empty SRE_MCP_TOKEN disables
+            # the middleware entirely rather than crash-looping the pod.
+            - name: SRE_MCP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aep-mcp-token
+                  key: AEP_MCP_TOKEN
+                  optional: true
+            - name: SRE_MCP_ORG_HANDLE
+              value: {{ .Values.aepApi.sreMcpOrgHandle | quote }}
             - name: DATABASE_URL
               value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable"
             {{- if .Values.temporal.enabled }}

@@ -65,6 +65,7 @@ var (
 	sreAEPublishReport bool
 	sreObserverHost    string
 	sreRcaHost         string
+	sreAEPMcpHost      string
 )
 
 var sreCmd = &cobra.Command{
@@ -105,6 +106,7 @@ func init() {
 	f.BoolVar(&sreAEPublishReport, "ae-publish-reports", true, "Publish RCA reports to aep-api (console Alerts)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
+	f.StringVar(&sreAEPMcpHost, "aep-mcp-hostname", "aep-mcp.openchoreo.localhost", "aep-mcp-server gateway hostname (used by the remediation agent's mcp.json)")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 }
@@ -115,7 +117,13 @@ type sreParams struct {
 	OCApiURL, ThunderJwksURL, ThunderTokenURL, ThunderAuthURL string
 	RcaImageRepo, RcaImageTag, RcaPullPolicy, RcaModel        string
 	AdapterRepo, AdapterTag                                   string
-	ObserverHost, RcaHost                                     string
+	ObserverHost, RcaHost, AEPMcpHost                         string
+	// AEPNamespace is the AEP namespace (sreNamespace) — where aep-api,
+	// aep-mcp-server, and their aep-mcp-token ExternalSecret live. Needed here
+	// (not just as the standalone sreNamespace var) because sreCRsTmpl's
+	// aep-mcp-mainkgw HTTPRoute and sreAEPNamespaceCRsTmpl's ReferenceGrant
+	// both cross from ObsNamespace into it.
+	AEPNamespace string
 	// In-cluster handoff wiring (svc DNS, not host.k3d.internal).
 	RcaServiceURL, AEApiURL, AEPApiURL   string
 	AEHandoff, AEAutoDispatch, AEPublish bool
@@ -151,6 +159,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		RcaModel:        sreRcaModel,
 		ObserverHost:    sreObserverHost,
 		RcaHost:         sreRcaHost,
+		AEPMcpHost:      sreAEPMcpHost,
+		AEPNamespace:    sreNamespace,
 		RcaServiceURL:   "http://ai-rca-agent:8080",
 		AEApiURL:        fmt.Sprintf("http://aep-mcp-server.%s.svc.cluster.local:3400", sreNamespace),
 		AEPApiURL:       fmt.Sprintf("http://aep-api.%s.svc.cluster.local:9090", sreNamespace),
@@ -190,6 +200,13 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("apply secrets: %w (did you run `aectl init`?)", err)
 	}
 	// ESO must materialise the OpenSearch creds before the charts start.
+	// aep-mcp-token deliberately is NOT in this list: unlike the three below,
+	// aectl init does not yet seed its OpenBao path (aep/aep-mcp-token — see
+	// the comment above that ExternalSecret in sre_assets.go), so waiting for
+	// it here would hard-fail every `aectl sre install` run after a 2-minute
+	// timeout on a feature that is off-by-default and optional. Its
+	// consumers (the RCA pod's extraEnvs, below) tolerate it being absent via
+	// optional: true instead.
 	for _, s := range []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"} {
 		if err := waitForSecret(ctx, client, sreObsNamespace, s, 2*time.Minute); err != nil {
 			return fmt.Errorf("%w\nESO did not sync %q — check the SecretStore/ExternalSecrets and that `aectl init` seeded OpenBao", err, s)
@@ -251,6 +268,15 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	ui.Step("Applying authz grants, HTTPRoute, and ClusterObservabilityPlane")
 	if err := applyTemplate(ctx, applier, "sre-crs", sreObsNamespace, sreCRsTmpl, p); err != nil {
 		return fmt.Errorf("apply CRs: %w", err)
+	}
+	// aep-mcp-mainkgw's backendRef (above) reaches across into the AEP
+	// namespace for the aep-mcp-server Service; Gateway API requires that
+	// namespace to explicitly permit it via a ReferenceGrant. Applied here,
+	// into sreNamespace (not sreObsNamespace) — this repo's own platform Helm
+	// chart, which owns that namespace, has no notion of the obs namespace's
+	// name, so this cross-cutting CR is aectl's to apply, not the chart's.
+	if err := applyTemplate(ctx, applier, "sre-aep-ns-crs", sreNamespace, sreAEPNamespaceCRsTmpl, p); err != nil {
+		return fmt.Errorf("apply AEP-namespace ReferenceGrant: %w", err)
 	}
 
 	// 7. OpenSearch index-template bootstrap (detect + self-heal).

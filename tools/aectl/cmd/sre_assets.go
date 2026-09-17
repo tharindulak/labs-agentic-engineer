@@ -57,6 +57,28 @@ spec:
     - secretKey: OAUTH_CLIENT_SECRET
       remoteRef: { key: aep/thunder-clients/openchoreo-rca-agent, property: value }
 ---
+# aep/aep-mcp-token is NOT yet seeded by 'aectl init' (that only seeds
+# aep/anthropic-api-key today) — it must be written into OpenBao by hand
+# until init is extended to cover it. Until then this ExternalSecret sits
+# with SecretSyncedError and the RCA pod's AEP_MCP_TOKEN env (below) never
+# populates. Flagged as a manual prerequisite in Task 8's validation checklist,
+# not assumed here.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: aep-mcp-token
+  namespace: {{.ObsNamespace}}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao
+    kind: SecretStore
+  target:
+    name: aep-mcp-token
+  data:
+    - secretKey: AEP_MCP_TOKEN
+      remoteRef: { key: aep/aep-mcp-token, property: value }
+---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -122,6 +144,26 @@ rca:
   llm:
     modelName: {{.RcaModel}}
   secretName: rca-agent-secret
+  # Real key confirmed against the chart's own values.yaml (helm show values
+  # oci://ghcr.io/openchoreo/helm-charts/openchoreo-observability-plane, pulled
+  # at the sreObsPlaneVersion default of 1.0.1-hotfix.1): it is "extraEnvs"
+  # (plural), templated verbatim via toYaml into the container's env: list —
+  # NOT "extraEnv" as an earlier draft guessed.
+  #
+  # optional: true — aectl init does not yet seed aep/aep-mcp-token (see the
+  # ExternalSecret's comment in sre_assets.go), so the aep-mcp-token Secret may
+  # not exist yet on a fresh install. Without optional:true the RCA pod would
+  # crash-loop (CreateContainerConfigError) until someone seeds OpenBao by
+  # hand; with it, the env var is simply absent until the secret shows up.
+  extraEnvs:
+    - name: AEP_MCP_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: aep-mcp-token
+          key: AEP_MCP_TOKEN
+          optional: true
+    - name: AEP_MCP_HOSTNAME
+      value: "{{.AEPMcpHost}}"
   oauth:
     clientId: openchoreo-rca-agent
   openchoreoApiUrl: "{{.OCApiURL}}"
@@ -197,6 +239,48 @@ spec:
         request: "0s"
         backendRequest: "0s"
 ---
+# CONFIRMED GAP (checked statically against this repo, not a live cluster):
+# deployments/single-cluster/values-cp.yaml sets gateway.tls.enabled: false for
+# the openchoreo-control-plane Gateway/gateway-default that this parentRef
+# names — unlike openchoreo-data-plane's gateway-default, which
+# setup-openchoreo.sh explicitly issues a cert for and flips
+# gateway.tls.enabled: true (create_gateway_tls_cert). There is today no
+# "https" sectionName on THIS gateway for sectionName: https, below, to bind
+# to. Enabling TLS on the control-plane gateway is a control-plane-wide change
+# outside this task's scope (flagged back per the task brief rather than
+# guessed at) — this HTTPRoute is written now, matching mcp.json's eventual
+# https:// requirement, but stays Accepted:False / unattached until that
+# follow-up lands.
+#
+# aep-mcp-server's Service lives in the AEP namespace (sreNamespace), a
+# different namespace than this HTTPRoute (ObsNamespace) — backendRefs must
+# say so explicitly, and Gateway API additionally requires a ReferenceGrant in
+# the AEP namespace permitting it (see sreAEPNamespaceCRsTmpl below, applied
+# there by runSreInstall). Mirrors the shape of this repo's own
+# deployments/helm-charts/platform/templates/console/referencegrant.yaml.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: aep-mcp-mainkgw
+  namespace: {{.ObsNamespace}}
+spec:
+  parentRefs:
+    - name: gateway-default
+      namespace: openchoreo-control-plane
+      sectionName: https
+  hostnames:
+    - {{.AEPMcpHost}}
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: aep-mcp-server
+          namespace: {{.AEPNamespace}}
+          port: 3400
+      timeouts:
+        request: "0s"
+        backendRequest: "0s"
+---
 apiVersion: openchoreo.dev/v1alpha1
 kind: ClusterAuthzRole
 metadata:
@@ -261,6 +345,33 @@ spec:
         namespace: {{.ObsNamespace}}
   observerURL: http://{{.ObserverHost}}:11080
   rcaAgentURL: http://{{.RcaHost}}:11080
+`
+
+// sreAEPNamespaceCRsTmpl holds the one CR that must live in the AEP namespace
+// (sreNamespace), not ObsNamespace: a ReferenceGrant permitting the
+// aep-mcp-mainkgw HTTPRoute (declared in sreCRsTmpl, in ObsNamespace) to
+// resolve its cross-namespace backendRef to the aep-mcp-server Service here.
+// Applied separately by runSreInstall via applyTemplate(..., sreNamespace,
+// sreAEPNamespaceCRsTmpl, p) — the platform Helm chart that owns this
+// namespace has no notion of the obs namespace's name, so this stays on the
+// aectl side, which already knows both. Same apiVersion/kind/shape as this
+// repo's own
+// deployments/helm-charts/platform/templates/console/referencegrant.yaml.
+const sreAEPNamespaceCRsTmpl = `
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: aep-mcp-mainkgw
+  namespace: {{.AEPNamespace}}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{.ObsNamespace}}
+  to:
+    - group: ""
+      kind: Service
+      name: aep-mcp-server
 `
 
 // openSearchBootstrapScript is the detect+self-heal body from

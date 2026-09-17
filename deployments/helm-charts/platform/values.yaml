@@ -24,6 +24,10 @@ aepApi:
   serviceAuth:
     clientId: "aep-api-client"
   publicURL: "http://aep-api.openchoreo.localhost:8080"
+  # The org handle this installation's SRE-agent integration is scoped to —
+  # see docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §7.
+  # Empty disables the SRE-MCP static-credential auth path entirely.
+  sreMcpOrgHandle: ""
 
 aepAgents:
   replicas: 1
