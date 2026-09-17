@@ -96,7 +96,7 @@ func init() {
 	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version")
 	// Vanilla OpenChoreo image: ghcr.io/openchoreo/ai-rca-agent (the repo the
 	// chart's own values.yaml defaults to — confirmed against the pulled
-	// openchoreo-observability-plane chart). Tag pinned to the chart's own
+	// openchoreo-observability-plane chart), tag pinned to the chart's own
 	// AppVersion (Chart.yaml) for the obs-plane-version default below
 	// (1.0.1-hotfix.1) — the same release the observability-plane chart
 	// resolves to when rca.image.tag is left empty, and, per OpenChoreo PR
@@ -104,8 +104,23 @@ func init() {
 	// EXTENSIONS_DIR mechanism this task wires into. Replaces the
 	// tharindulak/sre-agent fork, which existed only to carry the
 	// bespoke HANDOFF_* config this task retires.
-	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "ghcr.io/openchoreo/ai-rca-agent", "RCA/SRE agent image repository")
-	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.0.1-hotfix.1", "RCA/SRE agent image tag")
+	//
+	// tharindulak/sre-agent:v1.0.1-hotfix.1-anthropic is the DEFAULT here
+	// instead, temporarily: the vanilla image's pyproject.toml/uv.lock never
+	// declare langchain-anthropic, so init_chat_model("anthropic:...")
+	// fails at runtime, and AEP's own RCA config (RCA_LLM_API_KEY sourced
+	// from aep/anthropic-api-key, model default anthropic:claude-sonnet-4-6)
+	// is Anthropic-only. This tag is the same v1.0.1-hotfix.1 base rebuilt
+	// with only langchain-anthropic added to pyproject.toml/uv.lock and the
+	// ToolStrategy-for-Anthropic branch in agent.py (the change already
+	// merged upstream as commit 43efc190 on a since-superseded branch,
+	// re-applied here rather than cherry-picked because that commit's
+	// uv.lock has drifted from current upstream). Revert this default to
+	// ghcr.io/openchoreo/ai-rca-agent once upstream OpenChoreo carries
+	// Anthropic support (or once AEP switches its own RCA model config to a
+	// provider the vanilla image already supports, e.g. OpenAI).
+	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/sre-agent", "RCA/SRE agent image repository")
+	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.0.1-hotfix.1-anthropic", "RCA/SRE agent image tag")
 	f.StringVar(&sreRcaPullPolicy, "rca-image-pull-policy", "IfNotPresent", "RCA/SRE agent image pull policy")
 	f.StringVar(&sreRcaModel, "rca-model", "anthropic:claude-sonnet-4-6", "RCA/SRE agent LLM model")
 	f.StringVar(&sreAdapterImage, "adapter-image", "docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive", "logs-adapter image (repo:tag)")

@@ -78,19 +78,37 @@
 #
 # Knobs (env):
 #   RCA_IMAGE_REPO  RCA/SRE agent image repository (default:
-#                   ghcr.io/openchoreo/ai-rca-agent — the vanilla, unforked
-#                   OpenChoreo image; the same repo the observability-plane
-#                   chart's own values.yaml defaults to). Replaces the
-#                   tharindulak/sre-agent fork, which existed only to carry
-#                   the bespoke HANDOFF_* config this script now retires.
-#   RCA_IMAGE_TAG   RCA/SRE agent image tag (default: v1.0.1-hotfix.1 — the
-#                   same AppVersion `aectl sre install` pins its default to,
-#                   see tools/aectl/cmd/sre.go). Per OpenChoreo PR #4743
-#                   (merged well before this hotfix release), this image
-#                   carries the generic EXTENSIONS_DIR mechanism that step 3e
-#                   below mounts mcp.json/CONTEXT.md/the coding-agent-handoff
-#                   skill into — changing the handoff's behaviour needs no
-#                   image rebuild.
+#                   tharindulak/sre-agent — see RCA_IMAGE_TAG below for why
+#                   this isn't yet the vanilla ghcr.io/openchoreo/ai-rca-agent
+#                   repo the observability-plane chart's own values.yaml
+#                   defaults to). No longer the OLD tharindulak/sre-agent
+#                   fork — that one existed to carry the bespoke HANDOFF_*
+#                   config this script now retires; this is a different,
+#                   narrower rebuild of the vanilla image (see below).
+#   RCA_IMAGE_TAG   RCA/SRE agent image tag (default:
+#                   v1.0.1-hotfix.1-anthropic). TEMPORARY: the vanilla
+#                   ghcr.io/openchoreo/ai-rca-agent:v1.0.1-hotfix.1 image's
+#                   pyproject.toml/uv.lock never declare langchain-anthropic,
+#                   so init_chat_model("anthropic:...") fails at runtime —
+#                   and AEP's own RCA config (RCA_LLM_API_KEY sourced from
+#                   aep/anthropic-api-key, model default
+#                   anthropic:claude-sonnet-4-6) is Anthropic-only. This tag
+#                   is the same v1.0.1-hotfix.1 base rebuilt with only
+#                   langchain-anthropic added to pyproject.toml/uv.lock and
+#                   the ToolStrategy-for-Anthropic branch in agent.py (the
+#                   change already merged upstream as commit 43efc190 on a
+#                   since-superseded branch, re-applied rather than
+#                   cherry-picked because that commit's uv.lock has drifted
+#                   from current upstream). Per OpenChoreo PR #4743 (merged
+#                   well before the v1.0.1-hotfix.1 release this rebuilds),
+#                   it still carries the generic EXTENSIONS_DIR mechanism
+#                   that step 3e below mounts mcp.json/CONTEXT.md/the
+#                   coding-agent-handoff skill into — changing the handoff's
+#                   behaviour needs no image rebuild. Revert both defaults to
+#                   ghcr.io/openchoreo/ai-rca-agent:v1.0.1-hotfix.1 once
+#                   upstream OpenChoreo carries Anthropic support (or once
+#                   AEP switches its own RCA model config to a provider the
+#                   vanilla image already supports, e.g. OpenAI).
 #   HANDOFF_ENABLED enable the RCA→platform coding-agent handoff (default:
 #                   true). The vanilla agent reaches aep-mcp-server through
 #                   its EXTENSIONS_DIR/remediation/mcp.json mount
@@ -250,8 +268,8 @@ echo "1️⃣b RCA agent image + secret"
 # "pull access denied, repository does not exist"). Using the fully-qualified
 # name everywhere means a cache-evicted image can always be re-pulled from
 # the real registry — no more silent long-term fragility.
-RCA_IMAGE_REPO="${RCA_IMAGE_REPO:-ghcr.io/openchoreo/ai-rca-agent}"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-v1.0.1-hotfix.1}"
+RCA_IMAGE_REPO="${RCA_IMAGE_REPO:-tharindulak/sre-agent}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-v1.0.1-hotfix.1-anthropic}"
 RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}}"
 if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; then
     echo "   ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} not present locally — trying registry ${RCA_IMAGE_PULL}..."
