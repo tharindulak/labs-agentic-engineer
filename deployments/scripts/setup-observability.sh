@@ -174,6 +174,16 @@ RCA_DEPLOYMENT="sre-agent"
 
 # SRE-agent handoff knobs (see header).
 HANDOFF_ENABLED="${HANDOFF_ENABLED:-true}"
+# Per-rule+component alert de-dup window (see the ALERT_SUPPRESSION_WINDOW
+# comment at the observer-config patch below for why 1h is the safe default —
+# it exists to keep concurrent RCA runs from racing the handoff's
+# search-then-create dedup into duplicate issues, not for convenience).
+# Overridable for iterative local testing (repeatedly re-triggering the SAME
+# fault to check the handoff flow's reproducibility): with sequential,
+# non-concurrent triggers the race this guards against doesn't apply, so a
+# short override here is safe for that one workflow — just don't leave it low
+# on a cluster anyone else's alerts also fire on.
+ALERT_SUPPRESSION_WINDOW="${ALERT_SUPPRESSION_WINDOW:-1h}"
 # The vanilla (unforked) SRE agent reaches aep-mcp-server through its generic
 # EXTENSIONS_DIR mechanism (mcp.json + CONTEXT.md + skills/), not a bespoke
 # header map — see docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md.
@@ -587,7 +597,7 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 echo ""
 echo "3️⃣b Alert→RCA auto-trigger + report-sink wiring"
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=merge -p \
-    '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://'"${RCA_DEPLOYMENT}"':8080","ALERT_SUPPRESSION_WINDOW":"1h"}}'
+    '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://'"${RCA_DEPLOYMENT}"':8080","ALERT_SUPPRESSION_WINDOW":"'"${ALERT_SUPPRESSION_WINDOW}"'"}}'
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
