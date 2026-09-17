@@ -32,7 +32,6 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import { intEnv, loadAepApiBaseUrl, loadHandoffAdopt } from "./env.js";
-import { readIncidentIdentity } from "./handoffContext.js";
 import { createAepMcpServer } from "./server.js";
 
 const port = intEnv(process.env.PORT, 3400);
@@ -55,21 +54,7 @@ app.post("/mcp", async (req, res) => {
     return;
   }
 
-  // Incident identity is the calling PROCESS's, so it rides on the request
-  // rather than in the tool arguments its model fills in. Unreadable headers
-  // are logged and dropped: they cost a narrower dedupe key, never the call —
-  // except HEADER_ACTION_STATUSES, an unreadable copy of which costs the
-  // classification/adoption decision derived from it, not just dedupe-key
-  // precision (see handoffContext.ts).
-  const { identity, notes } = readIncidentIdentity(req.headers);
-  for (const note of notes) {
-    process.stderr.write(`handoff identity: ${note}\n`);
-  }
-
-  const server = createAepMcpServer(
-    { baseUrl: aepApiBaseUrl, bearer },
-    { identity, adopt: handoffAdopt },
-  );
+  const server = createAepMcpServer({ baseUrl: aepApiBaseUrl, bearer }, { adopt: handoffAdopt });
   // No options ⇒ sessionIdGenerator stays undefined ⇒ stateless mode (per the
   // SDK's own doc comment on StreamableHTTPServerTransport). Passing
   // `{ sessionIdGenerator: undefined }` explicitly is what the SDK's docs

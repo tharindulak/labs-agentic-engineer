@@ -20,11 +20,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { AepApiError, type AepClientOptions, createIssue, listIssues } from "./aepClient.js";
-import {
-  type IncidentIdentity,
-  resolveHandoff,
-  sanitizeForLog,
-} from "./handoffContext.js";
+import { resolveHandoff } from "./handoffContext.js";
 import { annotatePlatformIssues } from "./platformIssues.js";
 
 function textResult(payload: unknown) {
@@ -36,9 +32,7 @@ function errorResult(err: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-
 export interface HandoffRequestContext {
-  identity: IncidentIdentity;
   adopt: boolean;
 }
 
@@ -82,27 +76,10 @@ export function createAepMcpServer(
     },
     async ({ project, query, labels }) => {
       try {
-        // A conditional spread (rather than `{ query, labels }` directly) is
-        // required under exactOptionalPropertyTypes: zod's optional args
-        // destructure to `undefined` when absent, and explicitly assigning
-        // `undefined` to an optional field is rejected — omitting the key
-        // entirely is not.
-        const scoped = handoff.identity.project ?? project;
-        if (handoff.identity.project !== undefined && handoff.identity.project !== project) {
-          // Same asymmetry the create path already logs (resolveHandoff's
-          // `notes`): a search scoped away from the project the model asked
-          // for should leave a trace too, not just create.
-          process.stderr.write(
-            `handoff resolve: project ${sanitizeForLog(project)} from the call was overridden by the incident header\n`,
-          );
-        }
-        const issues = await listIssues(client, scoped, {
+        const issues = await listIssues(client, project, {
           ...(query !== undefined ? { query } : {}),
           ...(labels !== undefined ? { labels } : {}),
         });
-        // Annotated here rather than left to the caller's prompt: what AE's own
-        // planned-work issues mean is AE's fact, and a reader that gets it wrong
-        // rules out a code change it should have filed. See platformIssues.ts.
         return textResult(annotatePlatformIssues(issues));
       } catch (err) {
         return errorResult(err);
@@ -116,10 +93,10 @@ export function createAepMcpServer(
       title: "Create a GitHub issue via AE",
       description:
         "Create a GitHub issue on a project's repo and hand it to AE for downstream handling. Creating the issue IS the hand-off — there is no second call. " +
-        "File every report that reaches you. What the work IS, and whether a coding agent gets it, are not yours to decide: the platform derives both automatically from data the calling process attached to this connection, and answers the classification it chose. " +
+        "File every report that reaches you. What the work IS, and whether a coding agent gets it, are not yours to decide: the platform derives both automatically and answers the classification it chose. " +
         "A `config-level` answer means the remediation agent already expressed every action as configuration — the issue is still filed, as a ledger entry, and nothing is dispatched over it. " +
-        "Deduplication is automatic: this server derives a stable key from the incident this request belongs to, so if an OPEN issue for the same incident exists it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). An issue already carrying a no-change verdict for this incident answers `suppressed: true`, and nothing is created. " +
-        "If instead a CLOSED issue with that key is found — the same incident recurring after a fix was merged — it is reopened with this call's body appended as a `## Recurrence <n>` section, moved into the currently deployed version's milestone and handed back to the coding agent; the result then carries `reopened: true` and `recurrence` (which attempt this is). " +
+        "Deduplication is automatic and component-scoped: this server derives a stable key from `componentName`, so if an OPEN issue for the same component exists it is returned with `deduped: true`, nothing is created, and nothing is dispatched (the run that created that issue owns its dispatch). An issue already carrying a no-change verdict for this component answers `suppressed: true`, and nothing is created. " +
+        "If instead a CLOSED issue with that key is found — the same component's failure recurring after a fix was merged — it is reopened with this call's body appended as a `## Recurrence <n>` section, moved into the currently deployed version's milestone and handed back to the coding agent; the result then carries `reopened: true` and `recurrence` (which attempt this is). " +
         "The result's `adopted` says whether anything will actually work the issue, and `adoptionError` says why not when it will not — a project with no built version yet gets its issue recorded but not worked. Those outcomes are decided here and in aep-api code, not by the caller's skill.",
       inputSchema: {
         project: z.string().describe("OpenChoreo/AE project name"),
@@ -132,22 +109,24 @@ export function createAepMcpServer(
           .describe(
             "The component this issue is about. AE's design names it unprefixed ('service1'), and a name carrying its project prefix ('myproject-service1') is resolved to the design name for you, so pass whichever your world uses. Checked before the issue is filed — a name the design carries under neither form fails this call rather than surfacing later inside a coding cycle.",
           ),
+        actionStatuses: z
+          .array(z.enum(["revised", "suggested"]).nullable())
+          .describe(
+            "Your own remediation verdict for each of the RCA report's recommended_actions, in that same order: 'revised' when you expressed it as an OpenChoreo config change, 'suggested' when you could not, null for one you did not address. Required on every call — this is what AE classifies code-level vs config-level vs none from.",
+          ),
       },
     },
-    async ({ project, title, body, labels, componentName }) => {
+    async ({ project, title, body, labels, componentName, actionStatuses }) => {
       try {
         const resolved = resolveHandoff(
-          handoff.identity,
           {
             project,
             ...(componentName !== undefined ? { componentName } : {}),
             ...(labels !== undefined ? { labels } : {}),
+            actionStatuses,
           },
           handoff.adopt,
         );
-        for (const note of resolved.notes) {
-          process.stderr.write(`handoff resolve: ${note}\n`);
-        }
         const issue = await create(client, resolved.project, {
           title,
           body,
@@ -155,7 +134,7 @@ export function createAepMcpServer(
           ...(resolved.componentName !== undefined ? { componentName: resolved.componentName } : {}),
           ...(resolved.dedupeKey !== undefined ? { dedupeKey: resolved.dedupeKey } : {}),
           adopt: resolved.adopt,
-          ...(resolved.actionStatuses !== undefined ? { actionStatuses: resolved.actionStatuses } : {}),
+          actionStatuses: resolved.actionStatuses,
         });
         return textResult(issue);
       } catch (err) {

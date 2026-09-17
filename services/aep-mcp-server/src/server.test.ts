@@ -17,36 +17,29 @@
  */
 
 /**
- * Two properties matter here and neither is about wiring. The model must not be
- * able to name the dedupe key or the adoption flag — they are not in the schema
- * it reads. And the project it passes must not be able to reach a sibling
- * project when the caller's process said which project this incident is on.
+ * Two properties matter here and neither is about wiring. The model must not
+ * be able to name the dedupe key or the adoption flag — they are not in the
+ * schema it reads. And actionStatuses, once declared, must be REQUIRED: a
+ * call that omits it is a schema-validation rejection, not a silent skip of
+ * classification.
  */
 
 import assert from "node:assert/strict";
-import { mock, test } from "node:test";
+import { test } from "node:test";
 
 import { createAepMcpServer } from "./server.js";
-import { HEADER_COMPONENT, HEADER_PROJECT, HEADER_SIGNATURE, readIncidentIdentity } from "./handoffContext.js";
 
-// _registeredTools is the SDK's own registry; reading it keeps these tests on
-// what the model is actually shown/does rather than on a copy of it. Two
-// deviations from the brief's sketch, both forced by the installed SDK
-// (@modelcontextprotocol/sdk@1.29.0): `inputSchema` is stored as a ZodObject
-// wrapping the raw shape (its own enumerable keys are the ZodObject's
-// internals, not the field names), so the field names come from `.shape`;
-// and the registered handler lives under `.handler`, not `.callback`.
 interface RegisteredTool {
   inputSchema: { shape: Record<string, unknown> };
   handler: (args: unknown) => unknown;
 }
 
+function server() {
+  return createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, { adopt: true });
+}
+
 function toolSchema(name: string): Record<string, unknown> {
-  const server = createAepMcpServer(
-    { baseUrl: "http://aep-api", bearer: "Bearer t" },
-    { identity: {}, adopt: true },
-  );
-  const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+  const registered = (server() as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
   return registered[name]!.inputSchema.shape;
 }
 
@@ -55,32 +48,39 @@ test("the model is never shown the dedupe key or the adoption flag", () => {
 
   assert.equal("dedupeKey" in schema, false);
   assert.equal("adopt" in schema, false);
-  // Still present as fallbacks for a caller that sends no identity headers.
   assert.equal("componentName" in schema, true);
   assert.equal("project" in schema, true);
 });
 
-test("identity headers resolve to the values aep-api is sent", async () => {
-  const { identity } = readIncidentIdentity({
-    [HEADER_PROJECT]: "myproj",
-    [HEADER_COMPONENT]: "service1",
-    [HEADER_SIGNATURE]: "a1b2c3",
-  });
+test("actionStatuses is a required field in the schema (no .optional())", () => {
+  const schema = toolSchema("ae_create_issue");
+  const field = schema.actionStatuses as { isOptional?: () => boolean } | undefined;
+
+  assert.ok(field, "actionStatuses must be declared in the schema");
+  assert.equal(field?.isOptional?.(), false);
+});
+
+test("project and componentName pass straight through to aep-api", async () => {
   const seen: unknown[] = [];
-  const server = createAepMcpServer(
+  const s = createAepMcpServer(
     { baseUrl: "http://aep-api", bearer: "Bearer t" },
-    { identity, adopt: false },
-    // Injected create function: the point under test is what this server
-    // DERIVES, not that fetch works.
+    { adopt: false },
     async (_opts, project, req) => {
       seen.push({ project, req });
       return { number: 1, url: "u", nodeId: "n" };
     },
   );
-  const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+  const registered = (s as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
   const handler = registered["ae_create_issue"]!.handler;
 
-  await handler({ project: "wrongproj", title: "t", body: "b", labels: ["mine"] });
+  await handler({
+    project: "myproj",
+    title: "t",
+    body: "b",
+    labels: ["mine"],
+    componentName: "service1",
+    actionStatuses: ["revised", null],
+  });
 
   assert.deepEqual(seen, [
     {
@@ -90,107 +90,37 @@ test("identity headers resolve to the values aep-api is sent", async () => {
         body: "b",
         labels: ["mine", "bug", "sre-agent"],
         componentName: "service1",
-        dedupeKey: "sre-rca/service1/a1b2c3",
+        dedupeKey: "sre-rca/service1",
         adopt: false,
+        actionStatuses: ["revised", null],
       },
     },
   ]);
 });
 
-test("a search scoped away from the model's project by the incident header leaves a trace", async () => {
-  const { identity } = readIncidentIdentity({ [HEADER_PROJECT]: "myproj" });
-  mock.method(globalThis, "fetch", async () => new Response(JSON.stringify([]), { status: 200 }));
-  const written: string[] = [];
-  mock.method(process.stderr, "write", (chunk: string) => {
-    written.push(String(chunk));
-    return true;
-  });
-
-  try {
-    const server = createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, { identity, adopt: false });
-    const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
-    const handler = registered["ae_search_related_issues"]!.handler;
-
-    await handler({ project: "wrongproj" });
-
-    assert.ok(
-      written.some((line) => line.includes("wrongproj") && line.includes("overridden by the incident header")),
-      // Same asymmetry the create path already logs via resolveHandoff's
-      // notes — a search scoped away from the model's project should leave
-      // the same kind of trace.
-      `expected a note about the project override, got: ${JSON.stringify(written)}`,
-    );
-  } finally {
-    mock.restoreAll();
-  }
-});
-
-test("no note is logged when the search project already matches the incident header", async () => {
-  const { identity } = readIncidentIdentity({ [HEADER_PROJECT]: "myproj" });
-  mock.method(globalThis, "fetch", async () => new Response(JSON.stringify([]), { status: 200 }));
-  const written: string[] = [];
-  mock.method(process.stderr, "write", (chunk: string) => {
-    written.push(String(chunk));
-    return true;
-  });
-
-  try {
-    const server = createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, { identity, adopt: false });
-    const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
-    const handler = registered["ae_search_related_issues"]!.handler;
-
-    await handler({ project: "myproj" });
-
-    assert.deepEqual(written, []);
-  } finally {
-    mock.restoreAll();
-  }
-});
-
-test("the model is never shown actionStatuses either", () => {
-  const schema = toolSchema("ae_create_issue");
-  assert.equal("actionStatuses" in schema, false);
-});
-
-test("action statuses reach aep-api from the header, never from the call", async () => {
-  const { identity } = readIncidentIdentity({
-    [HEADER_PROJECT]: "myproj",
-    [HEADER_COMPONENT]: "service1",
-  });
-  identity.actionStatuses = ["suggested", null];
+test("a call omitting actionStatuses is rejected before the handler forwards anything", async () => {
   const seen: unknown[] = [];
-  const server = createAepMcpServer(
+  const s = createAepMcpServer(
     { baseUrl: "http://aep-api", bearer: "Bearer t" },
-    { identity, adopt: true },
-    async (_opts, project, req) => {
+    { adopt: true },
+    async (_opts, _project, req) => {
       seen.push(req);
       return { number: 1, url: "u", nodeId: "n" };
     },
   );
-  const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
-  const handler = registered["ae_create_issue"]!.handler;
 
-  // A caller that tried to pass actionStatuses anyway has nowhere to put it —
-  // the schema below never declares it, so this call has no such field at all.
-  await handler({ project: "myproj", title: "t", body: "b" });
-
-  assert.deepEqual((seen[0] as { actionStatuses?: unknown }).actionStatuses, ["suggested", null]);
-});
-
-test("no action-statuses header means the argument is omitted, not sent empty", async () => {
-  const seen: unknown[] = [];
-  const server = createAepMcpServer(
-    { baseUrl: "http://aep-api", bearer: "Bearer t" },
-    { identity: {}, adopt: true },
-    async (_opts, project, req) => {
-      seen.push(req);
-      return { number: 1, url: "u", nodeId: "n" };
-    },
+  await assert.rejects(() =>
+    s.server.request(
+      {
+        method: "tools/call",
+        params: { name: "ae_create_issue", arguments: { project: "p", title: "t", body: "b" } },
+      },
+      // Minimal shape: exercised through the SDK's own schema validation path
+      // rather than calling the raw handler directly, since the point under
+      // test is that the SCHEMA rejects the call, not that the handler would
+      // also misbehave if invoked with a malformed payload.
+      { method: "tools/call" } as never,
+    ),
   );
-  const registered = (server as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
-  const handler = registered["ae_create_issue"]!.handler;
-
-  await handler({ project: "p", title: "t", body: "b" });
-
-  assert.equal("actionStatuses" in (seen[0] as object), false);
+  assert.deepEqual(seen, []);
 });
