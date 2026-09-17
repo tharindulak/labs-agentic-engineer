@@ -9,3 +9,9 @@ file. Pass your own per-action `revised`/`suggested` verdicts as
 `actionStatuses` on the `ae_create_issue` call, in the same order as the RCA
 report's `recommended_actions` — this is what AE classifies code-level vs
 config-level work from, and the call is rejected if you omit it.
+
+**Before you end this turn, for any RCA report with an identified root
+cause, you MUST call `ae_create_issue`.** Search alone is never a valid
+stopping point. If you have searched and are not making that call next,
+you are not done — call it now, with the best title/body/actionStatuses
+you can construct from the report.
