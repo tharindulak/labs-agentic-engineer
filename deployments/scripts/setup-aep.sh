@@ -902,6 +902,15 @@ fi
 # Preserve any operator-supplied values across re-runs.
 ANTHROPIC_KEY="$(existing_val ANTHROPIC_API_KEY)"
 CODING_ANTHROPIC_KEY_VAL="$(existing_val AEP_CODING_ANTHROPIC_KEY)"
+# AEP_MCP_TOKEN: the SRE-agent handoff's long-lived Bearer credential
+# (setup-observability.sh's header comment, .env.example). This `cat >`
+# below is a full overwrite, not an append, so any key missing from this
+# preserve block is silently dropped on every setup-aep.sh re-run — found
+# live: aep-api's SRE_MCP_TOKEN went empty again on a fresh setup.sh run
+# because this script wiped the value a developer had hand-set, one step
+# after setup-observability.sh (which runs earlier in setup.sh) had
+# already read it successfully.
+AEP_MCP_TOKEN_VAL="$(existing_val AEP_MCP_TOKEN)"
 GITHUB_APP_ID_VAL="$(existing_val GITHUB_APP_ID)"
 GITHUB_CLIENT_ID_VAL="$(existing_val GITHUB_CLIENT_ID)"
 GITHUB_CLIENT_SECRET_VAL="$(existing_val GITHUB_CLIENT_SECRET)"
@@ -985,6 +994,13 @@ ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
 # to local coding runs) — leave it empty and the coding agent reuses the key
 # above, which is the default everywhere.
 AEP_CODING_ANTHROPIC_KEY=${CODING_ANTHROPIC_KEY_VAL}
+
+# ── SRE-agent extensions handoff ────────────────────────────────────────────
+# The long-lived Bearer credential the remediation agent's mounted mcp.json
+# authenticates to aep-mcp-server with, and aep-api's SRE_MCP_TOKEN verifies
+# against (setup-observability.sh §3e, docker-compose.yml). Preserved above
+# like every other operator-supplied secret in this file — see .env.example.
+AEP_MCP_TOKEN=${AEP_MCP_TOKEN_VAL}
 EOF
 
 echo "✅ .env file generated at $(realpath "$ENV_FILE")"
