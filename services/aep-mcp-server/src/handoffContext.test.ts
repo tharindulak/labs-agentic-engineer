@@ -17,10 +17,9 @@
  */
 
 /**
- * Incident identity is the caller's, never the model's: a component the model
- * chose is a valid sibling AE would accept, filed under the wrong dedupe
- * namespace. So the headers win over the arguments, and a header this module
- * cannot validate is ignored rather than interpolated into a key.
+ * project/componentName now come straight from the caller's ae_create_issue
+ * arguments — there is no separate identity channel to resolve them against.
+ * See docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §2/§3.
  */
 
 import assert from "node:assert/strict";
@@ -28,125 +27,40 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import {
-  HANDOFF_LABELS,
-  HEADER_ACTION_STATUSES,
-  HEADER_COMPONENT,
-  HEADER_PROJECT,
-  HEADER_SIGNATURE,
-  readIncidentIdentity,
-  resolveHandoff,
-} from "./handoffContext.js";
+import { HANDOFF_LABELS, resolveHandoff } from "./handoffContext.js";
 
-const ARGS = { project: "argproj", componentName: "argcomp", labels: ["needs-triage"] };
+const ARGS = { project: "argproj", componentName: "argcomp", labels: ["needs-triage"], actionStatuses: ["revised"] };
 
-test("a signed incident gets a key scoped to the component and the signature", () => {
-  const { identity } = readIncidentIdentity({
-    [HEADER_PROJECT]: "myproj",
-    [HEADER_COMPONENT]: "service1",
-    [HEADER_SIGNATURE]: "a1b2c3d4",
-  });
-
-  const resolved = resolveHandoff(identity, ARGS, true);
-
-  assert.equal(resolved.project, "myproj");
-  assert.equal(resolved.componentName, "service1");
-  assert.equal(resolved.dedupeKey, "sre-rca/service1/a1b2c3d4");
-});
-
-test("no signature folds every incident on the component onto one key", () => {
-  const { identity } = readIncidentIdentity({ [HEADER_COMPONENT]: "service1" });
-
-  assert.equal(resolveHandoff(identity, ARGS, true).dedupeKey, "sre-rca/service1");
-});
-
-test("a malformed signature is ignored rather than interpolated into the key", () => {
-  const { identity, notes } = readIncidentIdentity({
-    [HEADER_COMPONENT]: "service1",
-    [HEADER_SIGNATURE]: "not/a/digest",
-  });
-
-  const resolved = resolveHandoff(identity, ARGS, true);
-
-  assert.equal(identity.signature, undefined);
-  assert.equal(resolved.dedupeKey, "sre-rca/service1");
-  assert.ok(notes.some((n) => n.includes(HEADER_SIGNATURE)));
-});
-
-test("a repeated identity header is rejected: identity must be unambiguous", () => {
-  const { identity, notes } = readIncidentIdentity({
-    [HEADER_COMPONENT]: ["service1", "service2"],
-  });
-
-  assert.equal(identity.component, undefined);
-  assert.ok(notes.some((n) => n.includes(HEADER_COMPONENT)));
-});
-
-test("the header wins over the argument, and says so", () => {
-  const { identity } = readIncidentIdentity({
-    [HEADER_PROJECT]: "myproj",
-    [HEADER_COMPONENT]: "service1",
-  });
-
-  const resolved = resolveHandoff(identity, ARGS, true);
-
-  assert.equal(resolved.project, "myproj");
-  assert.equal(resolved.componentName, "service1");
-  assert.ok(resolved.notes.some((n) => n.includes("argcomp")));
-});
-
-test("a newline in an overridden argument cannot forge a fake stderr line", () => {
-  const { identity } = readIncidentIdentity({
-    [HEADER_PROJECT]: "myproj",
-    [HEADER_COMPONENT]: "service1",
-  });
-
-  const resolved = resolveHandoff(
-    identity,
-    { project: "argproj", componentName: "evil\nHANDOFF_ENABLED=false" },
-    true,
-  );
-
-  for (const note of resolved.notes) {
-    assert.ok(!note.includes("\n"), `note should contain no raw newline: ${JSON.stringify(note)}`);
-  }
-  // The real value used for the API call is untouched by sanitization.
-  assert.equal(resolved.project, "myproj");
-});
-
-test("without headers the caller's own arguments are used", () => {
-  const resolved = resolveHandoff({}, ARGS, true);
+test("project and componentName are taken straight from the arguments", () => {
+  const resolved = resolveHandoff(ARGS, true);
 
   assert.equal(resolved.project, "argproj");
   assert.equal(resolved.componentName, "argcomp");
-  // A key is still derived — the shape is AE's either way. What the missing
-  // header costs is the guarantee that the component is the ALERT's.
   assert.equal(resolved.dedupeKey, "sre-rca/argcomp");
 });
 
-test("no component anywhere means no dedupe key at all", () => {
-  const resolved = resolveHandoff({}, { project: "argproj" }, true);
+test("no component means no dedupe key at all", () => {
+  const resolved = resolveHandoff({ project: "argproj", actionStatuses: [] }, true);
 
   assert.equal(resolved.componentName, undefined);
   assert.equal(resolved.dedupeKey, undefined);
 });
 
 test("the handoff labels are added once, on top of the model's own", () => {
-  const resolved = resolveHandoff({}, { project: "p", labels: ["bug", "mine"] }, true);
+  const resolved = resolveHandoff({ project: "p", labels: ["bug", "mine"], actionStatuses: [] }, true);
 
   assert.deepEqual(resolved.labels, ["bug", "mine", "sre-agent"]);
   for (const label of HANDOFF_LABELS) assert.ok(resolved.labels.includes(label));
 });
 
 test("adoption is the operator's, carried through untouched", () => {
-  assert.equal(resolveHandoff({}, ARGS, false).adopt, false);
-  assert.equal(resolveHandoff({}, ARGS, true).adopt, true);
+  assert.equal(resolveHandoff(ARGS, false).adopt, false);
+  assert.equal(resolveHandoff(ARGS, true).adopt, true);
 });
 
-test("a mixed-case component header survives with its case intact", () => {
-  const { identity } = readIncidentIdentity({ [HEADER_COMPONENT]: "Service1" });
-
-  assert.equal(identity.component, "Service1");
+test("actionStatuses is carried through exactly, including nulls", () => {
+  const resolved = resolveHandoff({ project: "p", actionStatuses: ["suggested", null, "revised"] }, true);
+  assert.deepEqual(resolved.actionStatuses, ["suggested", null, "revised"]);
 });
 
 // aep-api's recurrence lookup queries GitHub with LabelSREAgent AND the dedupe
@@ -156,21 +70,12 @@ test("a mixed-case component header survives with its case intact", () => {
 const LABEL_SRE_AGENT_SOURCE = fileURLToPath(
   new URL("../../aep-api/internal/sourcecontrol/issue_recurrence.go", import.meta.url),
 );
-
-// `bug` is the other half of HANDOFF_LABELS. aep-api's own bare-literal use of
-// "bug" was replaced with this constant (internal/app/eventcore_adapters.go),
-// so this copy can be pinned the same way LabelSREAgent already is, rather
-// than left as an unpinned literal with an apologetic comment.
 const KIND_BUG_SOURCE = fileURLToPath(new URL("../../aep-api/internal/delivery/labels.go", import.meta.url));
 
 function readGoConstant(path: string, name: string): string {
   const source = readFileSync(path, "utf8");
   const match = new RegExp(`${name}\\s*=\\s*"([^"]+)"`).exec(source);
-  assert.ok(
-    match,
-    `could not find the ${name} declaration in ${path} — ` +
-      "it may have moved or been renamed; update this test's path/pattern to match",
-  );
+  assert.ok(match, `could not find the ${name} declaration in ${path}`);
   const value = match?.[1];
   assert.ok(value, `the ${name} pattern matched but captured no value`);
   return value as string;
@@ -181,70 +86,4 @@ test("HANDOFF_LABELS is pinned, element for element and in order, to aep-api's l
   const labelSREAgent = readGoConstant(LABEL_SRE_AGENT_SOURCE, "LabelSREAgent");
 
   assert.deepEqual(HANDOFF_LABELS, [kindBug, labelSREAgent]);
-});
-
-test("action statuses travel as a header, not an argument the model can spell", () => {
-  const { identity, notes } = readIncidentIdentity({
-    [HEADER_ACTION_STATUSES]: JSON.stringify(["suggested", null, "revised"]),
-  });
-
-  assert.deepEqual(identity.actionStatuses, ["suggested", null, "revised"]);
-  assert.deepEqual(notes, []);
-
-  const resolved = resolveHandoff(identity, ARGS, true);
-  assert.deepEqual(resolved.actionStatuses, ["suggested", null, "revised"]);
-});
-
-test("a malformed action-statuses header is dropped with a note, not thrown", () => {
-  const cases = ["not json", "{}", JSON.stringify([1, 2]), JSON.stringify("suggested")];
-  for (const raw of cases) {
-    const { identity, notes } = readIncidentIdentity({ [HEADER_ACTION_STATUSES]: raw });
-    assert.equal(identity.actionStatuses, undefined);
-    assert.ok(notes.some((n) => n.includes(HEADER_ACTION_STATUSES)));
-  }
-});
-
-test("a repeated action-statuses header is rejected: one call, one answer", () => {
-  const { identity, notes } = readIncidentIdentity({
-    [HEADER_ACTION_STATUSES]: [JSON.stringify(["suggested"]), JSON.stringify(["revised"])],
-  });
-  assert.equal(identity.actionStatuses, undefined);
-  assert.ok(notes.some((n) => n.includes(HEADER_ACTION_STATUSES)));
-});
-
-test("without the header, resolveHandoff carries no action statuses at all", () => {
-  const resolved = resolveHandoff({}, ARGS, true);
-  assert.equal(resolved.actionStatuses, undefined);
-});
-
-// The receiver-specific provider descriptor (provider.json) that used to let
-// drift between a header name and the SRE agent's config be caught here was
-// deleted; the drift surface moved to setup-observability.sh's
-// HANDOFF_HEADER_MAP default, which now hardcodes these same four header
-// names as plain shell text with nothing else checking them against this
-// module's constants — and a typo there silently drops classification and
-// adoption entirely (there is no argument fallback to catch it).
-const SETUP_OBSERVABILITY_SCRIPT = fileURLToPath(
-  new URL("../../../deployments/scripts/setup-observability.sh", import.meta.url),
-);
-
-function readHandoffHeaderMapDefault(path: string): Record<string, string> {
-  const source = readFileSync(path, "utf8");
-  const match = /HANDOFF_HEADER_MAP="\$\{HANDOFF_HEADER_MAP:-(\{.*\})\}"/.exec(source);
-  assert.ok(
-    match,
-    `could not find the HANDOFF_HEADER_MAP default in ${path} — ` +
-      "it may have moved or been reformatted; update this test's pattern to match",
-  );
-  const rawJson = (match?.[1] as string).replace(/\\"/g, '"');
-  return JSON.parse(rawJson) as Record<string, string>;
-}
-
-test("setup-observability.sh's HANDOFF_HEADER_MAP default is pinned to this module's header constants", () => {
-  const headerMap = readHandoffHeaderMapDefault(SETUP_OBSERVABILITY_SCRIPT);
-
-  assert.equal(headerMap.project?.toLowerCase(), HEADER_PROJECT);
-  assert.equal(headerMap.component?.toLowerCase(), HEADER_COMPONENT);
-  assert.equal(headerMap.signature?.toLowerCase(), HEADER_SIGNATURE);
-  assert.equal(headerMap.action_statuses?.toLowerCase(), HEADER_ACTION_STATUSES);
 });

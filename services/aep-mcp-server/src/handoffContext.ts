@@ -17,42 +17,25 @@
  */
 
 /**
- * What the CALLER'S PROCESS knows about an incident, as distinct from what its
- * model decided.
+ * What resolveHandoff derives from a caller's ae_create_issue arguments: the
+ * dedupe key's shape and the label set every SRE-filed issue carries.
  *
- * The project, the component and the error signature are facts about the alert.
- * AE can confirm that a component exists in the design but not that it is the
- * one the alert fired on, and it verifies the org but not the project — so a
- * model-chosen name is a valid sibling filed under the wrong dedupe namespace,
- * with nothing downstream able to tell. They therefore arrive as per-run
- * headers, out of the model's reach, and win over the tool arguments.
+ * project/componentName are trusted straight from the call. Both the RCA and
+ * remediation OpenChoreo agents receive their project/component/environment
+ * scope as platform-injected, non-negotiable input (their own prompts declare
+ * "SCOPE ENFORCEMENT (non-negotiable)") — not something guessed from
+ * telemetry — so a model-stated value here is the same value the platform
+ * already gave the model, not a guess. There used to be a separate trusted
+ * identity-header channel for this; it depended on the calling SRE-agent
+ * process injecting headers per request, which the generic OpenChoreo
+ * extensions mechanism (mcp.json's env-resolved-once headers) cannot do. See
+ * docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §2/§3.
  *
- * What this module DERIVES from them is AE's own contract: the dedupe key's
- * shape and the label set every SRE-filed issue carries. Whether the issue is
- * adopted is decided later by AE's create/adopt path, not by the caller's
- * prompt space.
- *
- * Nothing here fails a call. A handoff is one-shot — nothing retries it — so an
- * unreadable header costs a narrower dedupe key, never the incident — with one
- * exception: an unreadable `HEADER_ACTION_STATUSES` costs the classification
- * and adoption decision derived from it, not merely dedupe-key precision (see
- * that constant's doc comment).
+ * The dedupe key used to also carry a caller-computed error "signature" for
+ * finer-than-component granularity, sourced the same trusted way. With no
+ * transport left for that either, the key is permanently component-only —
+ * see §3 of the same doc for why that's an accepted, not a temporary, choice.
  */
-
-/** Per-run identity headers. Lower-case: Node lower-cases incoming header names. */
-export const HEADER_PROJECT = "x-aep-incident-project";
-export const HEADER_COMPONENT = "x-aep-incident-component";
-export const HEADER_SIGNATURE = "x-aep-incident-signature";
-/**
- * Not identity, but travels the same way and for the same reason: the
- * remediation agent's per-action status is a fact the calling PROCESS
- * computed, and the receiver derives classification, adoption and dedupe from
- * it — the same three things a re-read identity header could move (see the
- * module doc above). A model that could restate it could move all three on
- * the strength of a re-reading, so it rides the connection instead of the
- * tool call.
- */
-export const HEADER_ACTION_STATUSES = "x-aep-handoff-action-statuses";
 
 /**
  * Applied to every issue filed through this server.
@@ -71,174 +54,33 @@ export const HANDOFF_LABELS: readonly string[] = ["bug", "sre-agent"];
 /** Namespace for every dedupe key this server derives. */
 const DEDUPE_PREFIX = "sre-rca";
 
-/** Conservative identifier shape for a project or component name. */
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
-
-/**
- * The error fingerprint: a hex digest. Validated because it is interpolated
- * into a key namespace, and a caller-supplied header is not trusted input.
- */
-const SIGNATURE = /^[a-z0-9]{1,64}$/;
-
-export interface IncidentIdentity {
-  project?: string;
-  component?: string;
-  signature?: string;
-  actionStatuses?: (string | null)[];
-}
-
 export interface ResolvedHandoff {
   project: string;
   componentName?: string;
   dedupeKey?: string;
   labels: string[];
   adopt: boolean;
-  actionStatuses?: (string | null)[];
-  /** Human-readable lines for the caller to log. Which path was taken, and any header it could not use. */
-  notes: string[];
-}
-
-/**
- * Extract and validate one identity header, rejecting an ambiguous repeat.
- *
- * `normalize` decides how the raw value is folded before the pattern check:
- * the signature is a hex digest, where case carries no meaning, so it is
- * lowercased for a stable dedupe key; the project and component names are
- * identifiers AE resolves against its own design, where case DOES carry
- * meaning (`Service1` is not `service1`), so they are only trimmed.
- */
-function single(
-  headers: NodeJS.Dict<string | string[]>,
-  name: string,
-  pattern: RegExp,
-  notes: string[],
-  normalize: (trimmed: string) => string,
-): string | undefined {
-  const raw = headers[name];
-  if (raw === undefined) return undefined;
-  if (Array.isArray(raw)) {
-    // Identity must be unambiguous: picking one of two would silently file the
-    // incident against whichever arrived first.
-    notes.push(`${name} arrived more than once and was ignored`);
-    return undefined;
-  }
-  const value = normalize(raw.trim());
-  if (!pattern.test(value)) {
-    notes.push(`${name} is not a valid value and was ignored`);
-    return undefined;
-  }
-  return value;
-}
-
-const asIs = (trimmed: string): string => trimmed;
-const lower = (trimmed: string): string => trimmed.toLowerCase();
-
-/**
- * The one identity-family header that is not a scalar. Parsed as JSON and
- * validated shape-first (an array of string-or-null) rather than trusted,
- * because it is caller-supplied and, unlike the others, structured — a
- * malformed value here must degrade the same way a malformed scalar header
- * does: dropped with a note, never thrown.
- *
- * Absent and empty are different claims, not the same "nothing to report":
- * a missing header means no per-action status at all (this function returns
- * `undefined`, and `resolveHandoff` omits `actionStatuses` from the create
- * call entirely) — the caller was never part of an RCA flow, so aep-api
- * skips classification outright. An empty array is the caller ASSERTING an
- * RCA report that recommended zero actions, which aep-api classifies as
- * `none` and derives a dedupe/adoption decision from (see
- * `CreateIssue` in services/aep-api/internal/sourcecontrol/issues/handler.go
- * and `ops.ClassifyActions`). Collapsing the two here would either force a
- * classification onto a caller with no RCA report, or silently drop a report
- * that legitimately found nothing to do.
- */
-function actionStatusesHeader(
-  headers: NodeJS.Dict<string | string[]>,
-  notes: string[],
-): (string | null)[] | undefined {
-  const raw = headers[HEADER_ACTION_STATUSES];
-  if (raw === undefined) return undefined;
-  if (Array.isArray(raw)) {
-    notes.push(`${HEADER_ACTION_STATUSES} arrived more than once and was ignored`);
-    return undefined;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    notes.push(`${HEADER_ACTION_STATUSES} is not valid JSON and was ignored`);
-    return undefined;
-  }
-  if (!Array.isArray(parsed) || parsed.some((v) => typeof v !== "string" && v !== null)) {
-    notes.push(`${HEADER_ACTION_STATUSES} is not an array of strings/nulls and was ignored`);
-    return undefined;
-  }
-  return parsed as (string | null)[];
-}
-
-/**
- * Model-supplied tool arguments (unlike the identity headers, never checked
- * against `IDENTIFIER`) are interpolated verbatim into `notes` for logging.
- * Strip control characters — newlines above all — before that interpolation
- * so a value carrying one cannot forge an extra line in whatever ingests this
- * server's stderr. Only the logged text is sanitized; the real `project` /
- * `componentName` used for the actual API call are untouched.
- */
-export function sanitizeForLog(value: string): string {
-  // eslint-disable-next-line no-control-regex -- deliberately matching control chars to strip them
-  return value.replace(/[\x00-\x1f\x7f]/g, " ");
-}
-
-export function readIncidentIdentity(headers: NodeJS.Dict<string | string[]>): {
-  identity: IncidentIdentity;
-  notes: string[];
-} {
-  const notes: string[] = [];
-  const identity: IncidentIdentity = {};
-  const project = single(headers, HEADER_PROJECT, IDENTIFIER, notes, asIs);
-  const component = single(headers, HEADER_COMPONENT, IDENTIFIER, notes, asIs);
-  const signature = single(headers, HEADER_SIGNATURE, SIGNATURE, notes, lower);
-  const actionStatuses = actionStatusesHeader(headers, notes);
-  if (project !== undefined) identity.project = project;
-  if (component !== undefined) identity.component = component;
-  if (signature !== undefined) identity.signature = signature;
-  if (actionStatuses !== undefined) identity.actionStatuses = actionStatuses;
-  return { identity, notes };
+  actionStatuses: (string | null)[];
 }
 
 export function resolveHandoff(
-  identity: IncidentIdentity,
-  args: { project: string; componentName?: string; labels?: string[] },
+  args: { project: string; componentName?: string; labels?: string[]; actionStatuses: (string | null)[] },
   adopt: boolean,
 ): ResolvedHandoff {
-  const notes: string[] = [];
-
-  const project = identity.project ?? args.project;
-  if (identity.project !== undefined && args.project !== identity.project) {
-    // Worth a line even though the header wins: it is the only visible signal
-    // that the caller's prompt-level scoping did not hold.
-    notes.push(`project ${sanitizeForLog(args.project)} from the call was overridden by the incident header`);
-  }
-
-  const componentName = identity.component ?? args.componentName;
-  if (identity.component !== undefined && args.componentName !== undefined && args.componentName !== identity.component) {
-    notes.push(`componentName ${sanitizeForLog(args.componentName)} from the call was overridden by the incident header`);
-  }
-
   const labels = [...(args.labels ?? [])];
   for (const label of HANDOFF_LABELS) {
     if (!labels.includes(label)) labels.push(label);
   }
 
-  const resolved: ResolvedHandoff = { project, labels, adopt, notes };
-  if (identity.actionStatuses !== undefined) {
-    resolved.actionStatuses = identity.actionStatuses;
-  }
-  if (componentName !== undefined) {
-    resolved.componentName = componentName;
-    resolved.dedupeKey = identity.signature
-      ? `${DEDUPE_PREFIX}/${componentName}/${identity.signature}`
-      : `${DEDUPE_PREFIX}/${componentName}`;
+  const resolved: ResolvedHandoff = {
+    project: args.project,
+    labels,
+    adopt,
+    actionStatuses: args.actionStatuses,
+  };
+  if (args.componentName !== undefined) {
+    resolved.componentName = args.componentName;
+    resolved.dedupeKey = `${DEDUPE_PREFIX}/${args.componentName}`;
   }
   return resolved;
 }
