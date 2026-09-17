@@ -48,10 +48,13 @@
 #       but were never evaluated).
 #   - ConfigMap patches (post-helm): observer-config auto-trigger keys
 #       (LOGS_ADAPTER_ENABLED / RCA_SERVICE_URL / ALERT_SUPPRESSION_WINDOW)
-#       and rca-agent-config handoff keys (HANDOFF_ENABLED / HANDOFF_API_URL /
-#       HANDOFF_HEADER_MAP). Patched after helm so chart
-#       upgrades can't silently
-#       drop them on re-runs.
+#       and rca-agent-config's REPORT_SINK / REPORT_SINK_URL. Patched after
+#       helm so chart upgrades can't silently drop them on re-runs.
+#   - ConfigMap sre-agent-extensions + volume mount (post-helm): renders
+#       mcp.json/CONTEXT.md/the coding-agent-handoff skill into one ConfigMap
+#       and mounts it at EXTENSIONS_DIR/remediation/ on the RCA deployment —
+#       the generic extensions mechanism (openchoreo#4743), replacing the old
+#       HANDOFF_* ConfigMap keys and the per-skill ConfigMap loop.
 #   - Cross-namespace HTTPRoute on the MAIN kgateway
 #       (openchoreo-control-plane/gateway-default) for observer.openchoreo.localhost
 #       so the BFF in docker-compose can reach the Observer via the same
@@ -73,194 +76,49 @@
 #       patterns then match analysed lowercase tokens — "ERROR" never matches).
 #
 # Knobs (env):
-#   RCA_IMAGE_TAG   SRE-agent image tag to import/run (default: thin-handoff).
-#                   `thin-handoff` is the image for the CURRENT handoff
-#                   contract. It carries four things on top of `fingerprint-fix`:
-#                     * no provider-descriptor file. The agent discovers AE's
-#                       tools via standard MCP discovery (server_name="handoff")
-#                       instead of a named tool allow-list, and a generic
-#                       ToolCallRecorder middleware records whichever tool the
-#                       model actually called last — no receiver-specific tool,
-#                       header, or field name is hardcoded anywhere in this repo;
-#                     * incident identity AND the remediation agent's action
-#                       statuses both ride the same generic, config-driven
-#                       header mechanism (HANDOFF_HEADER_MAP below). Action
-#                       statuses used to be forced onto the create-issue tool
-#                       call as an argument; now they travel exactly like
-#                       identity already did, out of the model's reach;
-#                     * HandoffResult on the report is fully generic (`tool`,
-#                       `result`, `failure_reason`) — no typed classification,
-#                       dedupe, or provider_facts fields. A reader looks inside
-#                       `handoff.result` for whatever the receiver answered;
-#                     * handoff_view()'s content filtering (withholding
-#                       observability recommendations and a `revised` action's
-#                       config patch) moved into the coding-agent-handoff
-#                       skill's own instructions — the model now sees the full
-#                       report and is told what not to carry forward.
-#                   Published: docker.io/tharindulak/sre-agent:thin-handoff
-#                   (linux/arm64, as every tag in this ladder is).
-#
-#                   `fingerprint-fix` is the PREVIOUS tier. Its handoff stage
-#                   now ALSO fails to start: it still reads HANDOFF_PROVIDER_FILE
-#                   (settings.handoff_provider_file), which step 3d's ConfigMap
-#                   no longer sets (HANDOFF_HEADER_MAP replaced it), so
-#                   _validate_handoff_config raises at boot — the same failure
-#                   mode `skill-loader` and `handoff-provider` already have
-#                   below. RCA itself (minus the handoff) is unaffected. When it
-#                   could still start, it carried three things on top of
-#                   `skill-loader`:
-#                     * classification and the dispatch decision both moved to
-#                       AE — the stage no longer runs HandoffClassification.derive
-#                       in Python, it forwards each remediation action's status
-#                       on the create call and answers back whatever
-#                       classification AE derived. A config-level report is now
-#                       filed too (a ledger entry AE doesn't dispatch) instead
-#                       of being skipped;
-#                     * the structured `rationale`/`related_issues` report
-#                       fields are gone — nothing they said wasn't already in
-#                       the filed issue — and the stage runs with no response
-#                       schema, ending on the model's own final message;
-#                     * the skill catalog is discovered by directory
-#                       (`discover_skills`) instead of a hardcoded name, so a
-#                       second mounted skill reaches the agent with no image
-#                       rebuild;
-#                     * the dedupe fingerprint is hashed from the raw captured
-#                       logs, not the log lines the model chose to cite in its
-#                       report — the same defect triggered repeatedly now
-#                       produces one issue instead of one per run;
-#                     * a handoff stage that throws now records
-#                       `HandoffResult.failed` on the report instead of only
-#                       logging, and a missing skill mount is fatal at startup
-#                       rather than a per-incident failure.
-#                   Published: docker.io/tharindulak/sre-agent:fingerprint-fix
-#                   (linux/arm64, as every tag in this ladder is).
-#
-#                   `skill-loader` is the tier before that. It expects tool and
-#                   header names read from a provider descriptor mounted at
-#                   /etc/rca-agent/handoff/provider.json — step 3d no longer
-#                   creates that mount (HANDOFF_HEADER_MAP replaced it), so
-#                   this tier's handoff stage now fails to start; RCA itself
-#                   (minus the handoff) is unaffected. When it could still
-#                   start, it derived its own classification/dispatch decision
-#                   in Python and reported `rationale`/`related_issues`. An
-#                   OLDER image talking to a newer AE was not the failure mode
-#                   there — it was a NEWER AE re-deriving a decision the image
-#                   already made, so the two could silently disagree on
-#                   adoption.
-#                   It is `handoff-provider` plus the prompt/skill split: the
-#                   agent's handoff prompt is now only a SKILL LOADER — the
-#                   run-time scope values and the skill catalog, nothing else.
-#                   Every rule the stage follows (how to search, what the issue
-#                   must say, what each answer means) comes from the
-#                   coding-agent-handoff skill THIS repo owns and step 3d mounts,
-#                   so changing the handoff's behaviour no longer needs an SRE
-#                   image at all. It also stops the model-visible text naming a
-#                   receiver: no persona sentence, and no "GitHub" in the
-#                   structured-output schema either.
-#
-#                   `handoff-provider` is the tier before that, with the same
-#                   descriptor dependency as `skill-loader` — so its handoff
-#                   stage fails to start for the same reason. When it could
-#                   still start, its prompt additionally carried a persona
-#                   plus its own copy of what the skill already says, so the
-#                   duplication was back and a skill edit no longer fully
-#                   determined the stage's behaviour.
-#
-#                   Older tiers, kept for the record:
-#                   `recurrence` was the image for the handoff contract before
-#                   the provider descriptor.
-#                   It is `hand0ff-new` plus the recurrence half of AEP ADR-0018
-#                   ("a merged fix is not a resolved incident"):
-#                     * the handoff still makes ONE ae_create_issue call with the
-#                       same forced dedupeKey — nothing in this repo decides a
-#                       recurrence. AE does, deterministically, by matching that
-#                       key against an issue it had already CLOSED as completed;
-#                     * the answer now carries `reopened` and `recurrence` (which
-#                       attempt this is). Both are stamped onto HandoffResult from
-#                       the wire by apply_handoff_facts, never restated by the
-#                       model — the same rule `adopted` follows;
-#                     * `recurrence` is forwarded on the RCA report
-#                       (src/clients/aep_reports.py) so the console's alert detail
-#                       can say "Attempt 3" instead of showing a reopened incident
-#                       as though it were new.
-#                   It also carries the DECLINE GUARD. Declining to file is the
-#                   one outcome nothing recovers from, and it was being reached
-#                   too easily: an RCA asking to "remove the artificial delay in
-#                   service2" was declined wholesale because the delay was
-#                   deliberate and AE's own "Implement service2 slow backend"
-#                   issue said so. So a decline must now account for EVERY
-#                   remaining action (config_handled — checked against the action
-#                   really being `revised` — or pure_advice), and one that does
-#                   not comes back to the model once with the gaps named. AE's
-#                   own planned-work issues also arrive in the search result
-#                   flagged `PlatformRecord`, saying they describe behaviour to
-#                   PRESERVE and never rule a change out.
-#                   An OLDER image still works against a newer AE — it simply
-#                   ignores the two new fields, so a recurrence is reopened and
-#                   re-dispatched correctly but the REPORT says nothing about it,
-#                   and the console shows attempt 3 as if it were attempt 1.
-#                   That is the silent failure this tag exists to prevent.
-#
-#                   `thin-handoff`, `fingerprint-fix`, `skill-loader` and
-#                   `handoff-provider` are ALL published, so the registry
-#                   fallback below can find them. To build any of them locally
-#                   instead (the local copy wins over the registry):
-#                     cd <openchoreo-repo>/agents && docker build \
-#                       -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
-#                   The context is agents/, NOT agents/sre-agent — the Dockerfile
-#                   pulls in the shared agents/common package.
-#
-#                   hand0ff-new is the PREVIOUS contract, in
-#                   which FILING the issue IS the handoff:
-#                     * one AE call — ae_create_issue adopts what it files, so
-#                       there is no ae_dispatch_coding_agent and no second leg
-#                       that can fail between them (AEP ADR-0017);
-#                     * no classification asked of the model. It answers
-#                       needs_code_change; code-level / config-level / mixed is
-#                       DERIVED from that plus the remediation statuses;
-#                     * config work never reaches the coding agent. A
-#                       config-only RCA short-circuits before the LLM runs, and a
-#                       mixed one has its ReleaseBinding patches withheld from
-#                       the payload the model writes the issue from;
-#                     * dedupe key, the sre-agent label, the unprefixed design
-#                       component name, and the adopt flag are all forced in code
-#                       (src/agent/handoff_logic.py), never left to the prompt.
-#                   It also carries the two earlier requirements that are easy to
-#                   regress: the EXTERNAL_SKILLS_DIR loader, so the AEP-owned
-#                   coding-agent-handoff skill mounted by step 3d below is what actually runs
-#                   (an image with a baked-in copy IGNORES that mount), and a
-#                   configurable HANDOFF_MCP_PATH (default /mcp) so the agent reaches
-#                   the standalone aep-mcp-server on :3401 instead of crash-
-#                   looping against a hardcoded /sre-mcp.
-#                   Requires the rca-agent component:create grant in setup-aep.sh
-#                   — the synchronous EnsureComponent pre-check that runs before
-#                   the issue is filed 403s without it.
-#                   Degradation chain, each step louder than the last:
-#                     recurrence → hand0ff-new (handoff works, recurrence
-#                     reporting ABSENT) → anthropic-patched (RCA works, handoff
-#                     stage ABSENT entirely).
-#   HANDOFF_MCP_PATH path of the handoff MCP endpoint under HANDOFF_API_URL
-#                   (default: /mcp = standalone aep-mcp-server; set /sre-mcp for
-#                   the in-process aep-api surface). Older images than
-#                   hand0ff-new hardcode /sre-mcp and ignore this.
-#   HANDOFF_ENABLED enable the RCA→platform coding-agent handoff (default: true).
-#                   Legacy AE_HANDOFF is still honoured as a fallback.
-#                   The handoff files ONE issue for code-level work; AEP adopts
-#                   it on creation, which is what puts the coding agent on it.
-#   Whether the filed issue is handed to the coding agent (vs. left as a
-#                   ledger entry for a human to adopt) is controlled by
-#                   AEP_HANDOFF_ADOPT on the aep-mcp-server deployment, not by
-#                   anything on the SRE agent side.
+#   RCA_IMAGE_REPO  RCA/SRE agent image repository (default:
+#                   ghcr.io/openchoreo/ai-rca-agent — the vanilla, unforked
+#                   OpenChoreo image; the same repo the observability-plane
+#                   chart's own values.yaml defaults to). Replaces the
+#                   tharindulak/sre-agent fork, which existed only to carry
+#                   the bespoke HANDOFF_* config this script now retires.
+#   RCA_IMAGE_TAG   RCA/SRE agent image tag (default: v1.0.1-hotfix.1 — the
+#                   same AppVersion `aectl sre install` pins its default to,
+#                   see tools/aectl/cmd/sre.go). Per OpenChoreo PR #4743
+#                   (merged well before this hotfix release), this image
+#                   carries the generic EXTENSIONS_DIR mechanism that step 3e
+#                   below mounts mcp.json/CONTEXT.md/the coding-agent-handoff
+#                   skill into — changing the handoff's behaviour needs no
+#                   image rebuild.
+#   HANDOFF_ENABLED enable the RCA→platform coding-agent handoff (default:
+#                   true). The vanilla agent reaches aep-mcp-server through
+#                   its EXTENSIONS_DIR/remediation/mcp.json mount
+#                   (AEP_MCP_HOSTNAME + AEP_MCP_TOKEN below), not a bespoke
+#                   header map. The handoff files ONE issue for code-level
+#                   work; AEP adopts it on creation, which is what puts the
+#                   coding agent on it. Whether the filed issue is handed to
+#                   the coding agent (vs. left as a ledger entry for a human
+#                   to adopt) is controlled by AEP_HANDOFF_ADOPT on the
+#                   aep-mcp-server deployment, not by anything on the SRE
+#                   agent side.
+#   AEP_MCP_HOSTNAME hostname the mounted mcp.json points the remediation
+#                   agent at (default: aep-mcp.openchoreo.localhost). Must
+#                   resolve, over HTTPS, from inside the k3d cluster — see
+#                   docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md
+#                   decision 6. (Local dev has no cross-namespace HTTPRoute
+#                   for aep-mcp-server yet, the same open item Task 4 flagged
+#                   for the Helm path — this default won't actually resolve
+#                   until that follow-up lands.)
+#   AEP_MCP_TOKEN   the long-lived service credential the mounted mcp.json
+#                   authenticates with (Bearer). No default — must be set in
+#                   deployments/.env (see .env.example). Same credential
+#                   the aectl/Helm path's aep-mcp-token ExternalSecret carries.
 #   REPORT_SINK     where completed RCA reports are published (default:
 #                   webhook; empty = nowhere, which silently empties the
-#                   console Alerts bell/list). Replaced AE_PUBLISH_REPORTS:
-#                   the agent no longer knows anything about aep-api's schema,
-#                   it POSTs its own report and aep-api maps it.
+#                   console Alerts bell/list).
 #   REPORT_SINK_URL FULL URL of the report endpoint, not a base — the sink
 #                   posts exactly here
 #                   (default: http://host.k3d.internal:9090/api/v1/rca-agent/reports).
-#                   Replaced AEP_API_URL. Distinct from HANDOFF_API_URL, which is the
-#                   MCP server on :3401.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -286,21 +144,24 @@ NS="openchoreo-observability-plane"
 # eight places that address it.
 RCA_DEPLOYMENT="sre-agent"
 
-# SRE-agent handoff knobs (see header). HANDOFF_API_URL is how the in-cluster RCA
-# agent reaches the docker-compose-hosted aep-mcp-server on the host.
-HANDOFF_ENABLED="${HANDOFF_ENABLED:-${AE_HANDOFF:-true}}"
-HANDOFF_API_URL="${HANDOFF_API_URL:-${AE_API_URL:-http://host.k3d.internal:3401}}"
-# What this agent's OWN vocabulary for a run's context maps onto, on the wire.
-# JSON object, field name -> header name; the field names are this agent's
-# (project, component, signature, action_statuses), the header names are
-# whatever the configured receiving platform expects. No file to mount: the
-# operator deploying AE alongside this agent sets the values that match AE's
-# own header constants (services/aep-mcp-server/src/handoffContext.ts).
-HANDOFF_HEADER_MAP="${HANDOFF_HEADER_MAP:-{\"project\":\"X-AEP-Incident-Project\",\"component\":\"X-AEP-Incident-Component\",\"signature\":\"X-AEP-Incident-Signature\",\"action_statuses\":\"X-AEP-Handoff-Action-Statuses\"}}"
+# SRE-agent handoff knobs (see header).
+HANDOFF_ENABLED="${HANDOFF_ENABLED:-true}"
+# The vanilla (unforked) SRE agent reaches aep-mcp-server through its generic
+# EXTENSIONS_DIR mechanism (mcp.json + CONTEXT.md + skills/), not a bespoke
+# header map — see docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md.
+# AEP_MCP_HOSTNAME must resolve from inside the k3d cluster; AEP_MCP_TOKEN is
+# the same long-lived credential the aectl/Helm path's aep-mcp-token
+# ExternalSecret carries — for local dev it comes from deployments/.env instead.
+AEP_MCP_HOSTNAME="${AEP_MCP_HOSTNAME:-aep-mcp.openchoreo.localhost}"
+# Only required when the handoff stage is actually on — HANDOFF_ENABLED=false
+# should not force every dev to have a token set (mirrors aectl sre.go, which
+# reads this only inside its own `if sreAEHandoff` branch).
+if [ "$HANDOFF_ENABLED" = "true" ]; then
+    AEP_MCP_TOKEN="${AEP_MCP_TOKEN:?set AEP_MCP_TOKEN in deployments/.env — see .env.example}"
+fi
 # Report publishing: the agent POSTs each completed report to a configured sink
 # and aep-api maps it onto its own row. REPORT_SINK_URL is the FULL endpoint —
-# the sink posts exactly there, it does not append a path — and is distinct from
-# HANDOFF_API_URL (the MCP server on :3401); reports go to the HTTP API on :9090.
+# the sink posts exactly there, it does not append a path.
 REPORT_SINK="${REPORT_SINK:-webhook}"
 REPORT_SINK_URL="${REPORT_SINK_URL:-http://host.k3d.internal:9090/api/v1/rca-agent/reports}"
 
@@ -364,208 +225,42 @@ EOF
 echo "✅ ExternalSecrets applied"
 
 # ── 1b. RCA (SRE) agent image + secret ───────────────────────────────────
-# The RCA agent runs the patched image (Anthropic ToolStrategy fix). It's a
-# locally-built image, so import it into the k3d cluster (a cluster rebuild
-# loses imported images — this makes the import part of setup). Build once with
-# (repo:tag must match RCA_IMAGE_REPO:RCA_IMAGE_TAG below so this local build is
-# picked up instead of a registry pull):
-#   cd <openchoreo-repo>/agents && docker build \
-#     -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
-# The context is agents/, NOT agents/sre-agent: the Dockerfile pulls in the
-# shared agents/common package (openchoreo PR #4372), so building from inside
-# sre-agent/ cannot resolve its COPY paths.
-# `recurrence` additionally reports which attempt an incident is on (ADR-0018):
-# it stamps `reopened` + `recurrence` from ae_create_issue's answer onto the
-# HandoffResult and forwards the count on the RCA report. An older image is
-# still FUNCTIONAL against a newer AE — recurrences are reopened and worked
-# correctly either way, because AE decides that — but the report and console
-# then show a third attempt as though it were the first.
-# The image must be built from the SRE branch that (a) adds the
-# EXTERNAL_SKILLS_DIR loader (src/agent/skills.py + src/config.py), (b) removes
-# the baked-in src/skills/coding-agent-handoff — without both, step 3d's mount is inert —
-# (c) makes the handoff MCP path configurable (HANDOFF_MCP_PATH, default /mcp) so the
-# boot MCP test reaches the standalone aep-mcp-server on :3401, and (d) carries
-# the one-call handoff: ae_create_issue with adopt/componentName, and no
-# ae_dispatch_coding_agent (an older image still calls a tool aep-mcp-server no
-# longer exposes).
+# The RCA agent runs the vanilla, unforked OpenChoreo image (RCA_IMAGE_REPO/
+# RCA_IMAGE_TAG — see the header). It's imported into the k3d cluster the same
+# way a locally-built image would be (a cluster rebuild loses imported images
+# — this makes the import part of setup); if no local copy exists, it's
+# pulled straight from the registry (RCA_IMAGE_PULL below) — the image is
+# published multi-arch, so this always succeeds without a local build.
 # The agent reads its LLM key + OAuth client secret from the rca-agent-secret
 # Secret (envFrom). RCA_LLM_API_KEY comes from ANTHROPIC_API_KEY in deployments/.env;
 # OAUTH_CLIENT_SECRET must equal the openchoreo-rca-agent client secret registered
 # by the IdP bootstrap (single-cluster/thunder-resources/86-openchoreo-rca-agent.yaml).
 echo ""
 echo "1️⃣b RCA agent image + secret"
-# Preferred tag `thin-handoff` (= RCA_IMAGE_TAG default below) carries
-# everything `fingerprint-fix` did — the prompt/skill split (handoff prompt is
-# a loader, the mounted skill is the whole playbook), the one-call handoff
-# stage (HANDOFF_ENABLED), the EXTERNAL_SKILLS_DIR loader that reads the
-# AEP-mounted coding-agent-handoff skill from step 3d, the configurable
-# HANDOFF_MCP_PATH (default /mcp), the recurrence contract (ADR-0021), and the
-# report sink — plus: no provider-descriptor file at all (tools are discovered
-# via standard MCP, server_name="handoff"), incident identity AND the
-# remediation agent's action statuses both carried by the same generic
-# HANDOFF_HEADER_MAP mechanism instead of a mounted descriptor or a forced
-# tool argument, a fully generic HandoffResult on the report (tool/result/
-# failure_reason, no classification or dedupe fields), and content-shaping
-# (withholding observability recommendations and a revised action's config
-# patch) moved into the coding-agent-handoff skill's own instructions. With
-# this image, editing
-# services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md and re-running
-# step 3d changes the stage's behaviour completely, with no SRE image rebuild.
-# STILL REQUIRES REPORT_SINK / REPORT_SINK_URL, or reports go nowhere and the
-# console Alerts list stays empty.
-# Resolution order:
-#   1. local build            cd <openchoreo-repo>/agents && docker build \
-#                       -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
-#      (preferred — developers iterating on the agent aren't surprised by a
-#       stale registry copy)
-#   2. registry pull          ${RCA_IMAGE_PULL} (Docker Hub mirror)
-#   3. local fingerprint-fix  (previous tier: reads HANDOFF_PROVIDER_FILE,
-#                              which this script no longer sets — handoff
-#                              stage fails to start; RCA itself is unaffected)
-#   4. local skill-loader     (older tier: needs the provider-descriptor mount
-#                              step 3d no longer creates — handoff stage fails
-#                              to start; RCA itself is unaffected)
-#   5. local handoff-provider (older tier: same descriptor dependency as
-#                              skill-loader — handoff stage fails to start for
-#                              the same reason)
-#   6. local report-sink      (older: reads the PRE-RENAME AE_* config keys)
-#   7. local recurrence       (older contract: handoff works, but publishing
-#                              is REJECTED by current aep-api — no Alerts feed)
-#   8. local hand0ff-new      (older: also cannot say WHICH ATTEMPT an incident
-#                              is on)
-#   9. local anthropic-patched (older tag: RCA works, handoff stage ABSENT)
-#
-# RCA_IMAGE_REPO is the FULLY QUALIFIED name (tharindulak/sre-agent),
-# not a short local alias — deliberately. An earlier version used a short repo
-# name here and retagged the pulled image to it before `k3d image import`; the
-# Deployment then referenced that short, unqualified name. That worked right
-# after import, but k3d/containerd's image GC can evict it later — and because
-# the reference had no registry/namespace, kubelet's re-pull attempt resolved
-# to docker.io/library/<name> (Docker Hub's default namespace for official
-# images) instead of our actual image, and failed outright
-# (ImagePullBackOff: "pull access denied, repository does not exist"). Using
-# the fully-qualified name everywhere means a cache-evicted image can always
-# be re-pulled from the real registry — no more silent long-term fragility.
-RCA_IMAGE_REPO="tharindulak/sre-agent"
-RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-thin-handoff}"
-RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-tharindulak/sre-agent:${RCA_IMAGE_TAG}}"
-# Degradation is EXPLICIT and ordered, because each step down loses something
-# different and a silent step-down is what makes a stale agent hard to spot:
-#   thin-handoff   — current contract. No provider-descriptor file: tools are
-#                    discovered via standard MCP (server_name="handoff"), and
-#                    incident identity plus the remediation agent's action
-#                    statuses both ride the same generic HANDOFF_HEADER_MAP
-#                    mechanism (see below) instead of a mounted descriptor or a
-#                    forced tool argument. HandoffResult on the report is fully
-#                    generic (tool/result/failure_reason) — no classification
-#                    or dedupe fields. Config keys are HANDOFF_* (see below).
-#   fingerprint-fix — previous tier. Its handoff stage now fails to start:
-#                    it still reads HANDOFF_PROVIDER_FILE, which this script no
-#                    longer sets (HANDOFF_HEADER_MAP replaced it). RCA itself
-#                    (minus the handoff) is unaffected. When it could still
-#                    start: classification and the dispatch decision were AE's,
-#                    not this stage's; the dedupe fingerprint hashed the raw
-#                    captured logs instead of the model's cited lines, so one
-#                    repeated defect filed one issue, not one per run; the
-#                    skill catalog was discovered by directory, so a second
-#                    mounted skill needed no image rebuild; and a handoff stage
-#                    that threw recorded HandoffResult.failed on the report
-#                    instead of only logging.
-#   skill-loader   — tier before that. The handoff prompt is a LOADER: the
-#                    mounted coding-agent-handoff skill is the stage's entire
-#                    playbook, so this repo owns the handoff's behaviour outright
-#                    and a skill edit needs no SRE image. Tool and argument names
-#                    come from a provider descriptor this image expects mounted at
-#                    /etc/rca-agent/handoff/provider.json — step 3d no longer
-#                    creates that mount (HANDOFF_HEADER_MAP replaced it), so this
-#                    tier's handoff stage now fails to start. RCA itself (minus
-#                    the handoff) is unaffected.
-#   handoff-provider — same descriptor dependency as skill-loader, so its
-#                    handoff stage fails to start for the same reason. Its only
-#                    remaining difference (a prompt that duplicates the skill's
-#                    rules instead of only loading it) is moot once the handoff
-#                    cannot start at all.
-#   report-sink    — publishes reports fine, but reads the PRE-RENAME config
-#                    keys (AE_HANDOFF / AE_AUTO_DISPATCH / AE_API_URL). This
-#                    script writes both sets for exactly that reason, so the
-#                    handoff still runs — what it does not have is the provider
-#                    descriptor, which it does not need because its AEP names
-#                    are compiled in.
-#   recurrence     — the PREVIOUS contract, and it can no longer publish: it
-#                    POSTs aep-api's old flat body, which aep-api stopped
-#                    accepting. The handoff still files and dispatches issues
-#                    correctly — what you lose is the console Alerts feed, and
-#                    you lose it QUIETLY, because publishing is best-effort by
-#                    design and a rejected publish only logs.
-#   hand0ff-new    — handoff works; the report/console cannot say which ATTEMPT
-#                    an incident is on. Recurrences are still reopened and worked
-#                    correctly, because AE decides that, not the agent.
-#   anthropic-patched — no handoff stage at all.
+# RCA_IMAGE_REPO/RCA_IMAGE_PULL are the FULLY QUALIFIED name
+# (ghcr.io/openchoreo/ai-rca-agent), not a short local alias — deliberately.
+# An earlier version of this script used a short repo name here and retagged
+# the pulled image to it before `k3d image import`; the Deployment then
+# referenced that short, unqualified name. That worked right after import,
+# but k3d/containerd's image GC can evict it later — and because the
+# reference had no registry/namespace, kubelet's re-pull attempt resolved to
+# docker.io/library/<name> (Docker Hub's default namespace for official
+# images) instead of our actual image, and failed outright (ImagePullBackOff:
+# "pull access denied, repository does not exist"). Using the fully-qualified
+# name everywhere means a cache-evicted image can always be re-pulled from
+# the real registry — no more silent long-term fragility.
+RCA_IMAGE_REPO="${RCA_IMAGE_REPO:-ghcr.io/openchoreo/ai-rca-agent}"
+RCA_IMAGE_TAG="${RCA_IMAGE_TAG:-v1.0.1-hotfix.1}"
+RCA_IMAGE_PULL="${RCA_IMAGE_PULL:-${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}}"
 if ! docker image inspect "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" >/dev/null 2>&1; then
-    echo "   ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} not built locally — trying registry ${RCA_IMAGE_PULL}..."
+    echo "   ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} not present locally — trying registry ${RCA_IMAGE_PULL}..."
     if docker pull "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
         docker tag "$RCA_IMAGE_PULL" "${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
         echo "✅ pulled ${RCA_IMAGE_PULL} → retagged as ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
-    elif docker image inspect "${RCA_IMAGE_REPO}:fingerprint-fix" >/dev/null 2>&1; then
-        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
-        echo "    falling back to ${RCA_IMAGE_REPO}:fingerprint-fix."
-        echo "    It still reads HANDOFF_PROVIDER_FILE, which this script no longer"
-        echo "    sets (HANDOFF_HEADER_MAP replaced it), so the handoff stage will"
-        echo "    fail to start. RCA itself (minus the handoff) still works."
-        echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
-        RCA_IMAGE_TAG="fingerprint-fix"
-    elif docker image inspect "${RCA_IMAGE_REPO}:skill-loader" >/dev/null 2>&1; then
-        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
-        echo "    falling back to ${RCA_IMAGE_REPO}:skill-loader."
-        echo "    Its handoff stage needs a provider descriptor mounted at"
-        echo "    /etc/rca-agent/handoff/provider.json — step 3d no longer creates"
-        echo "    that mount, so the handoff stage will fail to start. RCA itself"
-        echo "    (minus the handoff) still works."
-        echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
-        RCA_IMAGE_TAG="skill-loader"
-    elif docker image inspect "${RCA_IMAGE_REPO}:handoff-provider" >/dev/null 2>&1; then
-        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
-        echo "    falling back to ${RCA_IMAGE_REPO}:handoff-provider."
-        echo "    Same descriptor dependency as skill-loader: step 3d no longer"
-        echo "    creates the /etc/rca-agent/handoff/provider.json mount this image"
-        echo "    expects, so its handoff stage will fail to start. RCA itself"
-        echo "    (minus the handoff) still works."
-        echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
-        RCA_IMAGE_TAG="handoff-provider"
-    elif docker image inspect "${RCA_IMAGE_REPO}:report-sink" >/dev/null 2>&1; then
-        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
-        echo "    falling back to ${RCA_IMAGE_REPO}:report-sink."
-        echo "    Everything works: it reads the AE_* config keys this script also"
-        echo "    writes, and its AEP tool names are compiled in rather than read"
-        echo "    from the provider descriptor. Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
-        RCA_IMAGE_TAG="report-sink"
-    elif docker image inspect "${RCA_IMAGE_REPO}:recurrence" >/dev/null 2>&1; then
-        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
-        echo "    falling back to ${RCA_IMAGE_REPO}:recurrence."
-        echo "    The handoff WORKS — issues are still filed and dispatched. What you"
-        echo "    lose is the console Alerts feed: this image POSTs aep-api's old flat"
-        echo "    report body, which current aep-api rejects, and publishing is"
-        echo "    best-effort so the rejection only shows up in the agent's log."
-        echo "    Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
-        RCA_IMAGE_TAG="recurrence"
-    elif docker image inspect "${RCA_IMAGE_REPO}:hand0ff-new" >/dev/null 2>&1; then
-        echo "⚠️  ${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG} is neither built nor pullable —"
-        echo "    falling back to ${RCA_IMAGE_REPO}:hand0ff-new."
-        echo "    The handoff WORKS and recurrences are still reopened and worked (AE"
-        echo "    decides that). You lose the console Alerts feed (as above) AND the"
-        echo "    report saying WHICH ATTEMPT an incident is on, so a third attempt"
-        echo "    reads as the first. Build the current image to fix:"
-        echo "      cd <openchoreo>/agents && docker build -t ${RCA_IMAGE_REPO}:thin-handoff -f sre-agent/Dockerfile ."
-        RCA_IMAGE_TAG="hand0ff-new"
-    elif docker image inspect "${RCA_IMAGE_REPO}:anthropic-patched" >/dev/null 2>&1; then
-        echo "⚠️  registry pull failed — falling back to ${RCA_IMAGE_REPO}:anthropic-patched"
-        echo "    (RCA works, AEP handoff stage ABSENT)."
-        RCA_IMAGE_TAG="anthropic-patched"
+    else
+        echo "⚠️  registry pull of ${RCA_IMAGE_PULL} failed. The RCA pod will stay"
+        echo "    ImagePullBackOff until it's reachable. Continuing; other obs-plane"
+        echo "    components are unaffected."
     fi
 fi
 RCA_IMAGE="${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
@@ -573,8 +268,8 @@ RCA_IMAGE="${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}"
 # EOF" while ingesting a layer blob — truncated docker→node tar stream), and
 # some k3d versions exit 0 anyway. So: import, VERIFY the image is really in
 # the node's containerd, retry once, and if it still isn't there fall back to
-# registry-direct (helm values point at $RCA_IMAGE_PULL and the node pulls
-# from Docker Hub itself — possible since the image is published multi-arch).
+# registry-direct (helm values point at $RCA_IMAGE_PULL and the node pulls it
+# from the registry itself — possible since the image is published multi-arch).
 _rca_image_in_node() {
     # imported local images land as docker.io/library/<repo>:<tag> — substring
     # match on repo:tag covers both that and registry-form names
@@ -589,8 +284,9 @@ if docker image inspect "$RCA_IMAGE" >/dev/null 2>&1; then
         echo "⚠️  import attempt ${attempt} did not land in the node (transient k3d flake) — retrying..."
     done
     if [ -n "$IMPORTED" ]; then
-        # The patched tag is built locally and exists in no registry, so an image-GC
-        # eviction would be unrecoverable — pin it (see pin_node_image in utils.sh).
+        # Pin the imported image (see pin_node_image in utils.sh) so k3d's own
+        # image GC doesn't evict it between runs — falling back to a registry
+        # pull every time is unnecessary churn for a published image this size.
         # It also re-verifies on EVERY server/agent node, where _rca_image_in_node
         # above only checks server-0: exit 2 means the import landed on some nodes
         # but not all, so fall through to the registry-direct path rather than
@@ -611,7 +307,7 @@ if docker image inspect "$RCA_IMAGE" >/dev/null 2>&1; then
         # wrong and leave the pin alone.
         if docker manifest inspect "$RCA_IMAGE_PULL" >/dev/null 2>&1; then
             echo "⚠️  k3d import did not land on every node — switching to registry-direct:"
-            echo "    the cluster will pull ${RCA_IMAGE_PULL} from Docker Hub instead."
+            echo "    the cluster will pull ${RCA_IMAGE_PULL} from the registry instead."
             RCA_IMAGE_REPO="${RCA_IMAGE_PULL%%:*}"
             RCA_IMAGE_TAG="${RCA_IMAGE_PULL##*:}"
         else
@@ -623,9 +319,9 @@ if docker image inspect "$RCA_IMAGE" >/dev/null 2>&1; then
         fi
     fi
 else
-    echo "⚠️  $RCA_IMAGE not found locally and registry pull failed — build it"
-    echo "    (docker build -t $RCA_IMAGE <openchoreo>/agents/sre-agent) or the RCA pod"
-    echo "    will stay ImagePullBackOff. Continuing; other obs-plane components are unaffected."
+    echo "⚠️  $RCA_IMAGE not found locally and the registry pull above failed — check"
+    echo "    network access to the registry (ghcr.io). The RCA pod will stay"
+    echo "    ImagePullBackOff. Continuing; other obs-plane components are unaffected."
 fi
 ANTHROPIC_API_KEY="$(grep -E '^ANTHROPIC_API_KEY=' "$SCRIPT_DIR/../.env" 2>/dev/null | head -1 | cut -d= -f2-)"
 if [ -z "$ANTHROPIC_API_KEY" ]; then
@@ -678,18 +374,15 @@ security:
     tokenUrl: "${THUNDER_INTERNAL_TOKEN_URL}"
     authServerBaseUrl: "http://thunder.openchoreo.localhost:8080"
 rca:
-  # SRE / RCA agent. Uses a locally-built image that carries the Anthropic
-  # structured-output fix (ToolStrategy instead of ProviderStrategy — the stock
-  # ghcr.io/openchoreo/sre-agent image rejects Anthropic with many tools:
-  # "grammar too large") and, with the 'handoff' tag, the AEP coding-agent
-  # handoff stage. Built + imported in step 1b above. If you switch to an
-  # OpenAI model without the handoff, the stock image works and you can drop
-  # the image override.
+  # SRE / RCA agent. Vanilla, unforked OpenChoreo image (RCA_IMAGE_REPO/TAG,
+  # step 1b above) — the generic EXTENSIONS_DIR mechanism (step 3e below)
+  # replaces the old tharindulak/sre-agent fork's bespoke HANDOFF_* wiring
+  # entirely.
   enabled: true
   image:
     repository: ${RCA_IMAGE_REPO}
     tag: ${RCA_IMAGE_TAG}
-    pullPolicy: IfNotPresent          # locally-imported image, not a registry pull
+    pullPolicy: IfNotPresent          # imported/tagged locally in step 1b, not a bare registry pull
   llm:
     modelName: anthropic:claude-sonnet-4-6
   secretName: rca-agent-secret        # created in step 1b (RCA_LLM_API_KEY + OAUTH_CLIENT_SECRET)
@@ -816,7 +509,7 @@ echo "⏳ Waiting for logs-adapter..."
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout status deploy/logs-adapter-opensearch --timeout=300s
 echo "✅ logs-opensearch ready (incl. logs-adapter)"
 
-# ── 3b. Alert→RCA auto-trigger + AEP handoff wiring ──────────────────────
+# ── 3b. Alert→RCA auto-trigger + report-sink wiring ──────────────────────
 # Post-helm ConfigMap patches + restarts. Patched here (not via chart values)
 # because the chart doesn't expose all these keys and observer.extraEnvs
 # REPLACES chart defaults — a patch after every helm run is deterministic.
@@ -829,39 +522,25 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #                              search-then-create dedup ⇒ duplicate GitHub
 #                              issues + duplicate coding-agent dispatches.
 #   rca-agent-config:
-#     HANDOFF_ENABLED          enables the RCA→platform handoff stage (file the issue)
-#     HANDOFF_HEADER_MAP       this agent's field names -> the platform's header
-#                              names (JSON object); no descriptor file to mount
-#     (Whether the filed issue is handed to the coding agent, vs. left as a
-#      ledger entry for a human to adopt, is AEP_HANDOFF_ADOPT on the
-#      aep-mcp-server deployment — see docker-compose.yml / helm values
-#      aepMcpServer.handoffAdopt. Nothing on the SRE agent side controls it.)
-#     HANDOFF_API_URL          aep-mcp-server base URL (host.k3d.internal:3401)
 #     REPORT_SINK              publish completed reports downstream (webhook)
 #     REPORT_SINK_URL          full report endpoint on aep-api (:9090/api/v1/...)
+#     (The RCA→platform handoff itself is no longer a ConfigMap key set — see
+#      step 3e, which mounts mcp.json/CONTEXT.md/the coding-agent-handoff
+#      skill via the generic EXTENSIONS_DIR mechanism instead. Whether the
+#      filed issue is handed to the coding agent, vs. left as a ledger entry
+#      for a human to adopt, is AEP_HANDOFF_ADOPT on the aep-mcp-server
+#      deployment — see docker-compose.yml / helm values
+#      aepMcpServer.handoffAdopt. Nothing on the SRE agent side controls it.)
 echo ""
-echo "3️⃣b Alert→RCA auto-trigger + AEP handoff wiring"
+echo "3️⃣b Alert→RCA auto-trigger + report-sink wiring"
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=merge -p \
     '{"data":{"LOGS_ADAPTER_ENABLED":"true","RCA_SERVICE_URL":"http://'"${RCA_DEPLOYMENT}"':8080","ALERT_SUPPRESSION_WINDOW":"1h"}}'
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
-# Both key sets are written on purpose. The agent renamed AE_* to HANDOFF_* when
-# the handoff stopped carrying AEP's vocabulary, and the fallback tags below
-# predate that. An image reads the set it knows and ignores the other
-# (pydantic Settings allows extras), so one ConfigMap serves any tag on the
-# ladder — without this, falling back to report-sink would leave HANDOFF_* set,
-# AE_HANDOFF unset, and the handoff SILENTLY off. Drop the AE_* three once no
-# deployment can roll back past handoff-provider.
-# AE_AUTO_DISPATCH is hardcoded true: it is only read by a pinned report-sink
-# tier image (see the degradation ladder above) and, like the HANDOFF_HAND_OVER
-# key this ConfigMap no longer sets, has no effect on the handoff-provider
-# image this script deploys by default — adoption there is AEP_HANDOFF_ADOPT
-# on aep-mcp-server, not anything in this ConfigMap.
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
-        "{\"data\":{\"HANDOFF_ENABLED\":\"true\",\"HANDOFF_API_URL\":\"${HANDOFF_API_URL}\",\"HANDOFF_HEADER_MAP\":$(printf '%s' "$HANDOFF_HEADER_MAP" | jq -Rs .),\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\",\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"true\",\"AE_API_URL\":\"${HANDOFF_API_URL}\"}}"
+        "{\"data\":{\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\"}}"
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/${RCA_DEPLOYMENT}
-    echo "   Handoff: enabled (mcp=${HANDOFF_API_URL})"
-    echo "   Header map: ${HANDOFF_HEADER_MAP}"
+    echo "   Handoff: enabled via EXTENSIONS_DIR mount (mcp=${AEP_MCP_HOSTNAME})"
     echo "   Report sink: ${REPORT_SINK:-<none>} → ${REPORT_SINK_URL}"
 else
     echo "   Handoff: disabled (HANDOFF_ENABLED=false)"
@@ -1016,127 +695,96 @@ echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the dynamic Anthropic key"
 echo "   The RCA agent's own ExternalSecret (against the org's Anthropic KV path) fills this mount."
 echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 1b."
 
-# ── 3e. AEP-owned handoff skill (coding-agent-handoff) — deploy-time mount ───────────
-# The handoff sub-agent loads the 'coding-agent-handoff' skill (search related issues,
-# file the one issue that hands a code-level root cause to the coding agent).
-# It neither classifies config-vs-code nor dedupes — the agent derives the
-# classification before the stage runs and AEP derives the dedupe key
-# server-side. Its content IS AEP's contract (aep:* / sre-agent labels,
-# taskmeta block, dedupe keys, unprefixed component names), so AEP owns it —
-# canonical source: services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md, right
-# here in this repo. The SRE agent does NOT bake it into its image and does NOT fetch
-# it at runtime; we materialize it into a ConfigMap and mount it, and the
-# agent's EXTERNAL_SKILLS_DIR points its loader at the mount (searched before
-# the built-in src/skills library). Same "patch the Deployment so it survives
-# a helm re-run" pattern as step 3c's volume wiring.
+# ── 3e. SRE-agent extensions (mcp.json + CONTEXT.md + coding-agent-handoff skill) ──
+# The remediation agent's handoff to AE runs on OpenChoreo's generic
+# EXTENSIONS_DIR mechanism (openchoreo#4743): one ConfigMap holding
+# mcp.json (points the agent at aep-mcp-server, AEP_MCP_HOSTNAME/
+# AEP_MCP_TOKEN substituted), CONTEXT.md (the unconditional handoff
+# trigger), and the coding-agent-handoff skill — mounted at
+# EXTENSIONS_DIR/remediation/ (the agent's default EXTENSIONS_DIR, no env
+# override needed). mcp.json/CONTEXT.md are deployment-owned
+# (deployments/sre-agent-extensions/remediation/); the skill's canonical
+# source stays services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md
+# — read straight off this checkout (unlike aectl, which is a standalone
+# binary and must vendor+embed the same three files at build time; see
+# tools/aectl/cmd/sre_extensions.go). Mirrors that same mounting shape here
+# in bash. Same "patch the Deployment so it survives a helm re-run" pattern
+# as step 3c's volume wiring.
 #
-# Only wired when HANDOFF_ENABLED=true — without the handoff stage the agent never
-# loads a skill, so there's nothing to mount.
+# Only wired when HANDOFF_ENABLED=true — without the handoff stage the agent
+# never loads a skill, so there's nothing to mount.
 #
-# ⚠️  UPGRADING AN EXISTING DEPLOYMENT: an older version of this script created
-# a `rca-agent-handoff-provider` ConfigMap plus a `handoff-provider`
-# volume/volumeMount on the ai-rca-agent Deployment (the provider-descriptor
-# mount this step used to manage). This step no longer creates or updates
-# either — the header map (HANDOFF_HEADER_MAP, step 3b) replaced them — so on
-# a cluster where the old script already ran they are now ORPHANED: nothing
-# here deletes them, and they are harmless but stale. Clean them up by hand,
-# once, on such a cluster:
+# ⚠️  UPGRADING AN EXISTING DEPLOYMENT: an older version of this script wrote
+# a per-skill `rca-agent-skill-<name>` ConfigMap plus a `<name>-skill`
+# volume/volumeMount for each skill under services/aep-mcp-server/skills/
+# (EXTERNAL_SKILLS_DIR-based loading), and an even older version wrote a
+# `rca-agent-handoff-provider` ConfigMap plus a `handoff-provider`
+# volume/volumeMount (a provider-descriptor mount). This step creates
+# neither — the single sre-agent-extensions ConfigMap below replaces both —
+# so on a cluster where an older script already ran, those are now ORPHANED:
+# nothing here deletes them, and they are harmless but stale. Clean them up
+# by hand, once, on such a cluster:
 #   kubectl delete configmap rca-agent-handoff-provider -n "$NS" --ignore-not-found
-#   kubectl edit deployment ai-rca-agent -n "$NS"   # remove the handoff-provider
-#                                                    # volume and volumeMount
+#   kubectl get configmap -n "$NS" -o name | grep '^configmap/rca-agent-skill-' | xargs -r kubectl delete -n "$NS"
+#   kubectl edit deployment "$RCA_DEPLOYMENT" -n "$NS"   # remove the handoff-provider
+#                                                          # and any <name>-skill
+#                                                          # volumes/volumeMounts
 # (or apply an equivalent strategic-merge patch). Not run automatically here:
 # this script does not delete or patch away resources it does not itself own
 # the full lifecycle of.
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     echo ""
-    echo "3️⃣e Handoff skills — one ConfigMap + mount per skill"
-    HANDOFF_SKILLS_ROOT="$SCRIPT_DIR/../../services/aep-mcp-server/skills"
-    # Every directory holding a SKILL.md is mounted, so a second skill needs no
-    # edit here. EXTERNAL_SKILLS_DIR already points at the PARENT directory, so
-    # the agent's loader finds whatever appears beside the first one — which is
-    # what OpenChoreo's shared skills directory will land as.
-    HANDOFF_SKILL_NAMES=()
-    for skill_dir in "$HANDOFF_SKILLS_ROOT"/*/; do
-        [ -f "${skill_dir}SKILL.md" ] || continue
-        HANDOFF_SKILL_NAMES+=("$(basename "$skill_dir")")
-    done
-    if [ ${#HANDOFF_SKILL_NAMES[@]} -eq 0 ]; then
-        echo "❌ no skill found under $HANDOFF_SKILLS_ROOT (expected <name>/SKILL.md)"
-        echo "   HANDOFF_ENABLED is on, and the stage's whole playbook IS the mounted"
-        echo "   skill. The agent's config validator refuses to start without"
-        echo "   EXTERNAL_SKILLS_DIR, and an empty mount fails load_skills once per"
-        echo "   incident — the report then records only that the stage failed."
+    echo "3️⃣e SRE-agent extensions — mcp.json + CONTEXT.md + coding-agent-handoff skill"
+    EXT_ROOT="$SCRIPT_DIR/../sre-agent-extensions/remediation"
+    SKILL_MD="$SCRIPT_DIR/../../services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md"
+    if [ ! -f "$SKILL_MD" ]; then
+        echo "❌ $SKILL_MD not found — the coding-agent-handoff skill is the handoff"
+        echo "   stage's whole playbook. The agent's config validator refuses to start"
+        echo "   without EXTENSIONS_DIR content, and an empty mount fails load_skill"
+        echo "   once per incident — the report then records only that the stage failed."
         exit 1
     fi
+    RENDERED_MCP_JSON=$(sed \
+        -e "s|\${AEP_MCP_HOSTNAME}|${AEP_MCP_HOSTNAME}|g" \
+        -e "s|\${AEP_MCP_TOKEN}|${AEP_MCP_TOKEN}|g" \
+        "$EXT_ROOT/mcp.json")
 
-    SKILL_VOLUMES=""
-    SKILL_MOUNTS=""
-    for skill_name in "${HANDOFF_SKILL_NAMES[@]}"; do
-        skill_dir="$HANDOFF_SKILLS_ROOT/$skill_name"
-        # Render deterministically (create --dry-run) then apply, so re-runs are
-        # idempotent and the ConfigMap can be diffed. One key per MARKDOWN file,
-        # named by basename, so a skill that grows sibling reference files (the
-        # usual cure for a long skill: push reference behind a pointer) reaches
-        # the pod whole.
-        #
-        # *.md rather than the whole directory on purpose: a skill folder may also
-        # hold assets meant for humans (a diagram, say), and --from-file on a
-        # directory would base64 them into the ConfigMap — a 300K image is a third
-        # of the 1MiB object limit spent shipping something the agent cannot see.
-        # ConfigMaps can't have '/' in keys either, so the folder stays flat — a
-        # subdirectory is silently skipped, leaving a pointer resolving to nothing.
-        SKILL_KEYS=()
-        for skill_file in "$skill_dir"/*.md; do
-            [ -f "$skill_file" ] || continue
-            SKILL_KEYS+=(--from-file="$(basename "$skill_file")=$skill_file")
-        done
-        kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap "rca-agent-skill-$skill_name" \
-            "${SKILL_KEYS[@]}" \
-            --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
-        echo "✅ rca-agent-skill-$skill_name ConfigMap applied (${#SKILL_KEYS[@]} md file(s) from $skill_dir)"
+    # Render deterministically (create --dry-run) then apply, so re-runs are
+    # idempotent and the ConfigMap can be diffed.
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap sre-agent-extensions \
+        --from-literal="mcp.json=${RENDERED_MCP_JSON}" \
+        --from-file="CONTEXT.md=$EXT_ROOT/CONTEXT.md" \
+        --from-file="SKILL.md=$SKILL_MD" \
+        --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
+    echo "✅ sre-agent-extensions ConfigMap applied"
 
-        # The volume name keeps the <skill>-skill shape an earlier run of this
-        # script already wrote. A strategic-merge patch merges volumes BY NAME,
-        # so renaming would leave the old volume in place beside the new one and
-        # mount two of them on the same path.
-        SKILL_VOLUMES="$SKILL_VOLUMES
-        - name: $skill_name-skill
-          configMap:
-            name: rca-agent-skill-$skill_name
-            items: null"
-        SKILL_MOUNTS="$SKILL_MOUNTS
-            - name: $skill_name-skill
-              mountPath: /etc/rca-agent/skills/$skill_name
-              readOnly: true"
-    done
-
-    # Patch the Deployment: mount every skill under /etc/rca-agent/skills and
-    # point the loader at that parent. A podSpec change here triggers a rolling
-    # update on its own.
-    #
-    # `items: null` projects EVERY key as a file named by its key, so a mount
-    # mirrors its skill folder and a new sibling file needs no patch change. The
-    # explicit null is load-bearing: an earlier run of this script wrote
-    # items[SKILL.md], and a strategic-merge patch that merely omits the field
-    # would leave that list in place — the new files would be absent from the pod
-    # with nothing in the diff to show it, which is the silent half-mount this
-    # whole step guards against.
-    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment "${RCA_DEPLOYMENT}" --type=strategic -p "
-spec:
-  template:
-    spec:
-      volumes:$SKILL_VOLUMES
-      containers:
-        - name: ${RCA_DEPLOYMENT}
-          volumeMounts:$SKILL_MOUNTS
-          env:
-            - name: EXTERNAL_SKILLS_DIR
-              value: /etc/rca-agent/skills
-"
-    echo "✅ ${RCA_DEPLOYMENT} volumes/env wired for ${#HANDOFF_SKILL_NAMES[@]} skill(s) (EXTERNAL_SKILLS_DIR=/etc/rca-agent/skills)"
-    echo "   Edit a skill under services/aep-mcp-server/skills/, or add a sibling directory"
-    echo "   holding its own SKILL.md, then re-run this script and restart the agent —"
-    echo "   no SRE image rebuild, and no edit to this script for a new skill."
+    # ConfigMap keys can't hold '/', so `items` maps each flat key back onto
+    # its EXTENSIONS_DIR subpath. Deployment name and container name are both
+    # $RCA_DEPLOYMENT in this script's own chart usage (see the header) — a
+    # strategic-merge patch on a volume/volumeMount by name is safe to
+    # re-apply, so this is idempotent across re-runs.
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment "$RCA_DEPLOYMENT" --type=strategic -p '{
+        "spec": {"template": {"spec": {
+            "volumes": [{
+                "name": "sre-agent-extensions",
+                "configMap": {
+                    "name": "sre-agent-extensions",
+                    "items": [
+                        {"key": "mcp.json", "path": "remediation/mcp.json"},
+                        {"key": "CONTEXT.md", "path": "remediation/CONTEXT.md"},
+                        {"key": "SKILL.md", "path": "remediation/skills/coding-agent-handoff/SKILL.md"}
+                    ]
+                }
+            }],
+            "containers": [{"name": "'"$RCA_DEPLOYMENT"'", "volumeMounts": [
+                {"name": "sre-agent-extensions", "mountPath": "/etc/openchoreo/sre-agent"}
+            ]}]
+        }}}
+    }'
+    echo "✅ sre-agent-extensions volume mounted on deployment/$RCA_DEPLOYMENT"
+    echo "   Edit services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md or"
+    echo "   deployments/sre-agent-extensions/remediation/{mcp.json,CONTEXT.md}, then"
+    echo "   re-run this script and restart the agent — no SRE image rebuild."
 fi
 
 # ── 4. Cross-namespace HTTPRoute on the MAIN kgateway ────────────────────
