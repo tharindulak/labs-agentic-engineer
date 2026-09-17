@@ -250,10 +250,10 @@ fi
 # 7c. Verify the cluster half of the handoff — the RCA agent deployment.
 #     Best-effort: a rebuilt cluster loses the locally-imported RCA image and
 #     the pod sits in ImagePullBackOff; re-running setup-observability.sh
-#     fixes it (it re-imports the tag it defaults to, currently
-#     tharindulak/sre-agent:thin-handoff — published on Docker Hub, so a
-#     machine with no local build falls back to a registry pull automatically;
-#     see that script's RCA_IMAGE_TAG notes for the degradation chain).
+#     fixes it (it re-imports the vanilla ghcr.io/openchoreo/ai-rca-agent
+#     image it defaults to — RCA_IMAGE_REPO/RCA_IMAGE_TAG — falling back to a
+#     registry pull automatically on a machine with no local build; see that
+#     script's RCA_IMAGE_TAG notes).
 #
 #     The deployment was renamed ai-rca-agent -> sre-agent in observability-plane
 #     1.2.0. RCA_DEPLOYMENT defaults to that name below, same as
@@ -269,7 +269,7 @@ if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/d
         RCA_WANTED=$(kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" get deploy "$RCA_DEPLOYMENT" \
             -o jsonpath='{.spec.replicas}' 2>/dev/null)
         RCA_HANDOFF=$(kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" get cm rca-agent-config \
-            -o jsonpath='{.data.AE_HANDOFF}' 2>/dev/null)
+            -o jsonpath='{.data.HANDOFF_ENABLED}' 2>/dev/null)
         if [ "${RCA_WANTED:-1}" = "0" ]; then
             # Parked on purpose (setup.sh's last step, or a manual
             # park-observability.sh down): zero replicas is the intended
@@ -278,17 +278,18 @@ if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/d
             echo "ℹ️  $RCA_DEPLOYMENT parked (scaled to 0) — alert→RCA and the handoff are off."
             echo "    Restore the observability plane: bash scripts/park-observability.sh up"
         elif [ "${RCA_READY:-0}" -ge 1 ]; then
-            echo "✅ $RCA_DEPLOYMENT ready (AE_HANDOFF=${RCA_HANDOFF:-unset})"
+            echo "✅ $RCA_DEPLOYMENT ready (HANDOFF_ENABLED=${RCA_HANDOFF:-unset})"
         elif [ -n "$MCP_OK" ] && [ "$RCA_HANDOFF" = "true" ]; then
-            # Expected after a fresh setup.sh: with AE_HANDOFF=true the agent's
-            # boot-time MCP test is FATAL, and aep-mcp-server wasn't running
-            # until a moment ago — the pod is in CrashLoopBackOff whose next
-            # retry may be minutes away. Bounce it now that the MCP is up.
+            # Expected after a fresh setup.sh: with HANDOFF_ENABLED=true the
+            # agent's boot-time MCP test is FATAL, and aep-mcp-server wasn't
+            # running until a moment ago — the pod is in CrashLoopBackOff
+            # whose next retry may be minutes away. Bounce it now that the
+            # MCP is up.
             echo "   $RCA_DEPLOYMENT not ready but aep-mcp-server just came up —"
             echo "   restarting it to break the crash-loop backoff..."
             kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" rollout restart "deploy/$RCA_DEPLOYMENT" >/dev/null
             if kubectl --context "${CLUSTER_CONTEXT}" -n "$RCA_NS" rollout status "deploy/$RCA_DEPLOYMENT" --timeout=180s >/dev/null 2>&1; then
-                echo "✅ $RCA_DEPLOYMENT ready (AE_HANDOFF=${RCA_HANDOFF})"
+                echo "✅ $RCA_DEPLOYMENT ready (HANDOFF_ENABLED=${RCA_HANDOFF})"
             else
                 echo "⚠️  $RCA_DEPLOYMENT still not ready — check:"
                 echo "    kubectl logs -n $RCA_NS deploy/$RCA_DEPLOYMENT"

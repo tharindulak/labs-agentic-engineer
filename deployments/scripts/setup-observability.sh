@@ -48,8 +48,9 @@
 #       but were never evaluated).
 #   - ConfigMap patches (post-helm): observer-config auto-trigger keys
 #       (LOGS_ADAPTER_ENABLED / RCA_SERVICE_URL / ALERT_SUPPRESSION_WINDOW)
-#       and rca-agent-config's REPORT_SINK / REPORT_SINK_URL. Patched after
-#       helm so chart upgrades can't silently drop them on re-runs.
+#       and rca-agent-config's HANDOFF_ENABLED / REPORT_SINK / REPORT_SINK_URL.
+#       Patched after helm so chart upgrades can't silently drop them on
+#       re-runs.
 #   - ConfigMap sre-agent-extensions + volume mount (post-helm): renders
 #       mcp.json/CONTEXT.md/the coding-agent-handoff skill into one ConfigMap
 #       and mounts it at EXTENSIONS_DIR/remediation/ on the RCA deployment —
@@ -522,14 +523,19 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #                              search-then-create dedup ⇒ duplicate GitHub
 #                              issues + duplicate coding-agent dispatches.
 #   rca-agent-config:
+#     HANDOFF_ENABLED          mirrors this script's own $HANDOFF_ENABLED, so a
+#                              consumer that only has the ConfigMap (e.g.
+#                              start.sh's crash-loop auto-recovery check) can
+#                              still see whether the handoff stage is on —
+#                              same value, same key name, no separate meaning.
 #     REPORT_SINK              publish completed reports downstream (webhook)
 #     REPORT_SINK_URL          full report endpoint on aep-api (:9090/api/v1/...)
-#     (The RCA→platform handoff itself is no longer a ConfigMap key set — see
-#      step 3e, which mounts mcp.json/CONTEXT.md/the coding-agent-handoff
-#      skill via the generic EXTENSIONS_DIR mechanism instead. Whether the
-#      filed issue is handed to the coding agent, vs. left as a ledger entry
-#      for a human to adopt, is AEP_HANDOFF_ADOPT on the aep-mcp-server
-#      deployment — see docker-compose.yml / helm values
+#     (The RCA→platform handoff MECHANISM itself is no longer a ConfigMap key
+#      set — see step 3e, which mounts mcp.json/CONTEXT.md/the
+#      coding-agent-handoff skill via the generic EXTENSIONS_DIR mechanism
+#      instead. Whether the filed issue is handed to the coding agent, vs.
+#      left as a ledger entry for a human to adopt, is AEP_HANDOFF_ADOPT on
+#      the aep-mcp-server deployment — see docker-compose.yml / helm values
 #      aepMcpServer.handoffAdopt. Nothing on the SRE agent side controls it.)
 echo ""
 echo "3️⃣b Alert→RCA auto-trigger + report-sink wiring"
@@ -538,7 +544,7 @@ kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=me
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
-        "{\"data\":{\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\"}}"
+        "{\"data\":{\"HANDOFF_ENABLED\":\"true\",\"REPORT_SINK\":\"${REPORT_SINK}\",\"REPORT_SINK_URL\":\"${REPORT_SINK_URL}\"}}"
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/${RCA_DEPLOYMENT}
     echo "   Handoff: enabled via EXTENSIONS_DIR mount (mcp=${AEP_MCP_HOSTNAME})"
     echo "   Report sink: ${REPORT_SINK:-<none>} → ${REPORT_SINK_URL}"
