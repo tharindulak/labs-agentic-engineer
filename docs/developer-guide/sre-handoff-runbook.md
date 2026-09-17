@@ -13,8 +13,9 @@ six requirement sets that produce a real defect for the loop to find, and the on
 rule that decides whether the handoff will act on it at all.
 
 > Moved here from the root `README.md`, which linked to this path but never carried
-> the file. The image tags below are pinned to a personal registry and are the values
-> this was last verified against; re-point them at your own build before running.
+> the file. The RCA/SRE agent runs the vanilla, unforked `ghcr.io/openchoreo/ai-rca-agent`
+> image — the personal-registry fork this doc used to describe building is retired (see
+> `docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md`).
 
 ## Prerequisites
 
@@ -31,66 +32,85 @@ rule that decides whether the handoff will act on it at all.
 # Start the MCP server (the SRE agent's door into AEP)
 cd deployments && docker compose up -d aep-api aep-mcp-server
 curl -s http://localhost:3401/healthz    # {"status":"ok"}
-
-# Verify aep-api accepts the RCA agent's token audience (compose default already does)
-docker logs aep-api 2>&1 | grep "Inbound JWT verifier"
-# expect: "audience":"aep-*,openchoreo-rca-agent"
 ```
+
+The remediation agent authenticates to `aep-mcp-server` with a long-lived
+static bearer credential (`AEP_MCP_TOKEN` on the mounted `mcp.json`), not a
+per-request Thunder-forwarded token — that per-request-token design is
+retired (see `docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md`
+decision 7). `aep-api` accepts it through its own `SRE_MCP_TOKEN`, which must
+hold the same value (`deployments/.env.example`); on the aectl/Helm path both
+come from the same `aep-mcp-token` OpenBao secret/ExternalSecret. There is no
+`"Inbound JWT verifier"` log line to check for this credential — that
+verifier is for user/service JWTs and is unrelated to it. Note also:
+`deployments/docker-compose.yml` does not currently wire `SRE_MCP_TOKEN` into
+the local `aep-api` container, so on local dev this static-bearer path stays
+disabled until that's added — set it by hand (e.g. `docker compose run -e
+SRE_MCP_TOKEN=... aep-api`) if you need to exercise it locally.
 
 ## Upgrading an existing deployment
 
-`setup-observability.sh` used to mount a receiver-specific provider
-descriptor (a `rca-agent-handoff-provider` ConfigMap plus a
-`handoff-provider` volume/volumeMount on the `ai-rca-agent` Deployment) so
-the SRE agent knew this repo's tool and header names. That mount is gone —
-the header names now travel as a generic `HANDOFF_HEADER_MAP` env value
-(step 3b) — and the script does not delete resources it no longer manages.
-On a cluster where an older version of the script already ran, remove the
-orphaned ConfigMap and Deployment wiring by hand, once:
-
-```bash
-kubectl delete configmap rca-agent-handoff-provider -n openchoreo-observability-plane --ignore-not-found
-kubectl edit deployment ai-rca-agent -n openchoreo-observability-plane
-# remove the handoff-provider volume and volumeMount
-```
+The SRE agent now reaches AEP purely through OpenChoreo's generic extensions
+mechanism (`mcp.json`/`CONTEXT.md`/the `coding-agent-handoff` skill, mounted
+by `setup-observability.sh`/`aectl sre install` at `EXTENSIONS_DIR/remediation/`
+— see "OpenChoreo side" below). If your cluster still carries wiring from
+before that — the earlier `HANDOFF_HEADER_MAP`-based fork, or its own even
+older `rca-agent-handoff-provider` ConfigMap/volume — none of it is deleted
+automatically; neither script deletes resources it no longer manages. See the
+"⚠️ UPGRADING AN EXISTING DEPLOYMENT" comment block above step 3e in
+`deployments/scripts/setup-observability.sh` for the exact orphaned
+resources and the `kubectl delete`/`kubectl edit` commands to clean them up
+by hand, once.
 
 ## OpenChoreo side
 
-```bash
-# Deploy an RCA-agent image that includes the handoff stage.
-# Use the same repo:tag as RCA_IMAGE_REPO:RCA_IMAGE_TAG in
-# scripts/setup-observability.sh — tharindulak/sre-agent:thin-handoff — so a
-# later setup-observability.sh re-run picks up this local build instead of
-# pulling. (When the preferred tag is neither built nor pullable that script
-# walks back through :fingerprint-fix, :skill-loader, :handoff-provider,
-# :report-sink, :recurrence, :hand0ff-new and finally :anthropic-patched,
-# printing what each one costs you.)
-# thin-handoff, fingerprint-fix, skill-loader and handoff-provider are all
-# published, so the pull path works; a local build just takes precedence
-# over it.
-#
-# Build context is agents/, NOT agents/sre-agent: the Dockerfile pulls in
-# siblings from the parent directory.
-cd <openchoreo-repo>/agents
-docker build -t tharindulak/sre-agent:thin-handoff -f sre-agent/Dockerfile .
-k3d image import tharindulak/sre-agent:thin-handoff -c <cluster>
-kubectl set image deploy/sre-agent -n openchoreo-observability-plane \
-  "*=tharindulak/sre-agent:thin-handoff"
+The RCA/SRE agent runs the vanilla, unforked
+`ghcr.io/openchoreo/ai-rca-agent:v1.0.1-hotfix.1` image — no fork, no local
+build, no `docker build`/`k3d image import`/`kubectl set image` step. Both
+install paths pull and wire it automatically:
 
-# Enable the handoff. There is no auto-dispatch switch any more: filing IS the
-# hand-over, and whether a coding run starts is what the create call answers
-# (adopted / adoptionError / suppressed), recorded on the RCA report.
-kubectl patch cm rca-agent-config -n openchoreo-observability-plane --type=merge -p \
-  '{"data":{"HANDOFF_ENABLED":"true","HANDOFF_API_URL":"http://host.k3d.internal:3401"}}'
-# The coding-agent-handoff skill is mounted by setup-observability.sh step 3e
-# (ConfigMaps + EXTERNAL_SKILLS_DIR); it is the stage's entire playbook, so a
-# SKILL.md edit + re-apply needs no image rebuild. There is no provider
-# descriptor any more — tools are discovered via standard MCP
-# (server_name="handoff").
-kubectl rollout restart deploy/sre-agent -n openchoreo-observability-plane
-kubectl logs -n openchoreo-observability-plane deploy/sre-agent | grep "MCP connection"
-# expect: the handoff MCP connection listed among the tool sources loaded
+```bash
+bash deployments/scripts/setup-observability.sh   # local k3d dev
+# or, against an in-cluster Helm install:
+aectl sre install --ae-handoff   # --ae-handoff defaults to true
 ```
+
+There is no manual `kubectl patch cm rca-agent-config -p
+'{"data":{"HANDOFF_ENABLED"...}}'` step either, and no auto-dispatch switch to
+flip: filing an issue IS the hand-over, and whether a coding run starts is
+what the `ae_create_issue` call answers (adopted / adoptionError /
+suppressed), recorded on the RCA report.
+
+What each script does automatically, using OpenChoreo's generic extensions
+mechanism (a directory mounted at `EXTENSIONS_DIR`, one subdirectory per
+agent — `openchoreo#4743`): it renders `mcp.json` (points the remediation
+agent at `aep-mcp-server`, with `AEP_MCP_HOSTNAME`/`AEP_MCP_TOKEN`
+substituted), `CONTEXT.md` (the unconditional handoff trigger), and the
+`coding-agent-handoff` skill
+(`services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md`) into one
+`sre-agent-extensions` ConfigMap, and mounts it at
+`EXTENSIONS_DIR/remediation/` on the RCA/remediation Deployment. Editing the
+skill or `mcp.json`/`CONTEXT.md` and re-running the script picks up the
+change with a rollout restart — no image rebuild, ever.
+
+`AEP_MCP_TOKEN` is a long-lived static bearer credential (not a per-request
+Thunder-forwarded token — see "AEP side" above); it must be set before
+running either script with the handoff enabled (`deployments/.env` locally,
+the `aep-mcp-token` OpenBao secret on the Helm path).
+
+**Known limitation: the `aep-mcp-server` route the mounted `mcp.json` points
+at doesn't actually work yet.** OpenChoreo's extensions loader refuses a
+non-`https://` MCP server URL once `headers` are set, so `mcp.json` hardcodes
+`https://${AEP_MCP_HOSTNAME}/mcp`. On the aectl/Helm path, that HTTPS route
+(`aep-mcp-mainkgw` HTTPRoute) is wired but sits `Accepted: False`: the
+`openchoreo-control-plane` gateway it attaches to has no `https` listener
+today (a control-plane-wide change, out of this plan's scope). On the local
+k3d path it's worse — there is no cross-namespace route into `aep-mcp-server`
+at all; it runs as a plain-HTTP `docker-compose` service the agent's own
+`extensions/config.py` cannot reach with a `headers`-bearing config either
+way. Until one of those lands, the RCA agent will fail to load the `aep` MCP
+server at startup on both paths — this is a real, currently-open gap, not a
+"works but slow" situation.
 
 The alert pipeline must actually evaluate rules — this is the step that is commonly broken:
 
@@ -106,13 +126,32 @@ The alert pipeline must actually evaluate rules — this is the step that is com
 ```bash
 # Trigger the failure the rule matches, then watch:
 kubectl logs -f -n openchoreo-observability-plane deploy/sre-agent | grep -vE "Pydantic V1"
-# expect, in order: POST /analyze 200 → RCA completed → Remediation completed →
-#   Running handoff agent → "Handoff completed: classification=…, issue=…, adopted=True"
-#   adopted=False means the issue was filed but nothing will work it — the log
-#   line names why (usually: no built version to adopt an incident into).
-#   classification=none means the handoff decided no code change was needed; its
-#   reasoning is the `rationale` on the report, not in this line.
 ```
+
+Expect, in order: `POST /analyze 200` → `RCA completed` → `Remediation
+completed`. The old `Running handoff agent` / `"Handoff completed:
+classification=…, issue=…, adopted=True"` lines were the retired fork's own
+bespoke handoff-stage code — the vanilla agent has no equivalent of its own,
+so don't expect them.
+
+What you should see instead, once at remediation-agent startup, is
+OpenChoreo's generic extensions loader confirming the mounted `mcp.json`
+connected — per `agents/sre-agent/src/extensions/runtime.py`, something in
+the shape of `Loaded N tools from MCP server aep`. **TODO: confirm the exact
+wording of that line, and whatever the agent logs (if anything) on a
+successful `ae_create_issue` call itself, once Task 8's e2e run has actually
+been observed** — this section is deliberately not claiming a verified line
+for the per-call case, per the known route limitation above (the MCP server
+currently can't even be reached to make that call).
+
+Since the vanilla agent logs nothing bespoke about the handoff's own outcome,
+confirm success from the artifacts the call produced, not from the log
+stream: `adopted=false` on the RCA report means the issue was filed but
+nothing will work it yet (usually: no built version to adopt an incident
+into); `classification=none` means the handoff decided no code change was
+needed, with its reasoning in the report's own `rationale` field. Neither is
+in the log line any more — see the report record itself (or the console's
+alert detail).
 
 Then confirm the artifacts: the GitHub issue (carrying the arming label `aep`
 and joined to the deployed version's milestone), the `milestone_runs` row for the
