@@ -120,10 +120,26 @@ echo ""
 # its API Platform gateway — is a separate script because it drives Agent
 # Manager's admin API over its public URL, and fails for reasons unrelated to
 # the chart installs.
-bash "$SCRIPT_DIR/setup-agent-manager.sh"
-echo ""
-bash "$SCRIPT_DIR/setup-agent-manager-env.sh"
-echo ""
+#
+# AGENT_MANAGER_ENABLED opts out for developers who don't need it: it's a
+# second full platform (its own Postgres, its own Thunder tier, its own
+# gateway) on top of AEP's, and its own setup can fail for reasons that have
+# nothing to do with AEP (e.g. it re-touches openchoreo-control-plane's helm
+# release, which conflicts if setup-openchoreo.sh's earlier `kubectl set env`
+# patch on backstage hasn't been reconciled — see setup-openchoreo.sh). Falls
+# back to deployments/.env like AEP_MCP_TOKEN does, so the choice persists
+# across shell sessions without re-exporting it every time.
+AGENT_MANAGER_ENABLED="${AGENT_MANAGER_ENABLED:-$(grep -E '^AGENT_MANAGER_ENABLED=' "$SCRIPT_DIR/../.env" 2>/dev/null | head -1 | cut -d= -f2-)}"
+AGENT_MANAGER_ENABLED="${AGENT_MANAGER_ENABLED:-true}"
+if [ "$AGENT_MANAGER_ENABLED" = "true" ]; then
+    bash "$SCRIPT_DIR/setup-agent-manager.sh"
+    echo ""
+    bash "$SCRIPT_DIR/setup-agent-manager-env.sh"
+    echo ""
+else
+    echo "⏭️  Agent Manager disabled (AGENT_MANAGER_ENABLED=false) — skipping setup-agent-manager.sh + setup-agent-manager-env.sh"
+    echo ""
+fi
 
 # Park the observability plane's heavy workloads. Running them costs about 2 GB
 # of requests on an 8 GB VM, and most local work never reads a trace, a metric
@@ -153,10 +169,12 @@ echo ""
 echo "  Coding-agent: OpenChoreo Job Component in the project dataplane"
 echo "                (image from AGENT_RUNNER_IMAGE / aep-runner:dev)."
 echo ""
-echo "  Agent Manager console: http://console.amp.localhost:8080"
-echo "  Agent Manager API:     http://api.amp.localhost:8080"
-echo "  Same login as the AEP console — one platform IdP serves both."
-echo ""
+if [ "$AGENT_MANAGER_ENABLED" = "true" ]; then
+    echo "  Agent Manager console: http://console.amp.localhost:8080"
+    echo "  Agent Manager API:     http://api.amp.localhost:8080"
+    echo "  Same login as the AEP console — one platform IdP serves both."
+    echo ""
+fi
 echo "  Observability plane:   installed, heavy workloads PARKED (no traces,"
 echo "                         metrics, log archive or alert→RCA until"
 echo "                         bash scripts/park-observability.sh up)"

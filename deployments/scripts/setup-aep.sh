@@ -911,6 +911,11 @@ CODING_ANTHROPIC_KEY_VAL="$(existing_val AEP_CODING_ANTHROPIC_KEY)"
 # after setup-observability.sh (which runs earlier in setup.sh) had
 # already read it successfully.
 AEP_MCP_TOKEN_VAL="$(existing_val AEP_MCP_TOKEN)"
+# AGENT_MANAGER_ENABLED: setup.sh's own toggle for skipping Agent Manager.
+# Same preserve-or-drop hazard as AEP_MCP_TOKEN above — setup.sh falls back
+# to this file when the shell env var isn't set, so losing it here silently
+# re-enables Agent Manager on the next setup.sh run.
+AGENT_MANAGER_ENABLED_VAL="$(existing_val AGENT_MANAGER_ENABLED)"
 GITHUB_APP_ID_VAL="$(existing_val GITHUB_APP_ID)"
 GITHUB_CLIENT_ID_VAL="$(existing_val GITHUB_CLIENT_ID)"
 GITHUB_CLIENT_SECRET_VAL="$(existing_val GITHUB_CLIENT_SECRET)"
@@ -1001,6 +1006,11 @@ AEP_CODING_ANTHROPIC_KEY=${CODING_ANTHROPIC_KEY_VAL}
 # against (setup-observability.sh §3e, docker-compose.yml). Preserved above
 # like every other operator-supplied secret in this file — see .env.example.
 AEP_MCP_TOKEN=${AEP_MCP_TOKEN_VAL}
+
+# ── Agent Manager toggle ────────────────────────────────────────────────────
+# setup.sh installs Agent Manager unless this is false. Preserved above like
+# every other operator-supplied value in this file.
+AGENT_MANAGER_ENABLED=${AGENT_MANAGER_ENABLED_VAL}
 EOF
 
 echo "✅ .env file generated at $(realpath "$ENV_FILE")"
