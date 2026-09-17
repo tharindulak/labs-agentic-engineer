@@ -41,27 +41,31 @@ type ServiceTokenConfig struct {
 }
 
 // ServiceTokenMiddleware returns middleware that, on an exact constant-time
-// bearer match, stamps Claims for cfg.OuHandle/cfg.ClientID and calls next
-// with those claims already in context. Any other Authorization value (or no
-// match) is passed to next completely unchanged, so normal user/service JWT
-// auth downstream is unaffected — this is a narrow addition, not a
-// replacement, for the existing verifier.
+// bearer match, stamps Claims for cfg.OuHandle/cfg.ClientID and calls
+// onMatch with those claims already in context — going straight to the
+// final handler and bypassing JWT verification entirely, which is the whole
+// point of this credential: a static shared secret is never a well-formed
+// JWT, so funneling a match through a JWT verifier would always reject it.
+// Any other Authorization value (or no match) is passed to onNoMatch
+// completely unchanged, so normal user/service JWT auth downstream is
+// unaffected — this is a narrow addition, not a replacement, for the
+// existing verifier.
 //
 // A zero-value cfg (empty Token) disables this path entirely: the
 // composition root leaves it disabled unless SRE_MCP_TOKEN is configured.
-func ServiceTokenMiddleware(cfg ServiceTokenConfig, next http.Handler) http.Handler {
+func ServiceTokenMiddleware(cfg ServiceTokenConfig, onMatch, onNoMatch http.Handler) http.Handler {
 	if cfg.Token == "" {
-		return next
+		return onNoMatch
 	}
 	expected := []byte("Bearer " + cfg.Token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		presented := []byte(r.Header.Get("Authorization"))
 		if len(presented) == len(expected) && subtle.ConstantTimeCompare(presented, expected) == 1 {
 			ctx := WithClaims(r.Context(), &Claims{ClientID: cfg.ClientID, OuHandle: cfg.OuHandle})
-			next.ServeHTTP(w, r.WithContext(ctx))
+			onMatch.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		next.ServeHTTP(w, r)
+		onNoMatch.ServeHTTP(w, r)
 	})
 }
 

@@ -23,37 +23,54 @@ import (
 	"testing"
 )
 
-func TestServiceTokenMiddleware_MatchingBearerStampsClaims(t *testing.T) {
+func TestServiceTokenMiddleware_MatchingBearerGoesStraightToOnMatch(t *testing.T) {
 	cfg := ServiceTokenConfig{Token: "s3cr3t", OuHandle: "acme", ClientID: "sre-mcp-service"}
 	var got *Claims
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var calledOnMatch, calledOnNoMatch bool
+	onMatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledOnMatch = true
 		got = ClaimsFromContext(r.Context())
+	})
+	onNoMatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledOnNoMatch = true
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/p/issues", nil)
 	req.Header.Set("Authorization", "Bearer s3cr3t")
-	ServiceTokenMiddleware(cfg, next).ServeHTTP(httptest.NewRecorder(), req)
+	ServiceTokenMiddleware(cfg, onMatch, onNoMatch).ServeHTTP(httptest.NewRecorder(), req)
 
+	if !calledOnMatch {
+		t.Fatal("expected a matching bearer to go straight to onMatch")
+	}
+	if calledOnNoMatch {
+		t.Fatal("expected a matching bearer to never reach onNoMatch (e.g. JWT verification)")
+	}
 	if got == nil || got.OuHandle != "acme" || got.ClientID != "sre-mcp-service" {
 		t.Fatalf("expected claims stamped for acme/sre-mcp-service, got %+v", got)
 	}
 }
 
-func TestServiceTokenMiddleware_WrongBearerFallsThroughUnclaimed(t *testing.T) {
+func TestServiceTokenMiddleware_WrongBearerFallsThroughToOnNoMatchUnclaimed(t *testing.T) {
 	cfg := ServiceTokenConfig{Token: "s3cr3t", OuHandle: "acme", ClientID: "sre-mcp-service"}
 	var got *Claims
-	var calledNext bool
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calledNext = true
+	var calledOnMatch, calledOnNoMatch bool
+	onMatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledOnMatch = true
+	})
+	onNoMatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledOnNoMatch = true
 		got = ClaimsFromContext(r.Context())
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/p/issues", nil)
 	req.Header.Set("Authorization", "Bearer some-other-jwt")
-	ServiceTokenMiddleware(cfg, next).ServeHTTP(httptest.NewRecorder(), req)
+	ServiceTokenMiddleware(cfg, onMatch, onNoMatch).ServeHTTP(httptest.NewRecorder(), req)
 
-	if !calledNext {
-		t.Fatal("expected the request to still reach next so normal JWT auth can run")
+	if !calledOnNoMatch {
+		t.Fatal("expected the request to still reach onNoMatch so normal JWT auth can run")
+	}
+	if calledOnMatch {
+		t.Fatal("expected a non-matching bearer to never reach onMatch")
 	}
 	if got != nil {
 		t.Fatalf("expected no claims stamped for a non-matching bearer, got %+v", got)
@@ -62,17 +79,23 @@ func TestServiceTokenMiddleware_WrongBearerFallsThroughUnclaimed(t *testing.T) {
 
 func TestServiceTokenMiddleware_EmptyTokenDisablesThePath(t *testing.T) {
 	cfg := ServiceTokenConfig{Token: "", OuHandle: "acme", ClientID: "sre-mcp-service"}
-	var got *Claims
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = ClaimsFromContext(r.Context())
+	var calledOnMatch, calledOnNoMatch bool
+	onMatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledOnMatch = true
+	})
+	onNoMatch := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledOnNoMatch = true
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/p/issues", nil)
 	req.Header.Set("Authorization", "Bearer anything")
-	ServiceTokenMiddleware(cfg, next).ServeHTTP(httptest.NewRecorder(), req)
+	ServiceTokenMiddleware(cfg, onMatch, onNoMatch).ServeHTTP(httptest.NewRecorder(), req)
 
-	if got != nil {
-		t.Fatalf("expected an empty Token to disable this path entirely, got %+v", got)
+	if calledOnMatch {
+		t.Fatal("expected an empty Token to disable this path entirely, onMatch must never run")
+	}
+	if !calledOnNoMatch {
+		t.Fatal("expected an empty Token to route straight to onNoMatch, unconditionally")
 	}
 }
 

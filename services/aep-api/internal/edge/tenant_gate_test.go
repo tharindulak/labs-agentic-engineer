@@ -28,6 +28,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
+	"github.com/wso2/aep/aep-api/internal/platform/httpkit"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
@@ -171,4 +172,78 @@ func TestSREServiceScopeGate_PassesThroughForOrdinaryCallers(t *testing.T) {
 	if err != nil || got != "ok" {
 		t.Fatalf("expected an ordinary (non-service-token) caller to pass through unaffected, got %v, %v", got, err)
 	}
+}
+
+// TestSREMCPServiceToken_ComposedSlice_HTTPRoundTrip is the component-level
+// regression test for the ACTUAL composed slice newAPIV1Handler wires onto
+// the public edge — []gen.StrictMiddlewareFunc{tenantGate, sreServiceScopeGate}
+// (surfaces.go/tenant_gate.go don't call either gate directly; this slice
+// literal is the only wiring point). The two gate-level unit tests above
+// (TestSREServiceScopeGate_*) call sreServiceScopeGate in isolation and would
+// stay green even if server.go stopped composing it at all — nothing else
+// pins the slice itself. This test builds the REAL mounted handler
+// (NewHandler → mountSurfaces → newAPIV1Handler, InboundAuth left nil so the
+// production ServiceTokenMiddleware→JWT chain from surfaces.go is exercised,
+// not a test seam) with a configured SREMCPToken, and drives it over an
+// actual HTTP round trip:
+//
+//   - the SRE-MCP bearer against ListIssues (one of sreMCPAllowedOps) must
+//     NOT be rejected by the auth/scope layer. sourcecontrol is deliberately
+//     left unwired, so a 503 from the absent issue service is the expected
+//     PASSING outcome — it proves the request cleared both gates and reached
+//     the real handler, which is as far as this test needs to go (the brief
+//     doesn't require the business logic to succeed, only that auth let it
+//     through).
+//   - the SAME bearer against ListOrganizations must be rejected.
+//     ListOrganizations is a deliberately adversarial target: it is ALSO
+//     tenantGate's own carve-out (tenantGateCarveOuts), so tenantGate alone
+//     would wave it through with no org claim at all. Only sreServiceScopeGate
+//     stops it — so this branch fails the moment that gate is dropped from
+//     server.go's slice (down to []gen.StrictMiddlewareFunc{tenantGate}), and
+//     equally fails if the credential's ClientID stops being threaded through
+//     to it end to end.
+func TestSREMCPServiceToken_ComposedSlice_HTTPRoundTrip(t *testing.T) {
+	t.Parallel()
+	const token = "sre-mcp-test-token"
+	const org = "acme"
+
+	handler := NewHandler(AppParams{
+		SREMCPToken:     token,
+		SREMCPOrgHandle: org,
+	})
+
+	bearerReq := func(method, path string) *http.Request {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		return req
+	}
+
+	t.Run("allowed op clears both gates", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, bearerReq(http.MethodGet, httpkit.APIV1+"/projects/demo/issues"))
+
+		if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
+			t.Fatalf("ListIssues: SRE credential rejected by the auth/scope layer, status=%d body=%s",
+				rec.Code, rec.Body.String())
+		}
+		// sourcecontrol is intentionally unwired here (zero Deps): 503 from the
+		// absent issue service is the expected outcome once past the gates.
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("ListIssues: status=%d body=%s, want 503 (unwired issue service) once past the gates",
+				rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("disallowed op — tenantGate's own carve-out — is still rejected", func(t *testing.T) {
+		t.Parallel()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, bearerReq(http.MethodGet, httpkit.APIV1+"/organizations"))
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("ListOrganizations: status=%d body=%s, want 401 — sreServiceScopeGate must reject this "+
+				"credential even though tenantGate carves the op out for every other caller",
+				rec.Code, rec.Body.String())
+		}
+	})
 }

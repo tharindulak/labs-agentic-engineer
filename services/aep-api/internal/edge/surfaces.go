@@ -211,7 +211,7 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 			ClientID: sreMCPClientID,
 		}
 		jwt = func(next http.Handler) http.Handler {
-			return auth.ServiceTokenMiddleware(serviceTokenCfg, baseJWT(next))
+			return auth.ServiceTokenMiddleware(serviceTokenCfg, next, baseJWT(next))
 		}
 	}
 	ensureOrg := auth.EnsureOrgMiddleware(params.OrganizationService)
