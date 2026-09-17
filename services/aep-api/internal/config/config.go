@@ -194,6 +194,14 @@ type Config struct {
 	JWTAllowedAudience     string
 	JWTResourceMetadataURL string
 
+	// The long-lived static service credential for the SRE-agent's generic
+	// MCP extension (mcp.json resolves its header once, at agent-process
+	// start, so it cannot refresh a short-lived OAuth token itself). Empty
+	// disables auth.ServiceTokenMiddleware entirely. Read from SRE_MCP_TOKEN
+	// / SRE_MCP_ORG_HANDLE.
+	SREMCPToken     string
+	SREMCPOrgHandle string
+
 	// Git-service config fields.
 
 	// GitProvider selects the git host implementation (clients/<provider>)

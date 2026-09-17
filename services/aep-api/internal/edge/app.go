@@ -78,6 +78,14 @@ type AppParams struct {
 	// (401) — there is no unsigned-claim fallback. Both planes set JWKS_URL.
 	ThunderJWKS *jwtassertion.JWKSCache
 
+	// SREMCPToken / SREMCPOrgHandle configure the long-lived static
+	// service credential for the SRE-agent's generic MCP extension (see
+	// config.Config.SREMCPToken). Empty SREMCPToken disables
+	// auth.ServiceTokenMiddleware entirely — production only enables it once
+	// SRE_MCP_TOKEN is configured.
+	SREMCPToken     string
+	SREMCPOrgHandle string
+
 	// InboundAuth, when non-nil, REPLACES the JWKS-backed jwt.Middleware on the
 	// public /api/ edge.
 	// Production leaves it nil → mountSurfaces builds the real RS256/JWKS verifier

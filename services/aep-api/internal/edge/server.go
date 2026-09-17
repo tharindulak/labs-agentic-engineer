@@ -85,10 +85,19 @@ var _ gen.StrictServerInterface = (*apiServer)(nil)
 //
 //	strict impl (apiServer)               promotion-only composite: one embed per domain
 //	→ tenant gate                          deny-by-default, tenant_gate.go
+//	→ SRE-MCP service scope gate           confines the static credential to its two ops, tenant_gate.go
 //	→ strict wrapper                       generated; envelope error writers
 //	→ generated std ServeMux router        one pattern per contract operation
 //	→ read-file catch-all                  nested {path} segments (see below)
 //	→ request validator                    kin-openapi against the contract
+//
+// The generated strictHandler applies this slice by repeated reassignment
+// (handler = middleware(handler, op)), so the LAST entry ends up OUTERMOST —
+// i.e. it runs FIRST. sreServiceScopeGate is listed after tenantGate so it
+// rejects an out-of-scope operation for the SRE-MCP static credential before
+// tenantGate does any org-binding work (cheaper to reject early); the two
+// gates check independent things, so their relative order has no effect on
+// correctness, only on which one is cheaper to run first.
 //
 // The caller mounts the result under the outer jwt → orgensure → gate-mode
 // middleware (mountSurfaces), exactly where the Huma mux used to sit.
@@ -105,7 +114,7 @@ func newAPIV1Handler(deps Deps) http.Handler {
 			identityHandlers:      identityOrEmpty(deps.Identity),
 			designSvc:             deps.DesignSvc,
 		},
-		[]gen.StrictMiddlewareFunc{tenantGate},
+		[]gen.StrictMiddlewareFunc{tenantGate, sreServiceScopeGate},
 		gen.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc:  writeRequestError,
 			ResponseErrorHandlerFunc: writeResponseError,

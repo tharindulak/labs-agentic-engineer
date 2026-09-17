@@ -90,6 +90,8 @@ func Load() (Config, error) {
 		JWTAllowedIssuer:       r.readOptionalString("JWT_ISSUER", ""),
 		JWTAllowedAudience:     r.readOptionalString("JWT_AUDIENCE", "aep-bff"),
 		JWTResourceMetadataURL: r.readOptionalString("JWT_RESOURCE_METADATA_URL", ""),
+		SREMCPToken:            r.readOptionalString("SRE_MCP_TOKEN", ""),
+		SREMCPOrgHandle:        r.readOptionalString("SRE_MCP_ORG_HANDLE", ""),
 		Observability: ObservabilityConfig{
 			BaseURL:      r.readOptionalString("OBSERVER_URL", r.readOptionalString("OBSERVABILITY_SERVICE_BASE_URL", "")),
 			TokenURL:     r.readOptionalString("OBSERVER_OAUTH_TOKEN_URL", ""),

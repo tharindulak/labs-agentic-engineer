@@ -73,3 +73,37 @@ func tenantGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFu
 		return f(tenant.WithBoundOrg(ctx, tokenOrg), w, r, request)
 	}
 }
+
+// sreMCPClientID is the ClientID auth.ServiceTokenMiddleware stamps for the
+// long-lived SRE-MCP static credential (see
+// internal/platform/auth/service_token.go). Referenced from surfaces.go too
+// (same package) when building that middleware's config.
+const sreMCPClientID = "sre-mcp-service"
+
+// sreMCPAllowedOps is the only two operations that credential may call. An
+// operator who leaks the long-lived token gets nothing beyond filing/listing
+// SRE issues on the one org it's scoped to, never the rest of the org-scoped
+// API — least privilege, since this credential can't be rotated per-request
+// the way a normal short-lived OAuth token can.
+var sreMCPAllowedOps = map[string]struct{}{
+	"CreateIssue": {},
+	"ListIssues":  {},
+}
+
+// sreServiceScopeGate rejects any operation the SRE-MCP static service
+// credential did not come here for. It runs alongside tenantGate: the static
+// credential already carries a bound org (ServiceTokenMiddleware stamps
+// OuHandle directly, so it never hits tenantGate's no-org-claim branch), but
+// it must additionally be confined to these two operations regardless of
+// what tenantGate itself allows. A no-op for every ordinary
+// (JWT-authenticated) caller.
+func sreServiceScopeGate(f gen.StrictHandlerFunc, operationID string) gen.StrictHandlerFunc {
+	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		if auth.IsSREMCPServiceCaller(ctx, sreMCPClientID) {
+			if _, ok := sreMCPAllowedOps[operationID]; !ok {
+				return nil, errUnauthorized("this credential cannot call " + operationID)
+			}
+		}
+		return f(ctx, w, r, request)
+	}
+}

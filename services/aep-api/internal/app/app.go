@@ -865,6 +865,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		OrgGitHubController: orgGitHubCtrl,
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
+		SREMCPToken:         cfg.SREMCPToken,
+		SREMCPOrgHandle:     cfg.SREMCPOrgHandle,
 		OrganizationService: organizationService,
 
 		DB:                   db,

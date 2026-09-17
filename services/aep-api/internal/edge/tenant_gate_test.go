@@ -119,3 +119,56 @@ func TestTenantGate_DenyByDefault(t *testing.T) {
 		}
 	})
 }
+
+// TestSREServiceScopeGate_AllowsOnlyItsTwoOperations unit-tests
+// sreServiceScopeGate in isolation: the SRE-MCP static service credential
+// (identified by its stamped ClientID) may call CreateIssue/ListIssues only —
+// every other operationID is rejected before the wrapped handler ever runs,
+// so a leaked long-lived token cannot reach the rest of the org-scoped API.
+func TestSREServiceScopeGate_AllowsOnlyItsTwoOperations(t *testing.T) {
+	t.Parallel()
+	const clientID = "sre-mcp-service"
+
+	calledFor := map[string]bool{}
+	f := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		calledFor["called"] = true
+		return nil, nil
+	}
+
+	ctx := auth.WithClaims(context.Background(), &auth.Claims{ClientID: clientID})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/p/issues", nil)
+
+	for _, op := range []string{"CreateIssue", "ListIssues"} {
+		calledFor["called"] = false
+		_, err := sreServiceScopeGate(f, op)(ctx, httptest.NewRecorder(), req, nil)
+		if err != nil || !calledFor["called"] {
+			t.Fatalf("expected op %q to be allowed for this credential, err=%v called=%v", op, err, calledFor["called"])
+		}
+	}
+
+	calledFor["called"] = false
+	_, err := sreServiceScopeGate(f, "ListOrganizations")(ctx, httptest.NewRecorder(), req, nil)
+	if err == nil {
+		t.Fatal("expected a non-issues operation to be rejected for this credential")
+	}
+	if calledFor["called"] {
+		t.Fatal("the wrapped handler must not run for a rejected operation")
+	}
+}
+
+// TestSREServiceScopeGate_PassesThroughForOrdinaryCallers confirms the gate
+// is a no-op for every ordinary (JWT-authenticated, non-service-token)
+// caller — it must never restrict operations for a real user/service JWT.
+func TestSREServiceScopeGate_PassesThroughForOrdinaryCallers(t *testing.T) {
+	t.Parallel()
+	f := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		return "ok", nil
+	}
+	ctx := auth.WithClaims(context.Background(), &auth.Claims{OuHandle: "acme"}) // no ClientID set
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/p/issues", nil)
+
+	got, err := sreServiceScopeGate(f, "SomeUnrelatedOperation")(ctx, httptest.NewRecorder(), req, nil)
+	if err != nil || got != "ok" {
+		t.Fatalf("expected an ordinary (non-service-token) caller to pass through unaffected, got %v, %v", got, err)
+	}
+}

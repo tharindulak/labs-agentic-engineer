@@ -193,12 +193,26 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 	// only that seam differs, orgensure + the Huma gate are identical.
 	jwt := params.InboundAuth
 	if jwt == nil {
-		jwt = auth.JWTMiddleware(auth.JWTConfig{
+		baseJWT := auth.JWTMiddleware(auth.JWTConfig{
 			JWKS:                params.ThunderJWKS,
 			AllowedIssuers:      SplitAndTrim(params.Config.JWTAllowedIssuer),
 			AllowedAudiences:    SplitAndTrim(params.Config.JWTAllowedAudience),
 			ResourceMetadataURL: params.Config.JWTResourceMetadataURL,
 		})
+		// The SRE-MCP static service credential sits in front of the normal
+		// Thunder JWT verifier: on an exact bearer match it stamps Claims for
+		// the one fixed org itself and skips baseJWT entirely; any other
+		// Authorization value falls through to baseJWT unchanged. Disabled
+		// (a no-op wrapper) whenever params.SREMCPToken is empty — see
+		// auth.ServiceTokenMiddleware.
+		serviceTokenCfg := auth.ServiceTokenConfig{
+			Token:    params.SREMCPToken,
+			OuHandle: params.SREMCPOrgHandle,
+			ClientID: sreMCPClientID,
+		}
+		jwt = func(next http.Handler) http.Handler {
+			return auth.ServiceTokenMiddleware(serviceTokenCfg, baseJWT(next))
+		}
 	}
 	ensureOrg := auth.EnsureOrgMiddleware(params.OrganizationService)
 	// Stamp the configured tenant-gate mode onto every /api/ request context;
