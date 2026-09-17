@@ -187,6 +187,25 @@ AEP_MCP_HOSTNAME="${AEP_MCP_HOSTNAME:-aep-mcp.openchoreo.localhost:8443}"
 if [ "$HANDOFF_ENABLED" = "true" ]; then
     AEP_MCP_TOKEN="${AEP_MCP_TOKEN:-$(grep -E '^AEP_MCP_TOKEN=' "$SCRIPT_DIR/../.env" 2>/dev/null | head -1 | cut -d= -f2-)}"
     AEP_MCP_TOKEN="${AEP_MCP_TOKEN:?set AEP_MCP_TOKEN in deployments/.env — see .env.example}"
+    # aep-api (docker-compose) reads this exact value as SRE_MCP_TOKEN — but
+    # only at container start; `docker compose up` does not hot-reload .env
+    # into an already-running container. The common sequence is: start.sh
+    # brings aep-api up before AEP_MCP_TOKEN is set (the var above is scoped
+    # to setup-observability.sh, a separate script), so aep-api starts with
+    # an empty token, and adding it to .env afterward — prompted by the
+    # :? above — has no effect until aep-api restarts. The failure mode is
+    # silent: aep-mcp-server's calls get rejected with a JWT-parse error
+    # (not a JWT at all — a plain bearer string), and the remediation agent
+    # just looks like it "chose" not to file an issue after its search call
+    # errored. Found live wiring this up the first time. Self-healing: check
+    # the running container's actual value and recreate only on mismatch.
+    if docker inspect aep-api &>/dev/null; then
+        LIVE_AEP_MCP_TOKEN="$(docker exec aep-api printenv SRE_MCP_TOKEN 2>/dev/null || true)"
+        if [ "$LIVE_AEP_MCP_TOKEN" != "$AEP_MCP_TOKEN" ]; then
+            echo "🔄 aep-api's SRE_MCP_TOKEN is stale (docker compose does not hot-reload .env) — recreating"
+            (cd "$SCRIPT_DIR/.." && docker compose up -d --force-recreate aep-api)
+        fi
+    fi
 fi
 # Report publishing: the agent POSTs each completed report to a configured sink
 # and aep-api maps it onto its own row. REPORT_SINK_URL is the FULL endpoint —
