@@ -64,6 +64,7 @@ var (
 	sreObserverHost    string
 	sreRcaHost         string
 	sreAEPMcpHost      string
+	sreThunderRelease  string
 )
 
 var sreCmd = &cobra.Command{
@@ -132,6 +133,14 @@ func init() {
 	// deployments/design/two-tier-thunder.md) — the control-plane gateway's
 	// httpsPort, not the implicit 443 nothing listens on locally.
 	f.StringVar(&sreAEPMcpHost, "aep-mcp-hostname", "aep-mcp.openchoreo.localhost:8443", "aep-mcp-server gateway hostname (used by the remediation agent's mcp.json)")
+	// Must match env.sh's THUNDER_RELEASE (default "platform-idp") on
+	// whatever cluster this targets — the platform IdP chart's https
+	// Gateway/Service are named "<release>-https-gateway", and this is
+	// where aep-mcp.openchoreo.localhost's SNI listener is added (see the
+	// Gateway partial-apply doc in sreCRsTmpl) since openchoreo-control-
+	// plane's own gateway-default can't also claim hostPort 8443 on a
+	// single-node cluster without conflict.
+	f.StringVar(&sreThunderRelease, "thunder-release", "platform-idp", "Platform IdP Helm release name (its https Gateway hosts aep-mcp.openchoreo.localhost's SNI listener)")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 }
@@ -142,7 +151,8 @@ type sreParams struct {
 	OCApiURL, ThunderJwksURL, ThunderTokenURL, ThunderAuthURL string
 	RcaImageRepo, RcaImageTag, RcaPullPolicy, RcaModel        string
 	AdapterRepo, AdapterTag                                   string
-	ObserverHost, RcaHost, AEPMcpHost                         string
+	ObserverHost, RcaHost, AEPMcpHost, AEPMcpHostname         string
+	ThunderRelease                                            string
 	// AEPNamespace is the AEP namespace (sreNamespace) — where aep-api,
 	// aep-mcp-server, and their aep-mcp-token ExternalSecret live. Needed here
 	// (not just as the standalone sreNamespace var) because sreCRsTmpl's
@@ -185,6 +195,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ObserverHost:    sreObserverHost,
 		RcaHost:         sreRcaHost,
 		AEPMcpHost:      sreAEPMcpHost,
+		AEPMcpHostname:  strings.Split(sreAEPMcpHost, ":")[0],
+		ThunderRelease:  sreThunderRelease,
 		AEPNamespace:    sreNamespace,
 		RcaServiceURL:   "http://ai-rca-agent:8080",
 	}

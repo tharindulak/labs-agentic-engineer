@@ -38,15 +38,25 @@ gateway:
   httpPort: 8080
   httpsPort: 8443
   tls:
-    # Enabled for the SRE-agent extensions handoff (see
-    # docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §6): the
-    # remediation agent's mcp.json reaches aep-mcp-server over
-    # https://aep-mcp.openchoreo.localhost:8443, which the upstream OpenChoreo
-    # extensions loader requires for any mcp.json server carrying a header.
-    # Cert created by create_gateway_tls_cert (utils.sh), called for this
-    # namespace in setup-openchoreo.sh before this chart installs — same
-    # pattern the data-plane gateway already uses for its own https listener.
-    enabled: true
+    # Stays disabled: this gateway's own LoadBalancer Service and the
+    # platform IdP's ${THUNDER_RELEASE}-https-gateway Service both need
+    # k3d's ServiceLB to bind hostPort 8443 on the cluster's one node.
+    # klipper-lb can only bind a hostPort once, so turning this on makes ITS
+    # rollout (or the IdP's, whichever loses the race) stick Pending
+    # ("didn't have free ports") and tears down the loser's existing
+    # DaemonSet pod — which took this gateway's own port 8080 down with it
+    # when tried live. The SRE-agent extensions handoff needing
+    # aep-mcp-server over https (docs/design/draft/2026-09-17-sre-agent-
+    # extensions-handoff.md §6) is served instead by a second, SNI-selected
+    # listener on the platform IdP's already-https gateway
+    # (setup-thunder.sh §2c) — no second Service, no hostPort conflict.
+    #
+    # create_gateway_tls_cert (utils.sh) is still called for this namespace
+    # in setup-openchoreo.sh regardless of this flag: its `gateway-default-
+    # tls` cert (SAN *.openchoreo.localhost) is what that second listener
+    # borrows, and what the remediation agent is taught to trust
+    # (setup-observability.sh §3f).
+    enabled: false
     hostname: "*.openchoreo.localhost"
     certificateRefs:
       - name: gateway-default-tls

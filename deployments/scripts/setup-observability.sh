@@ -823,17 +823,28 @@ if [ "$HANDOFF_ENABLED" = "true" ]; then
     # ── 3f. Route + DNS + cert trust for aep-mcp.openchoreo.localhost ────
     # The extensions loader (openchoreo#4743) rejects a headered mcp.json
     # server over plain http, so AEP_MCP_HOSTNAME above is an https URL —
-    # which needs, all four together: (a) a Gateway https listener actually
-    # serving *.openchoreo.localhost (setup-openchoreo.sh's
-    # create_gateway_tls_cert call + values-cp.yaml's gateway.tls), (b) DNS
-    # for THIS specific hostname resolving to that gateway rather than the
-    # data-plane one every other *.openchoreo.localhost name uses, (c) a
-    # route from the gateway to aep-mcp-server — which for this docker-compose
-    # local-dev path lives on the HOST, not as an in-cluster Service, and (d)
-    # the remediation agent trusting the gateway's self-signed cert without
-    # losing trust in api.anthropic.com's real one. Each was found missing,
-    # one at a time, running this end to end — see
+    # which needs, all four together: (a) an SNI-selected https listener for
+    # this hostname, (b) DNS for THIS specific hostname resolving to that
+    # listener's gateway rather than the data-plane one every other
+    # *.openchoreo.localhost name uses, (c) a route from that gateway to
+    # aep-mcp-server — which for this docker-compose local-dev path lives on
+    # the HOST, not as an in-cluster Service, and (d) the remediation agent
+    # trusting the gateway's self-signed cert without losing trust in
+    # api.anthropic.com's real one. Each was found missing, one at a time,
+    # running this end to end — see
     # docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §6.
+    #
+    # (a) lives on the platform IdP's OWN https gateway
+    # (${THUNDER_RELEASE}-https-gateway, setup-thunder.sh §2c), not a second
+    # listener on openchoreo-control-plane's gateway-default: that gateway's
+    # LoadBalancer Service and this one both need k3d's ServiceLB to bind
+    # hostPort 8443 on the cluster's one node, and klipper-lb can only bind
+    # it once — a second Service claiming it stalls Pending and tears down
+    # whichever gateway's DaemonSet pod loses the race, taking that
+    # gateway's OTHER listener down too (found live: this broke the
+    # console's port 8080, not just the new port). Reusing the IdP
+    # gateway's already-working hostPort 8443, and dispatching by SNI
+    # instead, needs no new Service at all.
     echo ""
     echo "3️⃣f Route + DNS + cert trust for aep-mcp.openchoreo.localhost"
 
@@ -841,18 +852,19 @@ if [ "$HANDOFF_ENABLED" = "true" ]; then
     # every *.openchoreo.localhost name to the DATA-plane gateway. One
     # hostname already overrides that blanket rule with its own priority file
     # (0-platform-idp.override, for thunder.openchoreo.localhost) — same
-    # pattern here, sent to the CONTROL-plane gateway instead, where (a)'s
-    # listener actually lives. The "0-" prefix is load-bearing: CoreDNS
-    # applies these override files in name order, and this one must win over
-    # the un-prefixed blanket rule.
+    # pattern here, sent to the SAME gateway Service as that one (they now
+    # share one Gateway, disambiguated by SNI — see (a) above), where the
+    # aep-mcp-https listener setup-thunder.sh adds actually lives. The "0-"
+    # prefix is load-bearing: CoreDNS applies these override files in name
+    # order, and this one must win over the un-prefixed blanket rule.
     kubectl --context "$CLUSTER_CONTEXT" -n kube-system patch configmap coredns-custom --type merge -p '{
         "data": {
-            "0-aep-mcp.override": "rewrite stop {\n  name regex aep-mcp\\.openchoreo\\.localhost gateway-default.openchoreo-control-plane.svc.cluster.local\n  answer auto\n}\n"
+            "0-aep-mcp.override": "rewrite stop {\n  name regex aep-mcp\\.openchoreo\\.localhost '"${THUNDER_RELEASE}"'-https-gateway.openchoreo-control-plane.svc.cluster.local\n  answer auto\n}\n"
         }
     }' >/dev/null
     kubectl --context "$CLUSTER_CONTEXT" -n kube-system rollout restart deployment/coredns >/dev/null
     kubectl --context "$CLUSTER_CONTEXT" -n kube-system rollout status deployment/coredns --timeout=60s >/dev/null
-    echo "✅ DNS override applied (aep-mcp.openchoreo.localhost → control-plane gateway)"
+    echo "✅ DNS override applied (aep-mcp.openchoreo.localhost → platform IdP's https gateway)"
 
     # (c) Route: aep-mcp-server is docker-compose's, reached in-cluster via
     # host.k3d.internal — but Gateway API backendRefs need a real Service with
@@ -905,9 +917,9 @@ metadata:
   namespace: $NS
 spec:
   parentRefs:
-    - name: gateway-default
+    - name: ${THUNDER_RELEASE}-https-gateway
       namespace: openchoreo-control-plane
-      sectionName: https
+      sectionName: aep-mcp-https
   hostnames:
     - aep-mcp.openchoreo.localhost
   rules:

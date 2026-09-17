@@ -396,6 +396,64 @@ kubectl wait -n openchoreo-control-plane --context "${CLUSTER_CONTEXT}" \
     || echo "⚠️  certificate/${THUNDER_RELEASE}-local-tls not Ready — environment Thunders cannot trust this IdP until it is" >&2
 ensure_platform_idp_in_coredns
 
+# ── 2c. A second, SNI-selected listener for aep-mcp.openchoreo.localhost ───
+# The SRE-agent extensions handoff needs aep-mcp-server reachable over https
+# on this same control plane (docs/design/draft/2026-09-17-sre-agent-extensions-
+# handoff.md §6). The obvious home is a second https listener on
+# openchoreo-control-plane's OWN gateway-default — but that Gateway's
+# LoadBalancer Service and this chart's `${THUNDER_RELEASE}-https-gateway`
+# Service both ask k3d's ServiceLB for hostPort 8443 on the cluster's one
+# node; klipper-lb can only bind it once, so whichever Service's rollout
+# lands second gets stuck Pending ("didn't have free ports"), and its
+# predecessor's DaemonSet pod is torn down first — taking that gateway's
+# OTHER, already-working listener down with it. (Found live: enabling
+# gateway.tls on gateway-default this way broke the console's own port 8080,
+# not just the new port.)
+#
+# So instead of a second Service, this adds a second LISTENER to THIS
+# gateway, which already legitimately owns hostPort 8443. Gateway API
+# dispatches HTTPS listeners on a shared port by SNI, so a distinct
+# `hostname` here is enough for Envoy to pick the right one — no new
+# Service, no new hostPort claim, no conflict. It borrows
+# openchoreo-control-plane's own `gateway-default-tls` cert (created by
+# setup-openchoreo.sh's create_gateway_tls_cert call, SAN
+# `*.openchoreo.localhost`) rather than minting a third CA: that cert is
+# already the one the remediation agent is taught to trust (setup-
+# observability.sh §3f), and it lives in this same namespace, so no
+# ReferenceGrant is needed for the certificateRef.
+#
+# A `kubectl patch --type=json` "add" is not idempotent against an array
+# (it would append a duplicate listener on every re-run), so this checks
+# first — the same self-healing shape as setup-openchoreo.sh's
+# rca-agent-binding fix, needed here for the identical reason: this Gateway
+# is a Helm-hook/chart-owned resource on ANOTHER release
+# (`${THUNDER_RELEASE}`), so a `helm upgrade` of it would otherwise reset
+# a listener added by hand.
+echo "⏳ Ensuring aep-mcp.openchoreo.localhost has an SNI listener on ${THUNDER_RELEASE}-https-gateway..."
+if kubectl get gateway "${THUNDER_RELEASE}-https-gateway" -n openchoreo-control-plane \
+        --context "${CLUSTER_CONTEXT}" \
+        -o jsonpath='{.spec.listeners[?(@.name=="aep-mcp-https")].name}' 2>/dev/null | grep -q aep-mcp-https; then
+    echo "⏭️  Already present"
+else
+    kubectl patch gateway "${THUNDER_RELEASE}-https-gateway" -n openchoreo-control-plane \
+        --context "${CLUSTER_CONTEXT}" --type=json -p='[{
+            "op": "add",
+            "path": "/spec/listeners/-",
+            "value": {
+                "name": "aep-mcp-https",
+                "port": 8443,
+                "protocol": "HTTPS",
+                "hostname": "aep-mcp.openchoreo.localhost",
+                "allowedRoutes": {"namespaces": {"from": "All"}},
+                "tls": {
+                    "mode": "Terminate",
+                    "certificateRefs": [{"name": "gateway-default-tls", "kind": "Secret"}]
+                }
+            }
+        }]'
+    echo "✅ aep-mcp-https listener added"
+fi
+
 # ── 3. Re-import the bootstrap when it changed ──────────────────────────────
 # ThunderID's setup Job is a `helm.sh/hook: pre-install` hook — pre-install
 # ONLY. A `helm upgrade` never re-runs it, so everything the bootstrap owns

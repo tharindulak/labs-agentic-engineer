@@ -239,19 +239,50 @@ spec:
         request: "0s"
         backendRequest: "0s"
 ---
-# CONFIRMED GAP (checked statically against this repo, not a live cluster):
-# deployments/single-cluster/values-cp.yaml sets gateway.tls.enabled: false for
-# the openchoreo-control-plane Gateway/gateway-default that this parentRef
-# names — unlike openchoreo-data-plane's gateway-default, which
-# setup-openchoreo.sh explicitly issues a cert for and flips
-# gateway.tls.enabled: true (create_gateway_tls_cert). There is today no
-# "https" sectionName on THIS gateway for sectionName: https, below, to bind
-# to. Enabling TLS on the control-plane gateway is a control-plane-wide change
-# outside this task's scope (flagged back per the task brief rather than
-# guessed at) — this HTTPRoute is written now, matching mcp.json's eventual
-# https:// requirement, but stays Accepted:False / unattached until that
-# follow-up lands.
+# aep-mcp.openchoreo.localhost's https listener lives on the platform IdP's
+# own gateway ({{.ThunderRelease}}-https-gateway, e.g. platform-idp-https-
+# gateway — setup-thunder.sh §2c does the equivalent for the bash-script
+# path; this does it for aectl's own in-cluster install), NOT a second
+# listener on THIS gateway-default. openchoreo-control-plane's own
+# gateway-default and the IdP's gateway each get their own LoadBalancer
+# Service, and k3d's ServiceLB can only bind hostPort 8443 once on the
+# cluster's single node — enabling TLS on gateway-default too
+# (values-cp.yaml gateway.tls) makes whichever Service's rollout loses
+# that race stick Pending, tearing down the loser's existing DaemonSet pod
+# and taking that gateway's OTHER listener down with it (found live: broke
+# gateway-default's port 8080, not just the new one). The IdP's gateway
+# already owns 8443 without conflict, and Gateway API dispatches HTTPS
+# listeners on a shared port by SNI, so a second listener there — a
+# distinct hostname, no new Service — is enough.
 #
+# This is a PARTIAL Gateway spec, applied via server-side apply
+# (Applier.ApplyYAML) rather than a JSON-patch "append": the Gateway API
+# CRD marks spec.listeners as a list-map keyed by "name", so SSA merges
+# this one listener into the IdP chart's existing list (adds it, or
+# updates it in place on a re-run) without touching the chart's own
+# "https" listener entry or requiring this to own the whole array —
+# gatewayClassName and the rest of spec are left alone because they are
+# not present here.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{.ThunderRelease}}-https-gateway
+  namespace: openchoreo-control-plane
+spec:
+  listeners:
+    - name: aep-mcp-https
+      port: 8443
+      protocol: HTTPS
+      hostname: {{.AEPMcpHostname}}
+      allowedRoutes:
+        namespaces:
+          from: All
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: gateway-default-tls
+            kind: Secret
+---
 # aep-mcp-server's Service lives in the AEP namespace (sreNamespace), a
 # different namespace than this HTTPRoute (ObsNamespace) — backendRefs must
 # say so explicitly, and Gateway API additionally requires a ReferenceGrant in
@@ -265,11 +296,11 @@ metadata:
   namespace: {{.ObsNamespace}}
 spec:
   parentRefs:
-    - name: gateway-default
+    - name: {{.ThunderRelease}}-https-gateway
       namespace: openchoreo-control-plane
-      sectionName: https
+      sectionName: aep-mcp-https
   hostnames:
-    - {{.AEPMcpHost}}
+    - {{.AEPMcpHostname}}
   rules:
     - matches:
         - path: { type: PathPrefix, value: / }
