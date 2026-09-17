@@ -61,8 +61,6 @@ var (
 	sreRcaModel        string
 	sreAdapterImage    string
 	sreAEHandoff       bool
-	sreAEAutoDispatch  bool
-	sreAEPublishReport bool
 	sreObserverHost    string
 	sreRcaHost         string
 	sreAEPMcpHost      string
@@ -96,14 +94,22 @@ func init() {
 	f.StringVar(&sreOpenBaoAddr, "openbao-addr", "http://openbao.openbao.svc.cluster.local:8200", "In-cluster OpenBao address for the obs-namespace SecretStore")
 	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.0.1-hotfix.1", "openchoreo-observability-plane chart version")
 	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version")
-	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/sre-agent", "RCA/SRE agent image repository")
-	f.StringVar(&sreRcaImageTag, "rca-image-tag", "fingerprint-fix", "RCA/SRE agent image tag")
+	// Vanilla OpenChoreo image: ghcr.io/openchoreo/ai-rca-agent (the repo the
+	// chart's own values.yaml defaults to — confirmed against the pulled
+	// openchoreo-observability-plane chart). Tag pinned to the chart's own
+	// AppVersion (Chart.yaml) for the obs-plane-version default below
+	// (1.0.1-hotfix.1) — the same release the observability-plane chart
+	// resolves to when rca.image.tag is left empty, and, per OpenChoreo PR
+	// #4743 (merged well before this hotfix release), carries the generic
+	// EXTENSIONS_DIR mechanism this task wires into. Replaces the
+	// tharindulak/sre-agent fork, which existed only to carry the
+	// bespoke HANDOFF_* config this task retires.
+	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "ghcr.io/openchoreo/ai-rca-agent", "RCA/SRE agent image repository")
+	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.0.1-hotfix.1", "RCA/SRE agent image tag")
 	f.StringVar(&sreRcaPullPolicy, "rca-image-pull-policy", "IfNotPresent", "RCA/SRE agent image pull policy")
 	f.StringVar(&sreRcaModel, "rca-model", "anthropic:claude-sonnet-4-6", "RCA/SRE agent LLM model")
 	f.StringVar(&sreAdapterImage, "adapter-image", "docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive", "logs-adapter image (repo:tag)")
-	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (files one issue for code-level work)")
-	f.BoolVar(&sreAEAutoDispatch, "ae-auto-dispatch", true, "Hand the filed issue to the coding agent — AEP adopts it as it is created (false = file a ledger issue a human adopts)")
-	f.BoolVar(&sreAEPublishReport, "ae-publish-reports", true, "Publish RCA reports to aep-api (console Alerts)")
+	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts mcp.json/CONTEXT.md/skill at EXTENSIONS_DIR)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
 	f.StringVar(&sreAEPMcpHost, "aep-mcp-hostname", "aep-mcp.openchoreo.localhost", "aep-mcp-server gateway hostname (used by the remediation agent's mcp.json)")
@@ -124,9 +130,9 @@ type sreParams struct {
 	// aep-mcp-mainkgw HTTPRoute and sreAEPNamespaceCRsTmpl's ReferenceGrant
 	// both cross from ObsNamespace into it.
 	AEPNamespace string
-	// In-cluster handoff wiring (svc DNS, not host.k3d.internal).
-	RcaServiceURL, AEApiURL, AEPApiURL   string
-	AEHandoff, AEAutoDispatch, AEPublish bool
+	// RcaServiceURL is in-cluster Service DNS (not host.k3d.internal) — where
+	// the observer's alert->RCA auto-trigger posts.
+	RcaServiceURL string
 }
 
 func runSreInstall(cmd *cobra.Command, args []string) error {
@@ -162,11 +168,6 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		AEPMcpHost:      sreAEPMcpHost,
 		AEPNamespace:    sreNamespace,
 		RcaServiceURL:   "http://ai-rca-agent:8080",
-		AEApiURL:        fmt.Sprintf("http://aep-mcp-server.%s.svc.cluster.local:3400", sreNamespace),
-		AEPApiURL:       fmt.Sprintf("http://aep-api.%s.svc.cluster.local:9090", sreNamespace),
-		AEHandoff:       sreAEHandoff,
-		AEAutoDispatch:  sreAEAutoDispatch,
-		AEPublish:       sreAEPublishReport,
 	}
 	// Split on the LAST colon so a registry port (registry:5000/img:tag) is
 	// kept in the repo; image tags never contain a colon.
@@ -240,26 +241,23 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	_ = rolloutRestart(ctx, client, sreObsNamespace, "observer")
 	if sreAEHandoff {
-		if err := patchConfigMap(ctx, client, sreObsNamespace, "rca-agent-config", map[string]string{
-			"AE_HANDOFF":         "true",
-			"AE_AUTO_DISPATCH":   fmt.Sprintf("%t", sreAEAutoDispatch),
-			"AE_API_URL":         p.AEApiURL,
-			"AE_PUBLISH_REPORTS": fmt.Sprintf("%t", sreAEPublishReport),
-			"AEP_API_URL":        p.AEPApiURL,
-		}); err != nil {
-			return err
+		ui.Step("Wiring the remediation agent's SRE-agent extensions (mcp.json/CONTEXT.md/skill)")
+		extAEPMcpToken, err := readSecretValue(ctx, client, sreObsNamespace, "aep-mcp-token", "AEP_MCP_TOKEN")
+		if err != nil {
+			return fmt.Errorf("read aep-mcp-token secret: %w (did step 2's ExternalSecret sync?)", err)
+		}
+		renderedMCPJSON := strings.NewReplacer(
+			"${AEP_MCP_HOSTNAME}", p.AEPMcpHost,
+			"${AEP_MCP_TOKEN}", extAEPMcpToken,
+		).Replace(remediationMCPJSONTemplate)
+		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, renderedMCPJSON, remediationContextMD, handoffSkillMD); err != nil {
+			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
+		}
+		if err := mountExtensionsVolume(ctx, client, sreObsNamespace, "ai-rca-agent"); err != nil {
+			return fmt.Errorf("mount sre-agent-extensions onto ai-rca-agent: %w", err)
 		}
 		_ = rolloutRestart(ctx, client, sreObsNamespace, "ai-rca-agent")
-		// Honest about what this actually achieves. These are the LEGACY AE_*
-		// keys: the agent reads HANDOFF_* now and tolerates unknown keys
-		// silently (its settings allow extras), so handoff_enabled keeps its
-		// False default and the stage never runs. This installer also mounts no
-		// handoff skill, and the agent's own validator refuses to start with
-		// the handoff on and no skills directory — so writing the modern keys
-		// here without the mount would crash-loop it instead.
-		ui.Detail(fmt.Sprintf("AE handoff: legacy AE_* keys written (auto-dispatch=%t, mcp=%s)", sreAEAutoDispatch, p.AEApiURL))
-		ui.Detail("AE handoff: NOT active — no HANDOFF_* keys and no skill mount from this installer.")
-		ui.Detail("            Run deployments/scripts/setup-observability.sh to wire it.")
+		ui.Detail("AE handoff: mcp.json + CONTEXT.md + coding-agent-handoff skill mounted at EXTENSIONS_DIR")
 	} else {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}
@@ -286,16 +284,18 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ui.Detail("Log-based alerts may misbehave until the container-logs template maps log as 'wildcard'.")
 	}
 
-	printSreCompletion(p)
+	printSreCompletion()
 	return nil
 }
 
-func printSreCompletion(p sreParams) {
+func printSreCompletion() {
 	ui.Success("SRE agent + observability plane installed")
 	ui.Section("Security Note")
-	ui.Detail(fmt.Sprintf("Auto-dispatch is %s. A fired alert can drive automated code changes;", onOff(p.AEAutoDispatch && p.AEHandoff)))
-	ui.Detail("RCA feeds pod logs to an LLM (prompt-injection surface). Set")
-	ui.Detail("--ae-auto-dispatch=false for issue-only (human dispatches).")
+	ui.Detail(fmt.Sprintf("AE handoff is %s. A fired alert whose RCA finds a root cause files a", onOff(sreAEHandoff)))
+	ui.Detail("coding-agent issue from LLM-driven analysis; AEP's own classification (not")
+	ui.Detail("this installer) decides code_level/config_level and dispatch. Set")
+	ui.Detail("--ae-handoff=false to disable filing entirely.")
+	ui.Detail("RCA feeds pod logs to an LLM (prompt-injection surface).")
 	ui.Detail("RCA/logs-adapter images are non-WSO2 registries (pin/mirror for prod).")
 	ui.Section("Next Steps")
 	ui.Detail("Create an ObservabilityAlertRule per component you want auto-RCA on")
