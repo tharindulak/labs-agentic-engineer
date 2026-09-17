@@ -127,7 +127,11 @@ func init() {
 	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts mcp.json/CONTEXT.md/skill at EXTENSIONS_DIR)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
-	f.StringVar(&sreAEPMcpHost, "aep-mcp-hostname", "aep-mcp.openchoreo.localhost", "aep-mcp-server gateway hostname (used by the remediation agent's mcp.json)")
+	// :8443, not the bare hostname: every other *.openchoreo.localhost https
+	// URL in this repo carries this port explicitly (see
+	// deployments/design/two-tier-thunder.md) — the control-plane gateway's
+	// httpsPort, not the implicit 443 nothing listens on locally.
+	f.StringVar(&sreAEPMcpHost, "aep-mcp-hostname", "aep-mcp.openchoreo.localhost:8443", "aep-mcp-server gateway hostname (used by the remediation agent's mcp.json)")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 }

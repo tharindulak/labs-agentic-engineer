@@ -70,10 +70,24 @@ fi
 # unconditionally rather than trying to detect the upgrade case.
 sync_chart_crds openchoreo-control-plane "${OPENCHOREO_VERSION}"
 
-cp_status="$(helm status openchoreo-control-plane -n openchoreo-control-plane \
-    --kube-context ${CLUSTER_CONTEXT} -o json 2>/dev/null \
-    | grep -o '"status":"[a-z-]*"' | head -1)" || true
-if [ "$cp_status" = '"status":"deployed"' ]; then
+# Unconditionally, and before the chart: the Gateway's https listener
+# (gateway.tls, enabled in values-cp.yaml for the SRE-agent extensions
+# handoff's aep-mcp-server route) references the Secret this issues, and
+# kgateway leaves a listener whose certificateRef does not resolve
+# unprogrammed, so the port would never bind. Same ordering requirement the
+# data-plane gateway's own cert already follows below. Idempotent, and run on
+# every path because it also re-exports the CA — gitignored, so absent on a
+# fresh checkout.
+create_gateway_tls_cert openchoreo-control-plane "${CP_GATEWAY_CA_FILE}" \
+    "openchoreo.localhost" "AEP Local Control Plane CA"
+
+# Same self-healing reasoning as gateway_https_listener_present's own doc
+# comment: a cluster installed before gateway.tls.enabled turned on for this
+# namespace holds a `deployed` release whose Gateway has only the http
+# listener, and skipping on release status alone would leave
+# aep-mcp.openchoreo.localhost dead with no way back short of a teardown.
+if helm_release_deployed openchoreo-control-plane openchoreo-control-plane \
+    && gateway_https_listener_present openchoreo-control-plane; then
     echo "⏭️  Already installed"
 else
     echo "📦 Installing OpenChoreo Control Plane (may take up to 10 minutes)..."

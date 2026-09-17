@@ -56,6 +56,15 @@
 #       and mounts it at EXTENSIONS_DIR/remediation/ on the RCA deployment —
 #       the generic extensions mechanism (openchoreo#4743), replacing the old
 #       HANDOFF_* ConfigMap keys and the per-skill ConfigMap loop.
+#   - Route + DNS + cert trust for aep-mcp.openchoreo.localhost (step 3f):
+#       a CoreDNS priority override (0-aep-mcp.override) so this one hostname
+#       resolves to the control-plane gateway instead of the data-plane one
+#       every other *.openchoreo.localhost name uses; a headless Service +
+#       hand-written EndpointSlice routing to host.k3d.internal (kgateway
+#       doesn't resolve ExternalName Services); and a combined CA bundle
+#       (the RCA image's own certifi store + the control-plane gateway's CA)
+#       mounted with SSL_CERT_FILE, so the remediation agent trusts the
+#       gateway's self-signed cert without losing trust in api.anthropic.com.
 #   - Cross-namespace HTTPRoute on the MAIN kgateway
 #       (openchoreo-control-plane/gateway-default) for observer.openchoreo.localhost
 #       so the BFF in docker-compose can reach the Observer via the same
@@ -171,11 +180,12 @@ HANDOFF_ENABLED="${HANDOFF_ENABLED:-true}"
 # AEP_MCP_HOSTNAME must resolve from inside the k3d cluster; AEP_MCP_TOKEN is
 # the same long-lived credential the aectl/Helm path's aep-mcp-token
 # ExternalSecret carries — for local dev it comes from deployments/.env instead.
-AEP_MCP_HOSTNAME="${AEP_MCP_HOSTNAME:-aep-mcp.openchoreo.localhost}"
+AEP_MCP_HOSTNAME="${AEP_MCP_HOSTNAME:-aep-mcp.openchoreo.localhost:8443}"
 # Only required when the handoff stage is actually on — HANDOFF_ENABLED=false
 # should not force every dev to have a token set (mirrors aectl sre.go, which
 # reads this only inside its own `if sreAEHandoff` branch).
 if [ "$HANDOFF_ENABLED" = "true" ]; then
+    AEP_MCP_TOKEN="${AEP_MCP_TOKEN:-$(grep -E '^AEP_MCP_TOKEN=' "$SCRIPT_DIR/../.env" 2>/dev/null | head -1 | cut -d= -f2-)}"
     AEP_MCP_TOKEN="${AEP_MCP_TOKEN:?set AEP_MCP_TOKEN in deployments/.env — see .env.example}"
 fi
 # Report publishing: the agent POSTs each completed report to a configured sink
@@ -809,6 +819,150 @@ if [ "$HANDOFF_ENABLED" = "true" ]; then
     echo "   Edit services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md or"
     echo "   deployments/sre-agent-extensions/remediation/{mcp.json,CONTEXT.md}, then"
     echo "   re-run this script and restart the agent — no SRE image rebuild."
+
+    # ── 3f. Route + DNS + cert trust for aep-mcp.openchoreo.localhost ────
+    # The extensions loader (openchoreo#4743) rejects a headered mcp.json
+    # server over plain http, so AEP_MCP_HOSTNAME above is an https URL —
+    # which needs, all four together: (a) a Gateway https listener actually
+    # serving *.openchoreo.localhost (setup-openchoreo.sh's
+    # create_gateway_tls_cert call + values-cp.yaml's gateway.tls), (b) DNS
+    # for THIS specific hostname resolving to that gateway rather than the
+    # data-plane one every other *.openchoreo.localhost name uses, (c) a
+    # route from the gateway to aep-mcp-server — which for this docker-compose
+    # local-dev path lives on the HOST, not as an in-cluster Service, and (d)
+    # the remediation agent trusting the gateway's self-signed cert without
+    # losing trust in api.anthropic.com's real one. Each was found missing,
+    # one at a time, running this end to end — see
+    # docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §6.
+    echo ""
+    echo "3️⃣f Route + DNS + cert trust for aep-mcp.openchoreo.localhost"
+
+    # (b) DNS: the blanket `openchoreo.override` rewrite (setup-k3d.sh) sends
+    # every *.openchoreo.localhost name to the DATA-plane gateway. One
+    # hostname already overrides that blanket rule with its own priority file
+    # (0-platform-idp.override, for thunder.openchoreo.localhost) — same
+    # pattern here, sent to the CONTROL-plane gateway instead, where (a)'s
+    # listener actually lives. The "0-" prefix is load-bearing: CoreDNS
+    # applies these override files in name order, and this one must win over
+    # the un-prefixed blanket rule.
+    kubectl --context "$CLUSTER_CONTEXT" -n kube-system patch configmap coredns-custom --type merge -p '{
+        "data": {
+            "0-aep-mcp.override": "rewrite stop {\n  name regex aep-mcp\\.openchoreo\\.localhost gateway-default.openchoreo-control-plane.svc.cluster.local\n  answer auto\n}\n"
+        }
+    }' >/dev/null
+    kubectl --context "$CLUSTER_CONTEXT" -n kube-system rollout restart deployment/coredns >/dev/null
+    kubectl --context "$CLUSTER_CONTEXT" -n kube-system rollout status deployment/coredns --timeout=60s >/dev/null
+    echo "✅ DNS override applied (aep-mcp.openchoreo.localhost → control-plane gateway)"
+
+    # (c) Route: aep-mcp-server is docker-compose's, reached in-cluster via
+    # host.k3d.internal — but Gateway API backendRefs need a real Service with
+    # real Endpoints; kgateway does not resolve a `type: ExternalName` Service
+    # (its HTTPRoute status reports the Service "not found", the same
+    # not-a-real-backend gap several Gateway API implementations have). A
+    # headless Service + a hand-written EndpointSlice pointing at
+    # host.k3d.internal's own resolved IP is the standard workaround, and that
+    # IP is already the one setup-k3d.sh recorded for its own
+    # host-k3d-internal.server CoreDNS block — read it from there rather than
+    # re-resolving it, so this can't silently drift from what DNS-based
+    # lookups of host.k3d.internal actually return.
+    K3D_HOST_IP=$(kubectl --context "$CLUSTER_CONTEXT" get configmap coredns-custom -n kube-system \
+        -o jsonpath='{.data.host-k3d-internal\.server}' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+    if [ -z "$K3D_HOST_IP" ]; then
+        echo "❌ could not read host.k3d.internal's IP from coredns-custom's host-k3d-internal.server key" >&2
+        echo "   (written by setup-k3d.sh) — is the cluster set up via this repo's scripts?" >&2
+        exit 1
+    fi
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: aep-mcp-server-external
+  namespace: $NS
+spec:
+  clusterIP: None
+  ports:
+    - port: 3401
+      targetPort: 3401
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: aep-mcp-server-external
+  namespace: $NS
+  labels:
+    kubernetes.io/service-name: aep-mcp-server-external
+addressType: IPv4
+ports:
+  - port: 3401
+endpoints:
+  - addresses:
+      - "$K3D_HOST_IP"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: aep-mcp-mainkgw
+  namespace: $NS
+spec:
+  parentRefs:
+    - name: gateway-default
+      namespace: openchoreo-control-plane
+      sectionName: https
+  hostnames:
+    - aep-mcp.openchoreo.localhost
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: aep-mcp-server-external
+          port: 3401
+      timeouts:
+        request: "0s"
+        backendRequest: "0s"
+EOF
+    echo "✅ Route to aep-mcp-server applied (via host.k3d.internal, $K3D_HOST_IP:3401)"
+
+    # (d) Cert trust: SSL_CERT_FILE replaces the default trust store rather
+    # than extending it, so pointing it at ONLY the control-plane gateway's
+    # self-signed CA would make the remediation agent stop trusting
+    # api.anthropic.com too (found the hard way — its startup LLM test failed
+    # with a generic "Connection error" the first time this was tried). The
+    # fix is a combined bundle: the image's own certifi CA store, with the
+    # gateway's CA appended — never handwritten, since certifi's exact
+    # contents are the RCA image's, not this script's, to know.
+    if [ ! -f "$CP_GATEWAY_CA_FILE" ]; then
+        echo "❌ $CP_GATEWAY_CA_FILE not found — setup-openchoreo.sh's create_gateway_tls_cert" >&2
+        echo "   call for openchoreo-control-plane must run before this script." >&2
+        exit 1
+    fi
+    CERT_EXTRACT_POD="cert-extract-tmp"
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" delete pod "$CERT_EXTRACT_POD" --ignore-not-found >/dev/null 2>&1
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" run "$CERT_EXTRACT_POD" \
+        --image="${RCA_IMAGE_REPO}:${RCA_IMAGE_TAG}" --restart=Never \
+        --command -- python3 -c "import certifi; print(open(certifi.where()).read())" >/dev/null
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" wait --for=jsonpath='{.status.phase}'=Succeeded \
+        "pod/$CERT_EXTRACT_POD" --timeout=60s >/dev/null
+    COMBINED_CA_TMP="$(mktemp)"
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" logs "$CERT_EXTRACT_POD" > "$COMBINED_CA_TMP"
+    cat "$CP_GATEWAY_CA_FILE" >> "$COMBINED_CA_TMP"
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" delete pod "$CERT_EXTRACT_POD" --ignore-not-found >/dev/null 2>&1
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap aep-mcp-gateway-ca \
+        --from-file=ca.crt="$COMBINED_CA_TMP" \
+        --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" -n "$NS" apply -f - >/dev/null
+    rm -f "$COMBINED_CA_TMP"
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment "$RCA_DEPLOYMENT" --type=strategic -p '{
+        "spec": {"template": {"spec": {
+            "volumes": [{
+                "name": "aep-mcp-gateway-ca",
+                "configMap": {"name": "aep-mcp-gateway-ca"}
+            }],
+            "containers": [{"name": "'"$RCA_DEPLOYMENT"'",
+                "volumeMounts": [{"name": "aep-mcp-gateway-ca", "mountPath": "/etc/ssl/aep-mcp-ca"}],
+                "env": [{"name": "SSL_CERT_FILE", "value": "/etc/ssl/aep-mcp-ca/ca.crt"}]
+            }]
+        }}}
+    }' >/dev/null
+    echo "✅ Combined CA bundle (certifi + control-plane gateway CA) mounted, SSL_CERT_FILE set"
 fi
 
 # ── 4. Cross-namespace HTTPRoute on the MAIN kgateway ────────────────────

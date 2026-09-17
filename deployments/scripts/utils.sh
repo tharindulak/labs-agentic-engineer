@@ -37,7 +37,12 @@ fetch_gh_raw() {
         local envfile
         envfile="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env"
         if [ -f "$envfile" ]; then
-            pat=$(grep -E '^LOCAL_DEV_ADMIN_GITHUB_PAT=' "$envfile" | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+            # `|| true`: under callers' `set -o pipefail` (e.g. setup-environment-thunder.sh),
+            # a `.env` with no LOCAL_DEV_ADMIN_GITHUB_PAT line (the common case — it's
+            # optional) makes grep exit 1, which pipefail propagates as this whole
+            # pipeline's status even though grep isn't the last stage — silently killing
+            # the caller under `set -e` with no error message.
+            pat=$(grep -E '^LOCAL_DEV_ADMIN_GITHUB_PAT=' "$envfile" | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
         fi
     fi
     # raw.githubusercontent.com/<owner>/<repo>/<ref>/<path> → API coordinates.
@@ -144,15 +149,20 @@ helm_release_deployed() {
     [ "$rel_status" = '"status":"deployed"' ]
 }
 
-# True only when the data-plane Gateway actually declares the `https` listener.
+# True only when the given namespace's Gateway actually declares the `https`
+# listener. Defaults to openchoreo-data-plane for the original call site.
 # Complements helm_release_deployed: that catches a broken INSTALL, this catches
 # a stale VALUES file. A cluster created while `gateway.tls.enabled` was false
 # holds a perfectly `deployed` release serving only HTTP, while the platform goes
 # on advertising https URLs for every deployed component — so the release status
-# alone is not enough to decide the chart can be skipped.
+# alone is not enough to decide the chart can be skipped. The same trap applies
+# to openchoreo-control-plane once its own gateway.tls got enabled for the
+# SRE-agent extensions handoff (aep-mcp-server route) — a cluster installed
+# before that change holds a `deployed` release with no https listener either.
 gateway_https_listener_present() {
+    local ns="${1:-openchoreo-data-plane}"
     local port
-    port=$(kubectl get gateway gateway-default -n openchoreo-data-plane \
+    port=$(kubectl get gateway gateway-default -n "$ns" \
         --context "${CLUSTER_CONTEXT}" \
         -o jsonpath='{.spec.listeners[?(@.name=="https")].port}' 2>/dev/null) || true
     [ -n "$port" ]
@@ -232,6 +242,14 @@ create_plane_cert_resources() {
 # on every renewal.
 create_gateway_tls_cert() {
     local ns="$1" ca_out="$2"
+    # domain_apex/common_name default to the original data-plane values, so
+    # the existing call site (openchoreo-data-plane) needs no change. A
+    # second call site (openchoreo-control-plane, for the SRE-agent extensions
+    # handoff's aep-mcp-server route) passes its own apex/CN — same function,
+    # a differently-scoped CA per namespace, since cert-manager secrets are
+    # namespaced and the two gateways serve disjoint hostname sets.
+    local domain_apex="${3:-openchoreoapis.localhost}"
+    local common_name="${4:-AEP Local Data Plane CA}"
     kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
     cat <<EOF | kubectl apply -f -
 apiVersion: cert-manager.io/v1
@@ -249,7 +267,7 @@ metadata:
   namespace: $ns
 spec:
   isCA: true
-  commonName: AEP Local Data Plane CA
+  commonName: $common_name
   secretName: gateway-default-ca
   duration: 87600h
   renewBefore: 8760h
@@ -282,11 +300,11 @@ spec:
   privateKey:
     algorithm: RSA
     size: 2048
-  # Both forms: a deployed endpoint is <env>-<dp>.openchoreoapis.localhost, and
+  # Both forms: a deployed endpoint is <env>-<dp>.$domain_apex, and
   # a wildcard covers exactly one label, so the apex needs naming separately.
   dnsNames:
-    - openchoreoapis.localhost
-    - "*.openchoreoapis.localhost"
+    - $domain_apex
+    - "*.$domain_apex"
   issuerRef:
     name: gateway-default-ca-issuer
     kind: Issuer
@@ -299,7 +317,7 @@ EOF
     # exists to remove.
     mkdir -p "$(dirname "$ca_out")"
     kubectl get secret gateway-default-ca -n "$ns" -o jsonpath='{.data.ca\.crt}' | base64 -d > "$ca_out"
-    echo "✅ Gateway TLS certificate issued (CA exported to $ca_out)"
+    echo "✅ Gateway TLS certificate issued for *.$domain_apex (CA exported to $ca_out)"
 }
 
 register_data_plane() {

@@ -38,7 +38,18 @@ gateway:
   httpPort: 8080
   httpsPort: 8443
   tls:
-    enabled: false
+    # Enabled for the SRE-agent extensions handoff (see
+    # docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §6): the
+    # remediation agent's mcp.json reaches aep-mcp-server over
+    # https://aep-mcp.openchoreo.localhost:8443, which the upstream OpenChoreo
+    # extensions loader requires for any mcp.json server carrying a header.
+    # Cert created by create_gateway_tls_cert (utils.sh), called for this
+    # namespace in setup-openchoreo.sh before this chart installs — same
+    # pattern the data-plane gateway already uses for its own https listener.
+    enabled: true
+    hostname: "*.openchoreo.localhost"
+    certificateRefs:
+      - name: gateway-default-tls
 
 backstage:
   enabled: true

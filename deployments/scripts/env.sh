@@ -124,3 +124,10 @@ AGENT_SANDBOX_UPSTREAM_VERSION="${AGENT_SANDBOX_UPSTREAM_VERSION:-v0.4.6}"
 # and rewritten on every setup run: a cluster rebuild mints a new CA, and a stale
 # file fails verification indistinguishably from an untrusted one.
 GATEWAY_CA_FILE="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../.local/openchoreoapis-ca.crt"
+
+# Same as GATEWAY_CA_FILE, for the control-plane gateway's own https listener
+# (*.openchoreo.localhost) — enabled specifically for the SRE-agent extensions
+# handoff, whose remediation agent reaches aep-mcp-server at
+# https://aep-mcp.openchoreo.localhost:8443. See
+# docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §6.
+CP_GATEWAY_CA_FILE="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../.local/openchoreo-cp-ca.crt"
