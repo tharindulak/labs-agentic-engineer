@@ -37,7 +37,7 @@ and installation lifecycle.*
 | `secrets.Credential` | needs | `platform/secrets` — App-installation / per-org PAT |
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |
 | `IssueAdopter` | needs | delivery admission for newly filed or reopened SRE work; refusal is returned as `adoptionError` |
-| `IncidentRecurrence` | needs | eligibility, durable recurrence evidence and count before reopening a closed incident |
+| `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
 
 ## Owns
 - `git_repositories` (the repo coordinate registry) and `webhook_deliveries` — gorm + entities in this
@@ -54,12 +54,24 @@ and installation lifecycle.*
   `sre-agent` and removes caller delivery-routing and identity labels. Missing trusted context or
   component is rejected before writing. Legacy non-SRE requests retain their existing dedupe behavior.
 - **SRE identity checks fail closed.** An open match returns `deduped` without another adoption; a
-  `not_planned` closure returns `suppressed`. Other closed matches require the recurrence port to
-  establish eligibility and persist evidence before reopening. Missing recurrence wiring leaves the
-  issue closed. New and reopened adoptable work returns `adopted` only after delivery accepts it;
+  `not_planned` SRE closure returns `suppressed`. Only a completed SRE closure can recur; ordinary
+  issues and unknown closure reasons cannot reopen through this path. New and reopened adoptable work
+  returns `adopted` only after delivery accepts it;
   missing delivery wiring or refusal preserves the issue and returns `adoptionError`. Creates serialize
   per repository within one process. Lookup and label-creation failures prevent filing an untracked
   incident; multiple replicas still require a durable uniqueness mechanism.
+- **Recurrence evidence lives in GitHub.** Each recurrence appends `## Recurrence <n>`, a fixed warning
+  that the earlier merged fix failed, and the new handoff evidence, preserving the existing body.
+  The host's `closed_at` identifies the closure in a hidden body marker: retrying a failed reopen
+  reuses its evidence, while a later completed closure creates another section even with identical
+  handoff content. A missing closure identity or evidence-write failure leaves the issue closed.
+  The timestamp is not an API field and imposes no expiry or recurrence time window.
+- **Issue attention is a server projection.** `ListIssues` and `GetIssue` derive it from state,
+  `state_reason`, labels, and the body. Closed SRE `not_planned` issues are `no_change_verdict`;
+  open, reopened SRE issues without the `aep` arming label are `unverified_fix`. An open SRE issue
+  escalates from attempt four (the original attempt plus three recurrence headings), whether armed
+  or disarmed, without blocking further attempts. Completed and ordinary non-SRE issues have no
+  attention reason. Human edits to the body ledger affect the recurrence history.
 - **`Host` is provider-neutral.** GitHub specifics live in `githubhost`; nothing above it names GitHub
   — including whether an op rides REST or GraphQL.
 - **A milestone is addressed by NUMBER, never by title.** Titles are renamable, and the host enforces

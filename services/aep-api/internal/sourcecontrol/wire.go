@@ -330,12 +330,15 @@ type IssueResult struct {
 
 // IssueInfo represents an issue returned when listing.
 type IssueInfo struct {
-	Number          int
-	Title           string
-	Body            string
-	URL             string
-	State           string
-	StateReason     string
+	Number      int
+	Title       string
+	Body        string
+	URL         string
+	State       string
+	StateReason string
+	// ClosedAt is the host closure identity, used only to make recurrence writes
+	// idempotent across failed reopen requests. It is not an API response field.
+	ClosedAt        string `json:"-"`
 	Labels          []string
 	AttentionReason string
 }

@@ -76,7 +76,7 @@ func TestSRESuppressAndRecurrenceOutcomes(t *testing.T) {
 		{name: "not planned suppresses", reason: "not_planned", suppressed: true},
 		{name: "completed reopens with recurrence", reason: "completed", recurrence: incidentRecurrence{count: 3}, reopened: true},
 		{name: "recurrence failure leaves closed", reason: "completed", recurrence: incidentRecurrence{err: errors.New("evidence unavailable")}, wantError: true},
-		{name: "missing recurrence leaves closed", reason: "completed", wantError: true},
+		{name: "missing closure identity leaves closed", reason: "completed", wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gh := &fakeGitHub{}

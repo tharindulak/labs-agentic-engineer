@@ -23,8 +23,8 @@ import (
 )
 
 // IncidentPorts connects authoritative incident filing to delivery and
-// recurrence evidence. Nil ports preserve filing but cannot claim adoption or
-// safely reopen a closed incident.
+// recurrence evidence. A nil adopter cannot claim adoption; a nil recurrence
+// port uses the service's GitHub-body evidence writer.
 type IncidentPorts struct {
 	Adopter    IssueAdopter
 	Recurrence IncidentRecurrence

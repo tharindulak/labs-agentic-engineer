@@ -189,6 +189,9 @@ func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Reso
 	if len(incident) > 0 {
 		s.incident = incident[0]
 	}
+	if s.incident.Recurrence == nil {
+		s.incident.Recurrence = s
+	}
 	return s
 }
 
@@ -310,7 +313,14 @@ func (s *issueService) ListIssues(ctx context.Context, orgID, projectID string, 
 	if err != nil {
 		return nil, err
 	}
-	return s.github.ListIssues(ctx, owner, repoName, cred, labels)
+	issues, err := s.github.ListIssues(ctx, owner, repoName, cred, labels)
+	if err != nil {
+		return nil, err
+	}
+	for i := range issues {
+		issues[i].AttentionReason = AttentionReasonFor(issues[i])
+	}
+	return issues, nil
 }
 
 func (s *issueService) GetIssue(ctx context.Context, orgID, projectID string, number int) (*IssueInfo, error) {
@@ -318,7 +328,14 @@ func (s *issueService) GetIssue(ctx context.Context, orgID, projectID string, nu
 	if err != nil {
 		return nil, err
 	}
-	return s.github.GetIssue(ctx, owner, repoName, cred, number)
+	issue, err := s.github.GetIssue(ctx, owner, repoName, cred, number)
+	if err != nil {
+		return nil, err
+	}
+	if issue != nil {
+		issue.AttentionReason = AttentionReasonFor(*issue)
+	}
+	return issue, nil
 }
 
 func (s *issueService) ListIssueComments(ctx context.Context, orgID, projectID string, number, limit int) ([]IssueComment, error) {

@@ -68,6 +68,36 @@ func newFake(t *testing.T, status int, respBody string) (*Client, *capture) {
 	return c, cap
 }
 
+func TestRecurrenceStateReasonReads(t *testing.T) {
+	for _, reason := range []string{"completed", "not_planned", "reopened", ""} {
+		t.Run(reason, func(t *testing.T) {
+			payload := `{"number":42,"state":"closed","state_reason":"` + reason + `","closed_at":"2026-09-18T08:00:00Z","labels":[{"name":"sre-agent"}]}`
+			client, _ := newFake(t, http.StatusOK, "["+payload+"]")
+			issues, err := client.ListIssues(context.Background(), "acme", "repo", stubCred{}, nil)
+			if err != nil || len(issues) != 1 {
+				t.Fatalf("list = %+v, %v", issues, err)
+			}
+			if issues[0].StateReason != reason {
+				t.Errorf("list state reason = %q, want %q", issues[0].StateReason, reason)
+			}
+			if issues[0].ClosedAt != "2026-09-18T08:00:00Z" {
+				t.Errorf("list closure identity = %q", issues[0].ClosedAt)
+			}
+			client, _ = newFake(t, http.StatusOK, payload)
+			issue, err := client.GetIssue(context.Background(), "acme", "repo", stubCred{}, 42)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if issue.StateReason != reason {
+				t.Errorf("detail state reason = %q, want %q", issue.StateReason, reason)
+			}
+			if issue.ClosedAt != "2026-09-18T08:00:00Z" {
+				t.Errorf("detail closure identity = %q", issue.ClosedAt)
+			}
+		})
+	}
+}
+
 func TestAddIssueLabels(t *testing.T) {
 	c, cap := newFake(t, http.StatusOK, `[]`)
 	if err := c.AddIssueLabels(context.Background(), "acme", "repo", stubCred{}, 42, []string{"aep:status/pending", "aep:attention"}); err != nil {

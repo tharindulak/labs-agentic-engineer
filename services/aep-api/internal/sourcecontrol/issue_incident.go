@@ -86,7 +86,7 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 	}
 	// A human rejection wins over completed matches if legacy duplicates exist.
 	for _, issue := range existing {
-		if strings.EqualFold(issue.State, "closed") && issue.StateReason == "not_planned" {
+		if IsNoChangeVerdict(issue) {
 			return &IssueResult{Number: issue.Number, URL: issue.URL, Suppressed: true, Classification: classification}, nil
 		}
 	}
@@ -94,8 +94,8 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 		if !strings.EqualFold(issue.State, "closed") {
 			continue
 		}
-		if s.incident.Recurrence == nil {
-			return nil, fmt.Errorf("incident recurrence is not configured")
+		if !canRecur(issue) {
+			return nil, fmt.Errorf("only completed SRE issues can recur")
 		}
 		count, err := s.incident.Recurrence.RecordRecurrence(ctx, orgID, projectID, issue, req)
 		if err != nil {

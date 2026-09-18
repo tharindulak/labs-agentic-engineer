@@ -28,11 +28,13 @@ package sourcecontrol_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
+	"github.com/wso2/aep/aep-api/internal/platform/gittest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/httpapi"
 )
@@ -137,6 +139,42 @@ func TestIssueComponent_ListAllowsOnlyKnownAttentionReasons(t *testing.T) {
 	}
 	if _, ok := items[1]["attentionReason"]; ok {
 		t.Fatalf("unknown attentionReason must be omitted: %s", resp.Body.String())
+	}
+}
+
+func TestIssueComponent_AttentionFromGitHubEvidence(t *testing.T) {
+	t.Parallel()
+	stub := gittest.NewStub(t)
+	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK, `[
+  {"number":1,"title":"review fix","state":"open","state_reason":"reopened","labels":[{"name":"sre-agent"}]},
+  {"number":2,"title":"no code change","state":"closed","state_reason":"not_planned","labels":[{"name":"sre-agent"}]},
+  {"number":3,"title":"repeated incident","state":"open","state_reason":"reopened","body":"Original\n\n## Recurrence 1\nEvidence\n\n## Recurrence 2\nEvidence\n\n## Recurrence 3\nEvidence","labels":[{"name":"sre-agent"},{"name":"aep"}]},
+  {"number":4,"title":"ordinary","state":"open","state_reason":"reopened","labels":[{"name":"bug"}]}
+]`)
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, newIssueSvcOnStub(t, stub))}})
+	resp := h.AsOrg("org1").Get("/api/v1/projects/proj1/issues")
+	if resp.Code != 200 {
+		t.Fatalf("list status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	var items []struct {
+		Number          int
+		StateReason     string
+		AttentionReason string `json:"attentionReason"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("items=%s", resp.Body.String())
+	}
+	want := map[int]string{1: "unverified_fix", 2: "no_change_verdict", 3: "escalated", 4: ""}
+	for _, item := range items {
+		if item.AttentionReason != want[item.Number] || item.StateReason == "" {
+			t.Fatalf("item=%+v want attention=%q", item, want[item.Number])
+		}
+	}
+	if strings.Contains(resp.Body.String(), "ClosedAt") {
+		t.Fatalf("internal closure identity leaked: %s", resp.Body.String())
 	}
 }
 

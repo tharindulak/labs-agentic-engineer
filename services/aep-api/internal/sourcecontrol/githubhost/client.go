@@ -534,12 +534,14 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo string, cred secret
 	}
 
 	var raw []struct {
-		Number  int    `json:"number"`
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		HTMLURL string `json:"html_url"`
-		State   string `json:"state"`
-		Labels  []struct {
+		Number      int    `json:"number"`
+		Title       string `json:"title"`
+		Body        string `json:"body"`
+		HTMLURL     string `json:"html_url"`
+		State       string `json:"state"`
+		StateReason string `json:"state_reason"`
+		ClosedAt    string `json:"closed_at"`
+		Labels      []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
 	}
@@ -554,12 +556,14 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo string, cred secret
 			labelNames = append(labelNames, l.Name)
 		}
 		issues = append(issues, sourcecontrol.IssueInfo{
-			Number: r.Number,
-			Title:  r.Title,
-			Body:   r.Body,
-			URL:    r.HTMLURL,
-			State:  r.State,
-			Labels: labelNames,
+			Number:      r.Number,
+			Title:       r.Title,
+			Body:        r.Body,
+			URL:         r.HTMLURL,
+			State:       r.State,
+			StateReason: r.StateReason,
+			ClosedAt:    r.ClosedAt,
+			Labels:      labelNames,
 		})
 	}
 	return issues, nil
@@ -573,12 +577,14 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo string, cred secret
 func (c *Client) GetIssue(ctx context.Context, owner, repo string, cred secrets.Credential, number int) (*sourcecontrol.IssueInfo, error) {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	var raw struct {
-		Number  int    `json:"number"`
-		Title   string `json:"title"`
-		Body    string `json:"body"`
-		HTMLURL string `json:"html_url"`
-		State   string `json:"state"`
-		Labels  []struct {
+		Number      int    `json:"number"`
+		Title       string `json:"title"`
+		Body        string `json:"body"`
+		HTMLURL     string `json:"html_url"`
+		State       string `json:"state"`
+		StateReason string `json:"state_reason"`
+		ClosedAt    string `json:"closed_at"`
+		Labels      []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
 	}
@@ -593,12 +599,14 @@ func (c *Client) GetIssue(ctx context.Context, owner, repo string, cred secrets.
 		labelNames = append(labelNames, l.Name)
 	}
 	return &sourcecontrol.IssueInfo{
-		Number: raw.Number,
-		Title:  raw.Title,
-		Body:   raw.Body,
-		URL:    raw.HTMLURL,
-		State:  raw.State,
-		Labels: labelNames,
+		Number:      raw.Number,
+		Title:       raw.Title,
+		Body:        raw.Body,
+		URL:         raw.HTMLURL,
+		State:       raw.State,
+		StateReason: raw.StateReason,
+		ClosedAt:    raw.ClosedAt,
+		Labels:      labelNames,
 	}, nil
 }
 
