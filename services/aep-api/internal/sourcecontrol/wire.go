@@ -65,6 +65,10 @@ type CreateIssueRequest struct {
 	Title  string   `json:"title"`
 	Body   string   `json:"body"`
 	Labels []string `json:"labels,omitempty"`
+	// ComponentName and ActionStatuses are handoff context owned by aep-api.
+	// They are deliberately not forwarded to GitHub's issue-create endpoint.
+	ComponentName  string    `json:"-"`
+	ActionStatuses []*string `json:"-"`
 	// Milestone assigns the issue to a milestone at creation time — one call
 	// instead of create-then-patch, which is what keeps a plan's API cost at
 	// 1+N. It is the milestone NUMBER; GitHub answers 422 to a title here. Nil
@@ -321,20 +325,28 @@ func clampWork(n int) int {
 // already existed — Number/URL then refer to that existing issue (NodeID may
 // be empty in that case; the list API doesn't return it).
 type IssueResult struct {
-	Number  int    `json:"number"`
-	URL     string `json:"url"`
-	NodeID  string `json:"nodeId"`
-	Deduped bool   `json:"deduped,omitempty"`
+	Number          int    `json:"number"`
+	URL             string `json:"url"`
+	NodeID          string `json:"nodeId"`
+	Deduped         bool   `json:"deduped,omitempty"`
+	Classification  string `json:"classification,omitempty"`
+	Suppressed      bool   `json:"suppressed,omitempty"`
+	Reopened        bool   `json:"reopened,omitempty"`
+	Adopted         bool   `json:"adopted,omitempty"`
+	AdoptionError   string `json:"adoptionError,omitempty"`
+	RecurrenceCount int64  `json:"recurrenceCount,omitempty"`
 }
 
 // IssueInfo represents an issue returned when listing.
 type IssueInfo struct {
-	Number int
-	Title  string
-	Body   string
-	URL    string
-	State  string
-	Labels []string
+	Number          int
+	Title           string
+	Body            string
+	URL             string
+	State           string
+	StateReason     string
+	Labels          []string
+	AttentionReason string
 }
 
 // CompareResult is the per-file change summary between two refs the lineage

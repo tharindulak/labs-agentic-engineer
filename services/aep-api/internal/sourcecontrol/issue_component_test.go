@@ -50,7 +50,50 @@ type fakeIssueService struct {
 func (f *fakeIssueService) CreateIssue(_ context.Context, org, _ string, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
 	f.gotOrg = org
 	f.created = append(f.created, req)
-	return &sourcecontrol.IssueResult{Number: 7, URL: "https://github.com/acme/repo/issues/7", NodeID: "n7"}, nil
+	return &sourcecontrol.IssueResult{
+		Number:         7,
+		URL:            "https://github.com/acme/repo/issues/7",
+		NodeID:         "n7",
+		Classification: "code-level",
+		Adopted:        true,
+	}, nil
+}
+
+func TestIssueComponent_CreatePreservesSREHandoff(t *testing.T) {
+	t.Parallel()
+	svc := &fakeIssueService{}
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, svc)}})
+
+	resp := h.AsOrg("acme").Post("/api/v1/projects/web/issues", `{
+  "title": "checkout-api times out calling inventory",
+  "body": "## RCA summary\n\nRequest failures spike.\n\n## Root cause\n\nRetry loop is unbounded.",
+  "componentName": "checkout-api",
+  "actionStatuses": ["revised", "suggested", null]
+}`)
+	if resp.Code != 200 {
+		t.Fatalf("create: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	if len(svc.created) != 1 {
+		t.Fatalf("create calls = %d, want 1", len(svc.created))
+	}
+	got := svc.created[0]
+	if got.ComponentName != "checkout-api" {
+		t.Fatalf("componentName = %q, want checkout-api", got.ComponentName)
+	}
+	if len(got.ActionStatuses) != 3 || got.ActionStatuses[0] == nil || *got.ActionStatuses[0] != "revised" || got.ActionStatuses[1] == nil || *got.ActionStatuses[1] != "suggested" || got.ActionStatuses[2] != nil {
+		t.Fatalf("actionStatuses = %#v, want [revised suggested <nil>] in order", got.ActionStatuses)
+	}
+
+	var created struct {
+		Classification string `json:"classification"`
+		Adopted        bool   `json:"adopted"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.Classification != "code-level" || !created.Adopted {
+		t.Fatalf("create outcome = %+v, want server-derived classification and adopted", created)
+	}
 }
 
 func (f *fakeIssueService) ListIssues(_ context.Context, org, _ string, _ []string) ([]sourcecontrol.IssueInfo, error) {

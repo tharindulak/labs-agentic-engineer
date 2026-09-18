@@ -46,10 +46,12 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 	org := tenant.BoundOrgFromContext(ctx)
 
 	issue, err := h.issues.CreateIssue(ctx, org, request.ProjectName, sourcecontrol.CreateIssueRequest{
-		Title:     request.Body.Title,
-		Body:      request.Body.Body,
-		Labels:    request.Body.Labels,
-		DedupeKey: request.Body.DedupeKey,
+		Title:          request.Body.Title,
+		Body:           request.Body.Body,
+		Labels:         request.Body.Labels,
+		DedupeKey:      request.Body.DedupeKey,
+		ComponentName:  request.Body.ComponentName,
+		ActionStatuses: request.Body.ActionStatuses,
 	})
 	if err != nil {
 		if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
@@ -58,10 +60,16 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 		return nil, apierr.Internal("failed to create issue")
 	}
 	return gen.CreateIssue200JSONResponse(gen.IssueResult{
-		Number:  int64(issue.Number),
-		URL:     issue.URL,
-		NodeID:  issue.NodeID,
-		Deduped: issue.Deduped,
+		Number:          int64(issue.Number),
+		URL:             issue.URL,
+		NodeID:          issue.NodeID,
+		Deduped:         issue.Deduped,
+		Classification:  issue.Classification,
+		Suppressed:      issue.Suppressed,
+		Reopened:        issue.Reopened,
+		Adopted:         issue.Adopted,
+		AdoptionError:   issue.AdoptionError,
+		RecurrenceCount: issue.RecurrenceCount,
 	}), nil
 }
 
@@ -83,12 +91,14 @@ func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestO
 	out := make([]gen.IssueInfo, 0, len(ranked))
 	for _, iss := range ranked {
 		out = append(out, gen.IssueInfo{
-			Number: int64(iss.Number),
-			Title:  iss.Title,
-			Body:   iss.Body,
-			URL:    iss.URL,
-			State:  iss.State,
-			Labels: iss.Labels,
+			Number:          int64(iss.Number),
+			Title:           iss.Title,
+			Body:            iss.Body,
+			URL:             iss.URL,
+			State:           iss.State,
+			StateReason:     iss.StateReason,
+			Labels:          iss.Labels,
+			AttentionReason: gen.IssueInfoAttentionReason(iss.AttentionReason),
 		})
 	}
 	return gen.ListIssues200JSONResponse(out), nil
