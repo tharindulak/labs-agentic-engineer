@@ -24,11 +24,8 @@
 // agent's format ever legitimately changes, regenerate the pairs — do not edit
 // them to match the Go.
 //
-// Byte-identical Markdown still matters, though less than it did: `diagnosis` is
-// what the console renders, and the escalated issue quotes the handoff's own
-// reasoning out of it (escalate.go's handoffReasoning). The escalation DECISION
-// no longer reads it — that now comes from the report's action fields — so a
-// rendering slip degrades a page rather than silently stopping escalation.
+// Byte-identical Markdown still matters: `diagnosis` is what the console
+// renders, so a rendering slip degrades a page a human reads.
 package createreport
 
 import (
@@ -110,7 +107,7 @@ func TestFromNative_DerivesTheSameRowThePythonSent(t *testing.T) {
 			if got.Classification != want.Classification {
 				t.Errorf("classification: got %q want %q", got.Classification, want.Classification)
 			}
-			// The one that must match to the byte — escalate.go reads it.
+			// The one that must match to the byte — it is what the console renders.
 			if got.Diagnosis != want.Diagnosis {
 				t.Errorf("diagnosis differs from the Python's.\n got: %q\nwant: %q",
 					got.Diagnosis, want.Diagnosis)
@@ -154,62 +151,6 @@ func TestFromNative_ADeclineCarriesNoIssueState(t *testing.T) {
 	}
 	if got.Recurrence != 0 {
 		t.Errorf("recurrence is unknown without an issue, got %d", got.Recurrence)
-	}
-}
-
-// The escalation decision's input, read as FIELDS. This replaced a regex over
-// the rendered Markdown — so the property to pin is that the actions survive the
-// trip out of the report with their statuses intact, since `suggested` is the
-// whole signal that work is code-level.
-func TestNativeActions_FeedTheEscalationDecisionAsFields(t *testing.T) {
-	report, _ := loadGolden(t, "declined")
-
-	code, config := splitActions(nativeActions(report))
-
-	if len(code) != 1 || code[0] != "Investigate and remove the artificial delay in service2." {
-		t.Fatalf("escalation must recover the code-level action, got %v", code)
-	}
-	if len(config) != 1 {
-		t.Fatalf("and the config action as context, got %v", config)
-	}
-}
-
-// An action carrying no status is neither code nor config, and is dropped rather
-// than guessed at: escalating on it would file work off a status the remediation
-// agent never asserted.
-func TestNativeActions_AnUnclassifiedActionIsNotWork(t *testing.T) {
-	report := map[string]any{
-		"result": map[string]any{
-			"recommendations": map[string]any{
-				"recommended_actions": []any{
-					map[string]any{"description": "Consider a dashboard"},
-					map[string]any{"description": "Fix the retry", "status": "suggested"},
-				},
-			},
-		},
-	}
-	actions := nativeActions(report)
-	if len(actions) != 2 {
-		t.Fatalf("both actions must be read, got %v", actions)
-	}
-	code, config := splitActions(actions)
-	if len(code) != 1 || code[0] != "Fix the retry" {
-		t.Errorf("only the suggested action is code-level work, got %v", code)
-	}
-	if len(config) != 0 {
-		t.Errorf("an action with no status is not configuration either, got %v", config)
-	}
-}
-
-// A report with no recommendations at all yields nothing, rather than a
-// one-element slice of zero values that would escalate on an empty description.
-func TestNativeActions_NoRecommendationsYieldsNothing(t *testing.T) {
-	if got := nativeActions(map[string]any{}); got != nil {
-		t.Errorf("got %v, want nil", got)
-	}
-	report, _ := loadGolden(t, "minimal")
-	if got := nativeActions(report); len(got) != 0 {
-		t.Errorf("a no-root-cause report has no actions, got %v", got)
 	}
 }
 
@@ -515,10 +456,8 @@ func TestFromNative_ReadsIssueNumberAndURLFromNestedResult(t *testing.T) {
 // produces (AE's ae_create_issue answer, carried verbatim under
 // `handoff.result`). Before this fix, nativeClassification and IssueNumber
 // both read the old flat fields, which are never populated in this shape —
-// so IssueNumber stayed nil and escalate.go's shouldEscalate, which gates
-// solely on `r.IssueNumber != nil`, would treat an already-filed issue as
-// unfiled and dispatch a duplicate. Proving IssueNumber is non-nil here is
-// exactly what proves that duplicate can no longer happen.
+// so IssueNumber stayed nil, which made an already-filed issue look unfiled
+// to any reader of this row.
 func TestFromNative_ARealHandoffResultDoesNotLookUnfiled(t *testing.T) {
 	report := map[string]any{
 		"alert_context": map[string]any{"project": "demohello", "component": "svc1"},
@@ -540,7 +479,7 @@ func TestFromNative_ARealHandoffResultDoesNotLookUnfiled(t *testing.T) {
 	}
 	if got.IssueNumber == nil {
 		t.Fatal("IssueNumber must be set from a real handoff.result — a nil here " +
-			"is exactly the bug that files a duplicate escalation issue")
+			"makes an already-filed issue look unfiled to any reader of this row")
 	}
 	if *got.IssueNumber != 41 {
 		t.Errorf("issueNumber: got %d want 41", *got.IssueNumber)

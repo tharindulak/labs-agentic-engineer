@@ -19,14 +19,12 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/eventcore"
 	"github.com/wso2/aep/aep-api/internal/delivery/runread"
-	"github.com/wso2/aep/aep-api/internal/ops"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 	"github.com/wso2/aep/aep-api/internal/projects"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -435,44 +433,4 @@ func (a projectRunSupervision) AbandonProjectRuns(ctx context.Context, orgID, pr
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// opsIssueEscalator adapts the issue adopter onto the ops domain's
-// IssueEscalator port, so a high-confidence RCA report the SRE handoff declined
-// still reaches the coding agent.
-//
-// It is only a type bridge, and deliberately the SAME adopter create-issue uses:
-// an escalated issue must be indistinguishable from one the handoff filed, or
-// the two routes drift and only one of them ends up in a milestone. The labels
-// mark it as SRE-agent work the way every other RCA issue is marked; the dedupe
-// key comes from the caller so a recurring alert folds onto the open issue.
-type opsIssueEscalator struct{ adopter sourcecontrol.Adopter }
-
-func (a opsIssueEscalator) FileAndDispatch(
-	ctx context.Context,
-	orgID, projectID, componentName, title, body, dedupeKey string,
-) (ops.FiledIssue, error) {
-	adoption, err := a.adopter.CreateAndAdopt(ctx, orgID, projectID, componentName,
-		sourcecontrol.CreateIssueRequest{
-			Title: title,
-			Body:  body,
-			// delivery.KindBug and LabelSREAgent, not literals: aep-api's own
-			// recurrence lookup filters on LabelSREAgent, and aep-mcp-server
-			// carries the one copy Go cannot share (its HANDOFF_LABELS). A
-			// test pins the set.
-			Labels:    []string{delivery.KindBug, sourcecontrol.LabelSREAgent},
-			DedupeKey: dedupeKey,
-		})
-	if err != nil {
-		return ops.FiledIssue{}, err
-	}
-	if adoption == nil || adoption.Issue == nil {
-		return ops.FiledIssue{}, fmt.Errorf("ops escalation: adopter returned no issue")
-	}
-	return ops.FiledIssue{
-		Number:        int64(adoption.Issue.Number),
-		URL:           adoption.Issue.URL,
-		Adopted:       adoption.Adopted,
-		AdoptionError: adoption.Reason,
-	}, nil
 }

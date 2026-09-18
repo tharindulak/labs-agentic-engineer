@@ -1241,13 +1241,12 @@ spec and the defect are not in conflict — re-read the rule at the top.
 Not every green run ends in a merged PR, and three of the other endings are
 shipped behaviour rather than failure. Recognise them before debugging them.
 
-- **`classification=none`, no issue** — the handoff ruled a code change out. For a
-  scenario on this page that means the spec and the defect are not in conflict:
-  re-read the rule at the top. Note the platform no longer lets this end the
-  incident silently — `createreport` files and dispatches the issue itself when the
-  report still carries an unaddressed code-level action (a `_(suggested)_` one), and
-  logs `rca report: escalated …`. So a demo may show an issue appearing even though
-  the handoff declined.
+- **`classification=none`** — every recommended action was already handled as
+  configuration, or none applied. Filing is unconditional (CONTEXT.md), so the
+  issue still gets created as a ledger entry; nothing dispatches a coding agent
+  onto it. For a scenario on this page, `classification=none` with a code-level
+  action still open means the spec and the defect are not in conflict: re-read
+  the rule at the top.
 - **Issue closed as `not_planned`** — the coding agent examined the work and
   concluded no code change is possible, usually because the spec forbids the only
   remedy. The cycle ends cleanly (`cycleNoWork`, ADR-0034), the run settles

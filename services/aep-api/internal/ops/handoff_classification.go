@@ -47,13 +47,6 @@ var settledStatuses = map[string]bool{
 // closed in minutes. The remediation stage is off by default, so this is the
 // ordinary case on a fresh install, not an edge one.
 //
-// It therefore DIFFERS DELIBERATELY from createreport's splitActions, which
-// drops a status it does not recognise because escalating on an action nobody
-// classified would file work off a status the remediation agent never asserted.
-// That rule runs AFTER the handoff, as a backstop, where the bias belongs the
-// other way. The two must not be collapsed into one — see
-// TestClassifyActionsDisagreesWithSplitActionsOnAbsentStatus.
-//
 // Statuses arrive as pointers because the contract makes the items nullable: a
 // nil entry is an action the remediation agent never reached, and it lands in
 // the pending arm exactly as an omitted status should. An empty list is the one
@@ -111,8 +104,7 @@ const configDedupeSuffix = "/config"
 //
 // Without it a config-level issue — filed, never adopted, and therefore left
 // OPEN because nobody works it — absorbs every later incident under the same
-// key. The create call answers deduped, files nothing and dispatches nothing,
-// and the report then carries an issue number, so escalation returns early too.
+// key. The create call answers deduped, filing nothing and dispatching nothing.
 // A genuine code defect arriving later on that signature would never reach a
 // coding agent. Two issues for one signature is the correct outcome there:
 // configuration handling a symptom and code owning a defect are two problems.
