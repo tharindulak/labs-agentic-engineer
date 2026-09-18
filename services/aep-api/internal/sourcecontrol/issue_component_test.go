@@ -96,6 +96,50 @@ func TestIssueComponent_CreatePreservesSREHandoff(t *testing.T) {
 	}
 }
 
+func TestIssueComponent_ListAllowsOnlyKnownAttentionReasons(t *testing.T) {
+	t.Parallel()
+	svc := &fakeIssueService{issues: []sourcecontrol.IssueInfo{
+		{
+			Number:          1,
+			Title:           "verified fix needs review",
+			Body:            "body",
+			URL:             "u1",
+			State:           "open",
+			StateReason:     "reopened",
+			Labels:          []string{"sre"},
+			AttentionReason: "unverified_fix",
+		},
+		{
+			Number:          2,
+			Title:           "unknown attention",
+			Body:            "body",
+			URL:             "u2",
+			State:           "open",
+			Labels:          []string{"sre"},
+			AttentionReason: "unexpected",
+		},
+	}}
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, svc)}})
+
+	resp := h.AsOrg("acme").Get("/api/v1/projects/web/issues")
+	if resp.Code != 200 {
+		t.Fatalf("list: want 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(resp.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2: %s", len(items), resp.Body.String())
+	}
+	if string(items[0]["StateReason"]) != `"reopened"` || string(items[0]["attentionReason"]) != `"unverified_fix"` {
+		t.Fatalf("known attention fields = %s, want StateReason and unverified_fix", resp.Body.String())
+	}
+	if _, ok := items[1]["attentionReason"]; ok {
+		t.Fatalf("unknown attentionReason must be omitted: %s", resp.Body.String())
+	}
+}
+
 func (f *fakeIssueService) ListIssues(_ context.Context, org, _ string, _ []string) ([]sourcecontrol.IssueInfo, error) {
 	f.gotOrg = org
 	return f.issues, nil

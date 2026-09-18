@@ -98,10 +98,21 @@ func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestO
 			State:           iss.State,
 			StateReason:     iss.StateReason,
 			Labels:          iss.Labels,
-			AttentionReason: gen.IssueInfoAttentionReason(iss.AttentionReason),
+			AttentionReason: issueAttentionReason(iss.AttentionReason),
 		})
 	}
 	return gen.ListIssues200JSONResponse(out), nil
+}
+
+// issueAttentionReason prevents a domain value outside the public contract's
+// closed enum from reaching the console wire. The empty value omits the field.
+func issueAttentionReason(value string) gen.IssueInfoAttentionReason {
+	switch value {
+	case string(gen.UnverifiedFix), string(gen.NoChangeVerdict), string(gen.Escalated):
+		return gen.IssueInfoAttentionReason(value)
+	default:
+		return ""
+	}
 }
 
 // splitLabels parses the comma-separated `labels` query param, dropping blanks.

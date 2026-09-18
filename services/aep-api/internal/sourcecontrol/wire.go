@@ -59,8 +59,8 @@ type CreateOrgRepoRequest struct {
 // callers that may fire concurrently for one incident (e.g. the OpenChoreo
 // SRE/RCA handoff, one run per alert rule) — they pass a stable key like
 // `sre-rca/<component>` so only the first run files an issue.
-// This struct is marshalled straight onto the wire by the host adapter, so
-// every field but DedupeKey is a GitHub field.
+// This struct is marshalled straight onto the wire by the host adapter. Every
+// field except DedupeKey, ComponentName, and ActionStatuses is a GitHub field.
 type CreateIssueRequest struct {
 	Title  string   `json:"title"`
 	Body   string   `json:"body"`
