@@ -289,3 +289,42 @@ func TestSREConcurrentDedupDispatchesOnce(t *testing.T) {
 		t.Fatalf("creates=%d dispatches=%v", gh.createCount, adopter.numbers)
 	}
 }
+
+func TestSREIdentityCannotBeMintedThroughLegacyCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  CreateIssueRequest
+	}{
+		{"code label", CreateIssueRequest{Title: "counterfeit", Labels: []string{"dedupe:sre-code-0123456789abcdef"}}},
+		{"config label", CreateIssueRequest{Title: "counterfeit", Labels: []string{"dedupe:sre-config-0123456789abcdef"}}},
+		{"normalized label", CreateIssueRequest{Title: "counterfeit", Labels: []string{" DEDUPE:SRE-CODE-0123456789ABCDEF "}}},
+		{"code key", CreateIssueRequest{Title: "counterfeit", DedupeKey: "sre-code-0123456789abcdef"}},
+		{"config key", CreateIssueRequest{Title: "counterfeit", DedupeKey: "sre-config-0123456789abcdef"}},
+		{"normalized key", CreateIssueRequest{Title: "counterfeit", DedupeKey: " SRE CODE 0123456789ABCDEF "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := &fakeGitHub{}
+			_, err := newDedupService(gh).CreateIssue(context.Background(), "org", "proj", tc.req)
+			if !errors.Is(err, ErrIncidentContextRequired) || gh.createCount != 0 {
+				t.Fatalf("legacy caller minted reserved identity: err=%v creates=%d", err, gh.createCount)
+			}
+		})
+	}
+}
+
+func TestSREIdentityReservationPreservesOtherLegacyDedup(t *testing.T) {
+	gh := &fakeGitHub{}
+	svc := newDedupService(gh)
+	req := CreateIssueRequest{Title: "ordinary issue", Labels: []string{"dedupe:custom"}, DedupeKey: "sre-rca/checkout"}
+	first, err := svc.CreateIssue(context.Background(), "org", "proj", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.CreateIssue(context.Background(), "org", "proj", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Deduped || !second.Deduped || first.Number != second.Number || gh.createCount != 1 {
+		t.Fatalf("legacy dedupe changed: first=%+v second=%+v creates=%d", first, second, gh.createCount)
+	}
+}

@@ -202,8 +202,11 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 	if req.ComponentName != "" || req.ActionStatuses != nil {
 		return nil, ErrIncidentContextRequired
 	}
+	if reservedIncidentLabel(dedupeLabelFor(req.DedupeKey)) {
+		return nil, ErrIncidentContextRequired
+	}
 	for _, label := range req.Labels {
-		if strings.EqualFold(strings.TrimSpace(label), "sre-agent") {
+		if strings.EqualFold(strings.TrimSpace(label), "sre-agent") || reservedIncidentLabel(label) {
 			return nil, ErrIncidentContextRequired
 		}
 	}

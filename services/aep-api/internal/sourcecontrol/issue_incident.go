@@ -28,6 +28,13 @@ import (
 
 type incidentContextKey struct{}
 
+// reservedIncidentLabel fences the server-owned identity namespace from both
+// explicit labels and labels derived by the legacy dedupe-key path.
+func reservedIncidentLabel(label string) bool {
+	label = strings.ToLower(strings.TrimSpace(label))
+	return strings.HasPrefix(label, "dedupe:sre-code-") || strings.HasPrefix(label, "dedupe:sre-config-")
+}
+
 // WithIncidentContext binds an incident identity established by the trusted
 // transport. Callers must not populate this from an issue body or dedupe key.
 // The identity is opaque; component normalization belongs to CreateIssue.
