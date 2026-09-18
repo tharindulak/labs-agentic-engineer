@@ -32,6 +32,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { useRecentAlerts } from "../features/alerts/api/queries";
 import { useAlertsUnread } from "../features/alerts/hooks/useAlertsUnread";
 import { classificationLabel } from "../features/alerts/classification";
+import { attentionDescription, attentionLabel } from "../features/issues/attention";
+import { useAttentionUnread } from "../features/issues/hooks/useAttentionUnread";
 
 // Top-nav notification bell (#154) — global, read-only, client-tracked
 // unread state (no server read-state; see the issue's grilling decisions).
@@ -39,14 +41,17 @@ import { classificationLabel } from "../features/alerts/classification";
 export function NotificationButton() {
   const { actions } = useAppShell();
   const { data: reports = [] } = useRecentAlerts();
-  const { unreadCount, markAllSeen } = useAlertsUnread(reports);
+  const alertsUnread = useAlertsUnread(reports);
+  const attentionUnread = useAttentionUnread(reports);
+  const unreadCount = alertsUnread.unreadCount + attentionUnread.unreadCount;
 
   return (
     <Tooltip title="Alerts">
       <IconButton
         onClick={() => {
           actions.toggleNotificationPanel();
-          markAllSeen();
+          alertsUnread.markAllSeen();
+          attentionUnread.markAllSeen();
         }}
         size="small"
         sx={{ color: "text.secondary" }}
@@ -66,11 +71,16 @@ export function AlertsNotificationPanel() {
   const navigate = useNavigate();
   const { actions } = useAppShell();
   const { data: reports = [], isPending, isError, error, refetch } = useRecentAlerts();
+  const attention = useAttentionUnread(reports);
 
   const openAlert = (alertId: string) => {
     // Close the overlay so it doesn't linger over the destination page.
     actions.toggleNotificationPanel();
     void navigate({ to: "/alerts/$alertId", params: { alertId } });
+  };
+  const openIssues = (projectName: string) => {
+    actions.toggleNotificationPanel();
+    void navigate({ to: "/projects/$projectName/issues", params: { projectName } });
   };
 
   return (
@@ -97,10 +107,28 @@ export function AlertsNotificationPanel() {
             Retry
           </Button>
         </Box>
-      ) : reports.length === 0 ? (
+      ) : reports.length === 0 && attention.items.length === 0 ? (
         <NotificationPanel.EmptyState />
       ) : (
         <NotificationPanel.List>
+          {attention.items.map((item) => (
+            <NotificationPanel.Item
+              key={item.id}
+              id={item.id}
+              type={item.reason === "escalated" ? "error" : "warning"}
+              read
+            >
+              <NotificationPanel.ItemTitle>
+                {attentionLabel(item.reason)}: #{item.issueNumber} {item.title}
+              </NotificationPanel.ItemTitle>
+              <NotificationPanel.ItemMessage>
+                {item.projectName} · {attentionDescription(item.reason)}
+              </NotificationPanel.ItemMessage>
+              <NotificationPanel.ItemAction onClick={() => openIssues(item.projectName)}>
+                Review
+              </NotificationPanel.ItemAction>
+            </NotificationPanel.Item>
+          ))}
           {reports.map((report) => (
             <NotificationPanel.Item key={report.id} id={report.id!} type="info" read>
               <NotificationPanel.ItemTitle>{report.title}</NotificationPanel.ItemTitle>
