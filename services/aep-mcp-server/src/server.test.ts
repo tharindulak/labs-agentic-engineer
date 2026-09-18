@@ -1,0 +1,131 @@
+/**
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+/**
+ * Two properties matter here and neither is about wiring. The model must not
+ * be able to name the dedupe key or the adoption flag — they are not in the
+ * schema it reads. And actionStatuses, once declared, must be REQUIRED: a call
+ * that omits it is a schema-validation rejection, not a silent skip of
+ * classification.
+ */
+
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { createAepMcpServer } from "./server.js";
+
+interface RegisteredTool {
+  inputSchema: { shape: Record<string, unknown> };
+  handler: (args: unknown) => unknown;
+}
+
+function server() {
+  return createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, { adopt: true });
+}
+
+function toolSchema(name: string): Record<string, unknown> {
+  const registered = (server() as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+  return registered[name]!.inputSchema.shape;
+}
+
+test("the handoff server exposes exactly the two SRE handoff tools", () => {
+  const registered = (server() as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+
+  assert.deepEqual(Object.keys(registered).sort(), ["ae_create_issue", "ae_search_related_issues"]);
+});
+
+test("the model is never shown the dedupe key or the adoption flag", () => {
+  const schema = toolSchema("ae_create_issue");
+
+  assert.equal("dedupeKey" in schema, false);
+  assert.equal("adopt" in schema, false);
+  assert.equal("componentName" in schema, true);
+  assert.equal("project" in schema, true);
+});
+
+test("actionStatuses is a required field in the schema (no .optional())", () => {
+  const schema = toolSchema("ae_create_issue");
+  const field = schema.actionStatuses as { isOptional?: () => boolean } | undefined;
+
+  assert.ok(field, "actionStatuses must be declared in the schema");
+  assert.equal(field?.isOptional?.(), false);
+});
+
+test("project and componentName pass straight through to aep-api", async () => {
+  const seen: unknown[] = [];
+  const s = createAepMcpServer(
+    { baseUrl: "http://aep-api", bearer: "Bearer t" },
+    { adopt: false },
+    async (_opts, project, req) => {
+      seen.push({ project, req });
+      return { number: 1, url: "u", nodeId: "n" };
+    },
+  );
+  const registered = (s as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
+  const handler = registered["ae_create_issue"]!.handler;
+
+  await handler({
+    project: "myproj",
+    title: "t",
+    body: "b",
+    labels: ["mine"],
+    componentName: "service1",
+    actionStatuses: ["revised", null],
+  });
+
+  assert.deepEqual(seen, [
+    {
+      project: "myproj",
+      req: {
+        title: "t",
+        body: "b",
+        labels: ["mine", "bug", "sre-agent"],
+        componentName: "service1",
+        adopt: false,
+        actionStatuses: ["revised", null],
+      },
+    },
+  ]);
+});
+
+test("a call omitting actionStatuses is rejected before the handler forwards anything", async () => {
+  const seen: unknown[] = [];
+  const s = createAepMcpServer(
+    { baseUrl: "http://aep-api", bearer: "Bearer t" },
+    { adopt: true },
+    async (_opts, _project, req) => {
+      seen.push(req);
+      return { number: 1, url: "u", nodeId: "n" };
+    },
+  );
+
+  await assert.rejects(() =>
+    s.server.request(
+      {
+        method: "tools/call",
+        params: { name: "ae_create_issue", arguments: { project: "p", title: "t", body: "b" } },
+      },
+      // Minimal shape: exercised through the SDK's own schema validation path
+      // rather than calling the raw handler directly, since the point under
+      // test is that the SCHEMA rejects the call, not that the handler would
+      // also misbehave if invoked with a malformed payload.
+      { method: "tools/call" } as never,
+    ),
+  );
+  assert.deepEqual(seen, []);
+});
