@@ -481,35 +481,6 @@ for under an `## Error` heading (the ~40 lines, fenced) and `## What was tried`.
 **Leave every issue you did not finish open**, and make its last status line the
 same diagnostic: what you tried and why it stopped.
 
-### When no code change can resolve an issue
-
-Sometimes the answer is that the code is not where the problem is — most often
-because the behaviour being reported is what `specs/` REQUIRES. A demo that is
-specified to time out will keep timing out; a required error log will keep being
-logged. Changing that would break the acceptance criteria the version is
-validated against.
-
-When that is genuinely the case, **close the issue as not planned**:
-
-```bash
-gh issue close <number> --reason "not planned" --comment "<why>"
-```
-
-Your comment is the whole record, so make it answer the next reader: which
-acceptance criteria mandate the behaviour, what you checked in the code, and what
-would actually have to change (an alert rule, a spec) and by whom. Cite the AC
-ids.
-
-This **ends the cycle** — the platform sees the work resolved and settles the run
-instead of waiting for a pull request that is never coming — and it is
-**durable**: later alerts with the same signature will point at your decision
-instead of filing again. So do it only when you are sure. If you merely could not
-finish, leave the issue open instead (above); if the fix is real but you doubt
-it, open the pull request and declare `Confidence: low`.
-
-Never close an issue as not planned to avoid difficult work, and never close one
-you did not examine.
-
 ### Be idempotent
 
 You may be a restart of a run that already got part-way, so treat anything that
@@ -596,9 +567,7 @@ web search. The rest belongs to the run:
 - Open a pull request with no `Resolves #<issue-number>` line — the platform
   cannot link it and will not merge it. Or open more than one for this cycle.
 - Run `gh pr merge`, `gh pr close`, `gh repo create`, `gh repo delete`,
-  `gh repo fork`, or `gh repo edit`. (`gh issue close --reason "not planned"` on
-  an issue of YOUR OWN working set is the one close you may perform — see
-  **When no code change can resolve an issue**.)
+  `gh repo fork`, `gh repo edit`, or `gh issue close`.
 - Touch a ledger issue (no `aep`), a `provision` gate, or a `validation` issue.
 - Delete remote branches (`git push --delete`, `git push origin :branch`).
 - Modify branch protection, secrets, repository settings, collaborators, or
