@@ -2,9 +2,13 @@
 
 Content mounted into the OpenChoreo SRE agent's `EXTENSIONS_DIR`
 (`/etc/openchoreo/sre-agent` by default), per the generic extensions
-mechanism added in openchoreo#4743. See
-`docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md` for why this
-lives under `remediation/` rather than `rca/`.
+mechanism added in openchoreo#4743.
+
+This lives under `remediation/` rather than `rca/` because the remediation
+agent already receives the RCA report (root cause, evidence) as input and
+computes its own per-action `revised`/`suggested` classification. Filing the
+issue from remediation's own context means every input `ae_create_issue`
+needs is already in scope — no cross-agent data threading required.
 
 - `remediation/mcp.json` — points the remediation agent at `aep-mcp-server`
   over HTTPS, with a bearer token resolved from `AEP_MCP_TOKEN` at process

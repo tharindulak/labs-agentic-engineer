@@ -52,9 +52,10 @@ anything in AEP's wider tree — an ADR number, a doc path, a package README —
 pointer the agent cannot resolve and pays tokens to carry. Provenance for the skill's rules
 belongs here instead:
 
-- **`not_planned` is a first-class outcome** — [ADR-0034](../../../docs/decisions/ADR-0034-a-cycle-can-end-because-no-code-change-is-possible.md).
-  A cycle may end because no code change is possible; the skill states the rule
-  without citing it.
+- **The coding agent has no authority to close an issue as `not_planned`** —
+  [ADR-0038](../../../docs/decisions/ADR-0038-not-planned-is-no-longer-a-spec-check.md).
+  Filing is unconditional and is not a verdict on the work; the skill states the
+  rule without citing it.
 
 `specs/validation/validation-criteria.json` is the exception that is not one: the
 skill has the sub-agent write that path INTO the issue body, and the coding agent
