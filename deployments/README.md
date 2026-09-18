@@ -68,10 +68,13 @@ the stack runs the relay.
 ## What setup installs, and the one switch
 
 `scripts/setup.sh` has one profile: AEP, the platform IdP, the OpenChoreo
-observability plane, and Agent Manager (~22 pods) on the same cluster. There
-are no enable flags. The only environment knob is `PREBUILD_RUNNER=0`, which
-builds the runner image serially inside `setup-aep.sh` instead of in the
-background.
+observability plane, and Agent Manager (~22 pods) on the same cluster. Two
+environment knobs opt out of pieces of it: `PREBUILD_RUNNER=0`, which builds
+the runner image serially inside `setup-aep.sh` instead of in the background,
+and `SKIP_AGENT_MANAGER=1`, which skips the Agent Manager install for
+resource-constrained clusters (install it later with
+`setup-agent-manager.sh` + `setup-agent-manager-env.sh`, or tear it back down
+with `scripts/teardown-agent-manager.sh` if it's already installed).
 
 What keeps that profile affordable on an 8 GB VM: the last step of setup
 **parks** the observability plane's heavy workloads at zero replicas —

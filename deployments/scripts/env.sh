@@ -48,6 +48,12 @@ GATEWAY_IMAGE_VERSION="1.2.1"
 # cluster, from WSO2's published OCI charts, as part of the base profile. The
 # observability plane it reads from is installed too and then parked
 # (scripts/park-observability.sh). See design/agent-manager-convergence.md.
+# SKIP_AGENT_MANAGER=1 skips setup.sh's install of it (~22 pods) for
+# resource-constrained clusters; everything else in the base profile is
+# unaffected — verify-convergence.sh and teardown-agent-manager.sh already
+# tolerate it being absent. Install it later with setup-agent-manager.sh +
+# setup-agent-manager-env.sh.
+SKIP_AGENT_MANAGER="${SKIP_AGENT_MANAGER:-0}"
 AMP_VERSION="${AMP_VERSION:-1.0.0-rc2}"
 AMP_REGISTRY="${AMP_REGISTRY:-oci://ghcr.io/wso2}"
 # Agent Manager's API. Spelled once here because five scripts ask whether it
