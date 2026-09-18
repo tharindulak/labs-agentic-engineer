@@ -250,8 +250,8 @@ fi
 # 7c. Verify the cluster half of the handoff — the RCA agent deployment.
 #     Best-effort: a rebuilt cluster loses the locally-imported RCA image and
 #     the pod sits in ImagePullBackOff; re-running setup-observability.sh
-#     fixes it (it re-imports, auto-pulling tharindulak/openchoreo-sre-agent
-#     :handoff from Docker Hub if no local build exists).
+#     fixes it (it re-imports, auto-pulling
+#     tharindulak/sre-agent:v1.0.1-hotfix.1-anthropic if no local build exists).
 #
 #     The deployment was renamed ai-rca-agent -> sre-agent in observability-plane
 #     1.2.0. RCA_DEPLOYMENT comes from env.sh, which is the one place either
