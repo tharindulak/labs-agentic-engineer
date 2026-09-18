@@ -318,8 +318,10 @@ a repeat, a second issue for a genuinely different error.
 **Entry:** **[`sre-handoff-security.md`](./sre-handoff-security.md)** — read it whole;
 it is the deliverable for this lane
 
-- Confirm §4: is `AUTO_MERGE_CODING_PRS` false in every deployment that is not a
-  local demo? (**F13** — this is the lane's blocking question.)
+- `AUTO_MERGE_CODING_PRS` is gone (F13 resolved by removal — it was never
+  consumed). Confirm §4 instead: does branch protection require a review on the
+  default branch in every deployment that is not a local demo? (still the lane's
+  blocking question.)
 - Confirm §6: does anything mask telemetry before it reaches a GitHub issue body
   or `rca_agent_reports`? (**F11**)
 - Confirm §5: any mitigation for untrusted issue text reaching the agent? (**F8**)
@@ -555,17 +557,19 @@ the agent: `decideAutoMerge` → `Merger.MergePullRequest` squash-merges a
 qualifying PR the moment it opens, and `skills/aep/SKILL.md:282` states it plainly
 — *"The platform merges the PR; no human reviews it."*
 
-Worse than a bad default: **the gate is not wired at all.**
-`AUTO_MERGE_CODING_PRS` is parsed into `Config.AutoMergeCodingPRs` and never read
-anywhere else in the service — `OnPullRequest` consults no flag. Auto-merge is
-unconditional, so setting it `false` does nothing. `docker-compose.yml:124` sets
-it `"true"`, which merely looks like the cause and isn't.
+Worse than a bad default: **the gate was not wired at all.**
+`AUTO_MERGE_CODING_PRS` was parsed into `Config.AutoMergeCodingPRs` and never
+read anywhere else in the service — `OnPullRequest` consulted no flag. Auto-merge
+was unconditional, so setting it `false` did nothing, even though
+`docker-compose.yml` set it `"true"` and looked like the cause. **Resolved by
+deleting the dead flag** rather than wiring it — an operator can no longer be
+given false assurance by a config value that was never connected.
 
-So the chain on any stack is alert → RCA → issue → dispatch → PR →
-squash-merge → build → deploy, with no human in it and no configuration that can
-add one. An operator who sets the flag `false` and believes the gate is closed
-gets false assurance, which is the sharp edge here. Full analysis:
-[`sre-handoff-security.md` §4](./sre-handoff-security.md).
+So the chain on any stack is still alert → RCA → issue → dispatch → PR →
+squash-merge → build → deploy, with no human in it — removing the dead flag
+does not add one. The only real gate is branch protection requiring a review on
+the default branch; nothing in aep-api's own config can substitute for it. Full
+analysis: [`sre-handoff-security.md` §4](./sre-handoff-security.md).
 
 ---
 

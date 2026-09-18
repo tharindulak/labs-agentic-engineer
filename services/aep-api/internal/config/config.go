@@ -62,19 +62,10 @@ type Config struct {
 	// resource types (ResourceTypeCatalog.List → OC ListClusterResourceTypes).
 	// Defaults TRUE: platform resources are a core capability; deployments that
 	// offer no platform-resource catalog must opt out explicitly
-	// (PLATFORM_RESOURCES_ENABLED=false). Unlike PlaygroundTokenEnabled /
-	// AutoMergeCodingPRs (opt-in extras that default false), this is an
-	// opt-out. Read from PLATFORM_RESOURCES_ENABLED.
+	// (PLATFORM_RESOURCES_ENABLED=false). Unlike PlaygroundTokenEnabled (an
+	// opt-in extra that defaults false), this is an opt-out. Read from
+	// PLATFORM_RESOURCES_ENABLED.
 	PlatformResourcesEnabled bool
-
-	// AutoMergeCodingPRs gates auto-merge of coding-agent pull requests: when
-	// true, a coding-agent PR is squash-merged the moment it opens, removing the
-	// human review gate and letting the path-based build fan-out deploy the fix
-	// end-to-end without a human. Defaults FALSE (secure default): auto-merge
-	// deploys UNREVIEWED agent-authored code, which is not guaranteed correct, so
-	// a deployment must opt in explicitly (set it in that deployment's config,
-	// e.g. docker-compose). Read from AUTO_MERGE_CODING_PRS.
-	AutoMergeCodingPRs bool
 
 	// TenantGateMode controls the central per-route tenant gate (§6.1b).
 	// ENFORCE BY DEFAULT (zero-config): "enforce" 404s a path-vs-JWT org

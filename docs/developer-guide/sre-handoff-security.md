@@ -278,18 +278,21 @@ merges on the platform side, independently of the agent.** `decideAutoMerge`
 (`merge.go:70`) the moment a qualifying PR opens. `skills/aep/SKILL.md:282` says
 so in as many words: *"The platform merges the PR; no human reviews it."*
 
-**The gate does not exist.** `AUTO_MERGE_CODING_PRS` is parsed into
-`Config.AutoMergeCodingPRs` (`config_loader.go:58`) and **never read anywhere else
-in the service** — `grep -rn AutoMergeCodingPRs services/aep-api/` returns only its
-declaration, its loader line, and unrelated `decideAutoMerge` identifiers.
-`OnPullRequest` consults no flag. Auto-merge is therefore **unconditional**, and
-setting `AUTO_MERGE_CODING_PRS=false` changes nothing.
+**The gate did not exist, so it has been removed.** `AUTO_MERGE_CODING_PRS` used to
+be parsed into `Config.AutoMergeCodingPRs` and **never read anywhere else in the
+service** — `grep -rn AutoMergeCodingPRs services/aep-api/` returned only its
+declaration and its loader line. `OnPullRequest` consulted no flag; auto-merge was
+already **unconditional**, and setting `AUTO_MERGE_CODING_PRS=false` changed
+nothing. **F13 is resolved by deleting the dead config** rather than wiring it: the
+field, its env var, and the `docker-compose.yml` entry are gone, so `config.go` no
+longer implies a gate that was never connected. This does not add a gate —
+auto-merge behaviour is unchanged — it only removes the false assurance of one.
 
 | Flag | Declared default | Local stack | Actually consumed? |
 |---|---|---|---|
 | `AE_HANDOFF` (`src/config.py`) | `False` | `true` (`setup-observability.sh:127`) | yes — gates the handoff stage |
 | `AE_AUTO_DISPATCH` (`src/config.py`) | `True` | `true` | yes — gates the dispatch call |
-| `AUTO_MERGE_CODING_PRS` (`internal/config/config.go:77`) | `false`, commented "secure default" | `"true"` (`docker-compose.yml:124`) | **NO — dead config** |
+| `AUTO_MERGE_CODING_PRS` | — | — | **removed — was dead config, never consumed** |
 
 What actually decides a merge is `decideAutoMerge`: a **non-draft** PR whose
 `Resolves` list names at least one issue carrying `aep` or `aep:validation` in the
@@ -306,13 +309,9 @@ ERROR log → alert → RCA → issue → coding agent → PR
 ```
 
 **No human in that chain, and no supported way to put one there.** For a local demo
-that is the point. But because the flag is inert, an operator who reads `config.go`,
-sets `AUTO_MERGE_CODING_PRS=false` and concludes the gate is closed will be wrong —
-the next qualifying PR merges anyway. False assurance is worse than a known-open gate.
-
-Until the flag is wired (or deleted), the only things that actually stop an
-auto-merge sit **outside** this config: GitHub branch protection requiring a review
-on the default branch, or not enabling `AE_HANDOFF` / `AE_AUTO_DISPATCH` at all.
+that is the point. The only things that actually stop an auto-merge sit
+**outside** aep-api's own config: GitHub branch protection requiring a review on
+the default branch, or not enabling `AE_HANDOFF` / `AE_AUTO_DISPATCH` at all.
 
 ---
 
@@ -427,7 +426,7 @@ Gaps:
 
 | # | Item | Severity | Tracked as |
 |---|---|---|---|
-| 1 | Auto-merge is unconditional — `AUTO_MERGE_CODING_PRS` is dead config, so the documented gate cannot be closed from configuration at all | **High** — wire the flag, or gate on branch protection | F13 |
+| 1 | Auto-merge is unconditional; no config can close it — **resolved** by deleting the dead `AUTO_MERGE_CODING_PRS` flag rather than wiring it, so `config.go` no longer implies a gate that isn't there. The only real gate is branch protection. | **High**, resolved by removal | F13 |
 | 2 | Raw telemetry (possible PII/secrets) reaches GitHub issue bodies and `rca_agent_reports` unmasked; no retention policy | **High** | F11 |
 | 3 | Untrusted issue text reaches an agent with write authority; no delimiting or truncation | **Medium-High** | F8 |
 | 4 | "No merge / no force-push / no settings changes" is a prompt-level rule, not a boundary | **Medium** — accept, but document accurately | §3 |
@@ -444,7 +443,7 @@ that is not a local demo; the rest can be follow-ups.
 
 ## 10. Before enabling the handoff — checklist
 
-- [ ] Auto-merge is actually blocked — by **branch protection requiring a review**, not by `AUTO_MERGE_CODING_PRS`, which is inert. Verify by opening a throwaway qualifying PR and confirming it does not merge itself.
+- [ ] Auto-merge is actually blocked — by **branch protection requiring a review**. There is no config flag that does this (`AUTO_MERGE_CODING_PRS` was dead and has been removed, F13). Verify by opening a throwaway qualifying PR and confirming it does not merge itself.
 - [ ] A named human owns review of coding-agent PRs, and branch protection requires it.
 - [ ] The target repo's telemetry exposure is understood and accepted, or masking is in place (§6).
 - [ ] `AE_HANDOFF` / `AE_AUTO_DISPATCH` are set deliberately per environment, not inherited from the local script's defaults.
