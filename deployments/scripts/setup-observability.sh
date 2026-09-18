@@ -81,7 +81,7 @@
 #                   (default: true; false = issue-only, human dispatches)
 #   AE_PUBLISH_REPORTS publish each completed RCA report to aep-api so it
 #                   shows in the console Alerts bell/list (default: true;
-#                   handoff-v14+). Needs AEP_API_URL.
+#                   supported by the hotfix SRE image. Needs AEP_API_URL.
 #   AEP_API_URL     aep-api REST base for report publishing
 #                   (default: http://host.k3d.internal:9090). NOT AE_API_URL
 #                   (that is the MCP server on :3401).
@@ -120,7 +120,7 @@ AE_AUTO_DISPATCH="${AE_AUTO_DISPATCH:-true}"
 AE_API_URL="${AE_API_URL:-http://host.k3d.internal:3401}"
 AEP_MCP_URL="${AEP_MCP_URL:-${AE_API_URL}/mcp}"
 AEP_MCP_TOKEN="${AEP_MCP_TOKEN:-local-aep-mcp-token}"
-# Report publishing (handoff-v14+): POST each completed RCA report to aep-api
+# Report publishing: POST each completed RCA report to aep-api
 # so it surfaces in the console Alerts bell/list. AEP_API_URL is aep-api's REST
 # base — DISTINCT from AE_API_URL (the MCP server on :3401); reports go to the
 # HTTP API on :9090.

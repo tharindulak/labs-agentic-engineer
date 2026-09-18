@@ -95,12 +95,12 @@ func init() {
 	f.StringVar(&sreOpenBaoAddr, "openbao-addr", "http://openbao.openbao.svc.cluster.local:8200", "In-cluster OpenBao address for the obs-namespace SecretStore")
 	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.0.1-hotfix.1", "openchoreo-observability-plane chart version")
 	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version")
-	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/openchoreo-sre-agent", "RCA/SRE agent image repository")
-	f.StringVar(&sreRcaImageTag, "rca-image-tag", "handoff-v14", "RCA/SRE agent image tag")
+	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/sre-agent", "RCA/SRE agent image repository")
+	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.0.1-hotfix.1-anthropic", "RCA/SRE agent image tag")
 	f.StringVar(&sreRcaPullPolicy, "rca-image-pull-policy", "IfNotPresent", "RCA/SRE agent image pull policy")
 	f.StringVar(&sreRcaModel, "rca-model", "anthropic:claude-sonnet-4-6", "RCA/SRE agent LLM model")
 	f.StringVar(&sreAdapterImage, "adapter-image", "docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive", "logs-adapter image (repo:tag)")
-	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (issue create + dispatch)")
+	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts the SRE remediation extension)")
 	f.BoolVar(&sreAEAutoDispatch, "ae-auto-dispatch", true, "Auto-dispatch the coding agent after issue creation (false = issue-only)")
 	f.BoolVar(&sreAEPublishReport, "ae-publish-reports", true, "Publish RCA reports to aep-api (console Alerts)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
@@ -190,7 +190,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("apply secrets: %w (did you run `aectl init`?)", err)
 	}
 	// ESO must materialise the OpenSearch creds before the charts start.
-	for _, s := range []string{"opensearch-admin-credentials", "rca-agent-secret", "observer-secret"} {
+	for _, s := range []string{"opensearch-admin-credentials", "rca-agent-secret", "rca-agent-anthropic-secret", "observer-secret"} {
 		if err := waitForSecret(ctx, client, sreObsNamespace, s, 2*time.Minute); err != nil {
 			return fmt.Errorf("%w\nESO did not sync %q — check the SecretStore/ExternalSecrets and that `aectl init` seeded OpenBao", err, s)
 		}
@@ -223,6 +223,17 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	_ = rolloutRestart(ctx, client, sreObsNamespace, "observer")
 	if sreAEHandoff {
+		ui.Step("Wiring the remediation agent's SRE-agent extensions (mcp.json/CONTEXT.md/skill)")
+		assets, err := loadSreExtensionAssets()
+		if err != nil {
+			return err
+		}
+		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets); err != nil {
+			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
+		}
+		if err := mountSREAgentRuntime(ctx, client, sreObsNamespace, "ai-rca-agent"); err != nil {
+			return fmt.Errorf("mount SRE agent runtime: %w", err)
+		}
 		if err := patchConfigMap(ctx, client, sreObsNamespace, "rca-agent-config", map[string]string{
 			"AE_HANDOFF":         "true",
 			"AE_AUTO_DISPATCH":   fmt.Sprintf("%t", sreAEAutoDispatch),
@@ -233,7 +244,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		_ = rolloutRestart(ctx, client, sreObsNamespace, "ai-rca-agent")
-		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s)", sreAEAutoDispatch, p.AEApiURL))
+		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s/mcp, assets=%s)", sreAEAutoDispatch, p.AEApiURL, assets.RootHint))
 	} else {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}
