@@ -292,6 +292,12 @@ func (e *Events) OnPullRequestClosed(ctx context.Context, _, _ string, payload [
 		return err
 	}
 	mergeSHA := p.PullRequest.MergeCommitSHA
+	if unverifiedMerge(p.PullRequest.Body) {
+		if err := e.keepUnverifiedIssuesOpen(ctx, owner.orgID, owner.projectID, p.PullRequest.Number,
+			parseResolvesRefs(p.PullRequest.Body)); err != nil {
+			return err
+		}
+	}
 	// Only the agent's own pull request closes the cycle. A human's merge moves
 	// main (so it still rebuilds), but it is not the cycle's outcome.
 	if owner.agentBranch {
@@ -399,7 +405,7 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	// exactly the event that has to wake it. Returning here would leave a run
 	// asleep on work a human had just handed it.
 	if action == "labeled" && strings.EqualFold(p.Label.Name, delivery.LabelAgentWork) {
-		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels()}
+		target := AdoptTarget{Number: p.Issue.Number, Labels: p.issueLabels(), State: p.Issue.State}
 		if ms, ok := p.milestone(); ok {
 			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
 		}
@@ -420,6 +426,24 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	run, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, ms.Number)
 	if err != nil || run == nil {
 		return err
+	}
+	if run.State == delivery.RunStateRunning && delivery.HasLabel(p.issueLabels(), "sre-agent") {
+		cycle := e.openCycle(ctx, run)
+		if cycle == nil || cycle.PRNumber != 0 || cycle.Kind == delivery.CycleKindValidation {
+			return nil
+		}
+		counts, err := e.p.Issues.MilestoneIssueCounts(ctx, orgID, projectID, ms.Number)
+		if err != nil || counts == nil {
+			return err
+		}
+		work := counts.OpenDevWork()
+		if run.Kind == delivery.RunKindTask {
+			work = counts.OpenTaskWork()
+		}
+		if work == 0 {
+			e.signal(ctx, run, delivery.SigRunNoWork, delivery.RunSignal{})
+		}
+		return nil
 	}
 	if run.State != delivery.RunStateWaiting {
 		// A running run re-reads the milestone at its own cycle boundary; waking
