@@ -9,7 +9,7 @@ description: Use when a completed RCA report needs a source-code change — how 
 and this incident needs a change to the REPOSITORY.
 
 Your output is one GitHub issue. Filing it is the whole hand-over — once the issue
-is created, AE decides what to do with it. There is no second call for you to make.
+is created, AE decides what to do with it.
 
 Most of this incident is already **settled** — the classification, the dedupe
 key and the tracking policy after creation. One thing is **yours**: the words of
@@ -44,17 +44,16 @@ run, every action's value here is `"suggested"` or `null`, never `"revised"`.
 A report with zero recommended actions still requires the argument — pass an
 empty array.
 
-The classification is not yours to compute or predict. Even a report
-remediation fully resolved through configuration still reaches you and still
-gets filed — AE answers that one `config_level`, a ledger entry it does not
-dispatch. So is the worth of the fix, which the coding agent settles with the
-repository and the specification in front of it — closing an issue as not
-planned with its reasoning is a first-class outcome.
+The classification is not yours to compute or predict, and neither is the
+fix's worth. Even a report remediation fully resolved through configuration
+still reaches you and still gets filed — AE answers that one `config_level`, a
+ledger entry it does not dispatch. The coding agent judges worth against the
+repository and the specification in front of it; closing an issue as not
+planned, with its reasoning, is a first-class outcome.
 
-**Any code this report suspects is handed over.** A low-confidence root cause
-carrying a code-level action is still a code-level action, never a reason to
-withhold it. Every report that reaches this stage produces an issue — what it
-withholds is never yours to decide.
+**A low-confidence root cause is still handed over.** A code-level action stays
+code-level even when the report is unsure — confidence is never a reason to
+withhold it.
 
 ## THE FLOW
 
@@ -66,9 +65,8 @@ withholds is never yours to decide.
    is rejected without it, so building that array is part of this step, not
    an afterthought.
    *Done when* an `ae_create_issue` call has returned and the body it carried
-   used the heading skeleton, with every heading that applies filled from the
-   report. This is your last step: filing the issue is the whole hand-over,
-   and nothing after it is reported anywhere.
+   used the skeleton in WHAT MAKES A GOOD ISSUE. Nothing after it is reported
+   anywhere — see CONSTRAINTS.
 
 ## RELATED-ISSUE DISCOVERY
 
@@ -83,28 +81,22 @@ affected component — not merely the same repo or a similar word. When unsure,
 leave it out: a wrong link confuses the human reviewer more than a missing one.
 Closed matches and partial overlaps become links.
 
-**Related issues are a ledger, never a spec.** The platform's own implementation
-issues ("Implement <component>") record what was BUILT, and search marks them
-`PlatformRecord: true` with a `ReadAs` note. Treat that flag as binding, and
-read such an issue for the thing it is your only source of: which behaviour
-must be PRESERVED, for `What must not change`.
-
-A CLOSED match still matters: it signals a recurrence, so the earlier fix did not
-hold — say so when you reference it.
+**Related issues are a ledger, not an instruction.** A CLOSED match still matters
+on its own terms: it signals a recurrence, so the earlier fix did not hold — say
+so when you reference it.
 
 ## WHAT MAKES A GOOD ISSUE
 
-**Title** — the component, the site and the problem: the handler or function plus
-what goes wrong there ("Add structured error logging for upstream failures in
-`payment-service`", "Handle the unmapped response case in `report-api`'s summary
-handler").
+**Title** — the component, the site and what is observed there: the handler or
+function plus what happens when it runs ("`payment-service` does not log
+upstream failures", "`report-api`'s summary handler panics on an unmapped
+response"). Name the symptom, never the fix.
 
 **Body** — this skeleton, in this order, dropping only the headings that do not
 apply:
 
       ## RCA summary
       ## Root cause
-      ## What must not change
       ## Evidence
       ## Related issues
 
@@ -113,11 +105,6 @@ constraint every time. Everything under the headings comes from the RCA report.
 
 ### What fills each heading
 
-- **What must not change**, whenever the root cause involves deliberate
-  behaviour: one line naming that behaviour, then the change that leaves it
-  reachable and unaltered — make a value configurable rather than change it, add
-  the handling on the side that lacked it rather than remove the state it failed
-  on.
 - **Evidence**: carry across what the report already collected — trace links or
   IDs, and the log lines it quoted.
 - **Related issues**: one line each as `- #N — <one-line reason>` (`- #12 — same
@@ -132,10 +119,9 @@ constraint every time. Everything under the headings comes from the RCA report.
   coding agent designs the implementation.
 - Mention each `revised` action, so the coding agent does not redo in code what
   configuration already handled: "the resource limit was already raised in
-  configuration; the unbounded input that exhausts it still needs a fix". Say
-  only THAT it was handled — never the ReleaseBinding change itself; see "What
-  you see and must not carry forward" below for what that excludes and why —
-  because the coding agent can only edit the repository, so ask for code.
+  configuration; the unbounded input that exhausts it still needs a fix" — see
+  "What you see and must not carry forward" for what to leave out of that
+  mention.
 
 ### What you see and must not carry forward
 
@@ -180,9 +166,8 @@ covers this incident is settled by the platform, not by you writing on it.
 
 ## CONSTRAINTS
 
-- **One RCA report, one issue.** One `ae_create_issue` call is the whole write
-  you make. A retry after a partial failure risks a duplicate that only the
-  dedupe key can catch.
-- **Creating that issue is your only write.** Every other issue in this run is
-  one you read; the `#N` mentions in your body are the only mark you leave on
-  them.
+- **One write, ever.** `ae_create_issue` is the only call you make in this run —
+  every other issue you touch is one you read, and the `#N` mentions in your
+  body are the only mark you leave on them. A retry after a partial failure
+  risks a duplicate that only the dedupe key can catch, so there is no second
+  attempt to fall back on.
