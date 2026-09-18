@@ -51,6 +51,9 @@ const (
 	// for WHY a closed issue is closed. Only the first can recur.
 	stateReasonCompleted  = "completed"
 	stateReasonNotPlanned = "not_planned"
+	// stateReasonReopened is GitHub's state_reason for an issue an actor
+	// reopened rather than created fresh — the signal IsUnverifiedFix reads.
+	stateReasonReopened = "reopened"
 
 	// recurrenceEscalation is the attempt from which a recurrence is reported
 	// loudly. Attempt 1 is the original filing, so this fires once three
@@ -110,28 +113,28 @@ func isRecurrenceOf(iss IssueInfo) bool {
 // keyword, and the platform reopened it and took `aep` off — so it is open, on
 // the version's record, and worked by nobody.
 //
-// The signature is three labels, and the ADOPTION one is what makes it precise.
 // "Open and not agent work" on its own describes almost every ordinary issue in
 // a repository, and reading that as a recurrence broke dedupe outright: two
 // concurrent alert handlers stopped folding onto one issue, which is the exact
-// duplicate-filing this key exists to prevent. `aep:codingagent` records the ACT
-// of adoption and is never removed, so an issue carrying it WITHOUT `aep` is one
-// the platform adopted and then deliberately stood down — which only this path
-// does.
+// duplicate-filing this key exists to prevent. `state_reason: reopened` is what
+// makes it precise — it is GitHub's own record that an actor reopened this
+// exact issue rather than it merely never having closed, which is true of
+// almost every ordinary open issue and would false-positive on all of them.
+// The stand-down path is the only one that closes an SRE-filed issue and
+// immediately reopens it, so an SRE-agent issue carrying that reason with `aep`
+// currently absent is one the platform adopted, then deliberately stood down.
 func IsUnverifiedFix(iss IssueInfo) bool {
 	return hasLabelFold(iss.Labels, LabelSREAgent) &&
-		hasLabelFold(iss.Labels, LabelAdopt) &&
-		!hasLabelFold(iss.Labels, LabelAgentWork)
+		!hasLabelFold(iss.Labels, LabelAgentWork) &&
+		strings.EqualFold(iss.State, "open") &&
+		strings.EqualFold(iss.StateReason, stateReasonReopened)
 }
 
-// LabelAgentWork and LabelAdopt mirror delivery's label vocabulary. They are
-// duplicated rather than imported because delivery already depends on this
-// package; this file needs only to recognise them, never to decide what the
-// milestone model does with them.
-const (
-	LabelAgentWork = "aep"
-	LabelAdopt     = "aep:codingagent"
-)
+// LabelAgentWork mirrors delivery's label vocabulary. It is duplicated rather
+// than imported because delivery already depends on this package; this file
+// needs only to recognise it, never to decide what the milestone model does
+// with it.
+const LabelAgentWork = "aep"
 
 func hasLabelFold(labels []string, want string) bool {
 	for _, l := range labels {

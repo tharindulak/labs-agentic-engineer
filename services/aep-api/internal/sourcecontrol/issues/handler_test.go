@@ -234,7 +234,7 @@ func TestListIssuesCarriesStateReasonAndAttentionReason(t *testing.T) {
 			URL:         "https://github.com/acme/demo/issues/12",
 			State:       "open",
 			StateReason: "",
-			Labels:      []string{sourcecontrol.LabelSREAgent, sourcecontrol.LabelAdopt, sourcecontrol.LabelAgentWork},
+			Labels:      []string{sourcecontrol.LabelSREAgent, sourcecontrol.LabelAgentWork},
 		},
 		{
 			Number:      7,

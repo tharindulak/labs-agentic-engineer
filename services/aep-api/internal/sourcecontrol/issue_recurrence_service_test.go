@@ -335,9 +335,10 @@ func (f *recurGitHub) seedUnverified(key, body string) int {
 	f.issues = append(f.issues, IssueInfo{
 		Number: f.nextNum, Title: "the original incident", Body: body,
 		URL: "https://github.com/o/r/issues/40", State: "open",
-		// Adopted (`aep:codingagent` records that and is never removed), then
-		// stood down when its unverified fix merged (`aep` taken off).
-		Labels: []string{dedupeLabelFor(key), LabelSREAgent, LabelAdopt},
+		// Closed by the merge's closing keyword, then stood down and reopened
+		// with `aep` taken off — GitHub's own record of that is state_reason.
+		StateReason: stateReasonReopened,
+		Labels:      []string{dedupeLabelFor(key), LabelSREAgent},
 	})
 	return f.nextNum
 }
@@ -385,8 +386,8 @@ func TestCreateIssue_AnOpenNonAdoptedIncidentIssueStillDedupes(t *testing.T) {
 	gh.nextNum++
 	n := gh.nextNum
 	gh.issues = append(gh.issues, IssueInfo{
-		Number: n, State: "open",
-		Labels: []string{dedupeLabelFor(incidentKey), LabelSREAgent}, // no aep:codingagent
+		Number: n, State: "open", // never reopened — StateReason is empty
+		Labels: []string{dedupeLabelFor(incidentKey), LabelSREAgent},
 	})
 	gh.mu.Unlock()
 	svc := NewIssueService(fakeRepoRepo{}, gh, fakeResolver{})
@@ -403,20 +404,24 @@ func TestCreateIssue_AnOpenNonAdoptedIncidentIssueStillDedupes(t *testing.T) {
 
 func TestIsUnverifiedFix(t *testing.T) {
 	cases := []struct {
-		name   string
-		labels []string
-		want   bool
+		name        string
+		state       string
+		stateReason string
+		labels      []string
+		want        bool
 	}{
-		{"adopted then stood down", []string{LabelSREAgent, LabelAdopt}, true},
-		{"still agent work", []string{LabelSREAgent, LabelAdopt, LabelAgentWork}, false},
-		{"never adopted", []string{LabelSREAgent}, false},
-		{"not incident work", []string{LabelAdopt}, false},
-		{"nothing at all", nil, false},
+		{"adopted then stood down", "open", stateReasonReopened, []string{LabelSREAgent}, true},
+		{"still agent work", "open", stateReasonReopened, []string{LabelSREAgent, LabelAgentWork}, false},
+		{"never adopted, never reopened", "open", "", []string{LabelSREAgent}, false},
+		{"reopened but not incident work", "open", stateReasonReopened, nil, false},
+		{"reopened incident work that is closed again", "closed", stateReasonReopened, []string{LabelSREAgent}, false},
+		{"nothing at all", "open", "", nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := IsUnverifiedFix(IssueInfo{State: "open", Labels: c.labels}); got != c.want {
-				t.Fatalf("IsUnverifiedFix(%v) = %v, want %v", c.labels, got, c.want)
+			iss := IssueInfo{State: c.state, StateReason: c.stateReason, Labels: c.labels}
+			if got := IsUnverifiedFix(iss); got != c.want {
+				t.Fatalf("IsUnverifiedFix(%+v) = %v, want %v", iss, got, c.want)
 			}
 		})
 	}
@@ -438,7 +443,7 @@ func (f *recurGitHub) seedDecided(key, reason string) int {
 	f.issues = append(f.issues, IssueInfo{
 		Number: f.nextNum, Title: "the original incident", State: "closed",
 		StateReason: reason, URL: "https://github.com/o/r/issues/40",
-		Labels: []string{dedupeLabelFor(key), LabelSREAgent, LabelAdopt},
+		Labels: []string{dedupeLabelFor(key), LabelSREAgent},
 	})
 	return f.nextNum
 }

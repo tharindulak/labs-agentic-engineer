@@ -156,8 +156,7 @@ func TestAppendRecurrenceSectionOmitsEmptyEvidence(t *testing.T) {
 // them.
 func TestAttentionReasonFor(t *testing.T) {
 	sre := []string{LabelSREAgent}
-	sreAdopted := []string{LabelSREAgent, LabelAdopt}
-	sreWorking := []string{LabelSREAgent, LabelAdopt, LabelAgentWork}
+	sreWorking := []string{LabelSREAgent, LabelAgentWork}
 	cases := []struct {
 		name string
 		iss  IssueInfo
@@ -166,7 +165,11 @@ func TestAttentionReasonFor(t *testing.T) {
 		{"an ordinary open issue has no attention reason", IssueInfo{
 			State: "open", Labels: sreWorking, Body: "body"}, ""},
 		{"a merged fix without confidence is unverified", IssueInfo{
-			State: "open", Labels: sreAdopted, Body: "body"}, AttentionUnverifiedFix},
+			State: "open", StateReason: stateReasonReopened, Labels: sre, Body: "body"}, AttentionUnverifiedFix},
+		{"reopened but still armed is not unverified", IssueInfo{
+			State: "open", StateReason: stateReasonReopened, Labels: sreWorking, Body: "body"}, ""},
+		{"a reopened issue with no sre-agent label is not unverified", IssueInfo{
+			State: "open", StateReason: stateReasonReopened, Labels: nil, Body: "body"}, ""},
 		{"not_planned is a no-change verdict", IssueInfo{
 			State: "closed", StateReason: stateReasonNotPlanned, Labels: sre,
 			Body: "body"}, AttentionNoChangeVerdict},
@@ -186,7 +189,7 @@ func TestAttentionReasonFor(t *testing.T) {
 			Body: "b\n\n## Recurrence 2\n\nx\n\n## Recurrence 3\n\ny\n\n## Recurrence 4\n\nz\n",
 		}, AttentionNoChangeVerdict},
 		{"non-incident work never gets an attention reason", IssueInfo{
-			State: "open", Labels: []string{LabelAdopt}, Body: "body"}, ""},
+			State: "open", StateReason: stateReasonReopened, Labels: []string{LabelAgentWork}, Body: "body"}, ""},
 		// IsUnverifiedFix and the escalation count are only meaningful for an
 		// issue the platform is still actively working — isRecurrenceOf only
 		// ever calls IsUnverifiedFix from its already-open branch, and never
@@ -195,8 +198,8 @@ func TestAttentionReasonFor(t *testing.T) {
 		// stale label combination (should not occur in practice, since the
 		// success path never removes `aep`) or a high recurrence count from
 		// before it was finally fixed would be wrongly flagged after the fact.
-		{"an unverified-fix label pattern on a closed+completed issue is not flagged", IssueInfo{
-			State: "closed", StateReason: stateReasonCompleted, Labels: sreAdopted, Body: "body"}, ""},
+		{"an unverified-fix signal on a closed+completed issue is not flagged", IssueInfo{
+			State: "closed", StateReason: stateReasonCompleted, Labels: sre, Body: "body"}, ""},
 		{"an escalated recurrence count is not flagged once completed and closed", IssueInfo{
 			State: "closed", StateReason: stateReasonCompleted, Labels: sreWorking,
 			Body: "b\n\n## Recurrence 2\n\nx\n\n## Recurrence 3\n\ny\n\n## Recurrence 4\n\nz\n",
