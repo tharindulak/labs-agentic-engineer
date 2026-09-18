@@ -47,9 +47,11 @@ empty array.
 The classification is not yours to compute or predict, and neither is the
 fix's worth. Even a report remediation fully resolved through configuration
 still reaches you and still gets filed — AE answers that one `config_level`, a
-ledger entry it does not dispatch. The coding agent judges worth against the
-repository and the specification in front of it; closing an issue as not
-planned, with its reasoning, is a first-class outcome.
+ledger entry it does not dispatch. Filing is not a verdict on the work either:
+the coding agent examines every issue against the repository and the
+specification, and either implements a fix or leaves the issue open with a
+diagnostic — it has no authority to close an issue as not planned on its own
+judgment.
 
 **A low-confidence root cause is still handed over.** A code-level action stays
 code-level even when the report is unsure — confidence is never a reason to
