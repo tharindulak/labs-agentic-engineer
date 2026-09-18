@@ -95,6 +95,12 @@ re-run resets the charts' replica counts and parks again at its end.
 `teardown-agent-manager.sh` removes Agent Manager and leaves the park state as
 it finds it.
 
+`setup.sh` installs Agent Manager by default. For an AEP-only local stack, run:
+
+```bash
+ENABLE_AGENT_MANAGER=0 bash scripts/setup.sh
+```
+
 ## Compose architecture (host-side compose ↔ in-cluster OC)
 
 ```

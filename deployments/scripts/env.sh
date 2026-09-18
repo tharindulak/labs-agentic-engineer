@@ -50,6 +50,9 @@ GATEWAY_IMAGE_VERSION="1.2.1"
 # (scripts/park-observability.sh). See design/agent-manager-convergence.md.
 AMP_VERSION="${AMP_VERSION:-1.0.0-rc2}"
 AMP_REGISTRY="${AMP_REGISTRY:-oci://ghcr.io/wso2}"
+# Full setup installs Agent Manager by default for convergence testing. Set
+# ENABLE_AGENT_MANAGER=0 before running setup.sh for an AEP-only local stack.
+ENABLE_AGENT_MANAGER="${ENABLE_AGENT_MANAGER:-1}"
 # Agent Manager's API. Spelled once here because five scripts ask whether it
 # answers (utils.sh amp_api_present) and two of them also EXPORT it for Agent
 # Manager's own sourced helpers, which read it under this name.

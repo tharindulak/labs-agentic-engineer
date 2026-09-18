@@ -43,8 +43,12 @@ echo "  5. Temporal workflow engine (drives the devflow workflows; aep-api"
 echo "     runs the worker in-process)"
 echo "  6. AEP-specific config (build ClusterWorkflows, ComponentTypes,"
 echo "     Environment, AuthzRoleBindings, .env file)"
-echo "  7. Agent Management Platform, on this same cluster from WSO2's"
-echo "     published charts. Reversible: scripts/teardown-agent-manager.sh"
+if [ "${ENABLE_AGENT_MANAGER:-1}" = "1" ]; then
+    echo "  7. Agent Management Platform, on this same cluster from WSO2's"
+    echo "     published charts. Reversible: scripts/teardown-agent-manager.sh"
+else
+    echo "  7. Agent Management Platform skipped (ENABLE_AGENT_MANAGER=0)"
+fi
 echo "  8. Park the observability plane's heavy workloads — OpenSearch,"
 echo "     Prometheus, Alertmanager, the RCA agent, Fluent Bit, the collector"
 echo "     and the adapters go to zero replicas (installed, idle, ~2 GB of"
@@ -115,15 +119,22 @@ fi
 bash "$SCRIPT_DIR/setup-aep.sh"
 echo ""
 
-# Agent Manager is part of the base install, after the observability plane it
-# installs against. The second half — the default environment's own Thunder and
-# its API Platform gateway — is a separate script because it drives Agent
-# Manager's admin API over its public URL, and fails for reasons unrelated to
-# the chart installs.
-bash "$SCRIPT_DIR/setup-agent-manager.sh"
-echo ""
-bash "$SCRIPT_DIR/setup-agent-manager-env.sh"
-echo ""
+# Agent Manager is part of the default base install, after the observability
+# plane it installs against. Set ENABLE_AGENT_MANAGER=0 for an AEP-only stack
+# like the SRE integration setup.
+if [ "${ENABLE_AGENT_MANAGER:-1}" = "1" ]; then
+    # The second half — the default environment's own Thunder and its API
+    # Platform gateway — is a separate script because it drives Agent Manager's
+    # admin API over its public URL, and fails for reasons unrelated to the
+    # chart installs.
+    bash "$SCRIPT_DIR/setup-agent-manager.sh"
+    echo ""
+    bash "$SCRIPT_DIR/setup-agent-manager-env.sh"
+    echo ""
+else
+    echo "⏭️  Skipping Agent Manager install (ENABLE_AGENT_MANAGER=0)"
+    echo ""
+fi
 
 # Park the observability plane's heavy workloads. Running them costs about 2 GB
 # of requests on an 8 GB VM, and most local work never reads a trace, a metric
