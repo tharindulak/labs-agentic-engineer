@@ -29,10 +29,8 @@ import (
 
 // Handler serves create-issue and list-issues.
 //
-// These back external handoffs: the OpenChoreo SRE/RCA agent files an issue here
-// (searching for related ones first) via aep-mcp-server, ahead of dispatching the
-// coding agent with promote-task-from-issue. See AE-HANDOFF-DESIGN.md
-// (openchoreo/agents/sre-agent).
+// These back external handoffs: the SRE agent searches and files through MCP;
+// CreateIssue owns classification and adoption using trusted transport context.
 type Handler struct{ issues sourcecontrol.IssueService }
 
 // New returns the slice's handler. issues may be nil, which degrades both ops to
@@ -54,6 +52,9 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 		ActionStatuses: request.Body.ActionStatuses,
 	})
 	if err != nil {
+		if errors.Is(err, sourcecontrol.ErrIncidentContextRequired) {
+			return nil, apierr.BadRequest(err.Error())
+		}
 		if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 			return nil, apierr.NotFound("project repo not found")
 		}

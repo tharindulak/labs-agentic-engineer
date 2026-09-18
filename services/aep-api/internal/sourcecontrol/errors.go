@@ -34,6 +34,9 @@ import (
 // survived the REST→mount migration unchanged, so `errors.Is` checks and log
 // lines stayed stable.
 var (
+	// ErrIncidentContextRequired rejects SRE handoffs without trusted identity
+	// and a component, before any issue write.
+	ErrIncidentContextRequired = errors.New("trusted incident identity and component are required")
 	// ErrRepoNotFound is a gitrepo-domain error (no repo row) returned by
 	// repoService/issueService lookups.
 	ErrRepoNotFound = errors.New("repository not found")

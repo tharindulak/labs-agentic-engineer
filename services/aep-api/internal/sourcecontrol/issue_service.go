@@ -109,6 +109,7 @@ type issueService struct {
 	repo     RepoRepository
 	github   IssueOps
 	resolver secrets.Resolver
+	incident IncidentPorts
 	// createLocks serializes dedupe-checked creation per "owner/repo" so two
 	// concurrent CreateIssue calls with the same DedupeKey can't both pass the
 	// existing-issue check before either creates — the exact race that produced
@@ -179,17 +180,32 @@ func (k *keyedMutex) lock(key string) func() {
 	}
 }
 
-func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Resolver) IssueService {
-	return &issueService{
+func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Resolver, incident ...IncidentPorts) IssueService {
+	s := &issueService{
 		repo:     repo,
 		github:   github,
 		resolver: resolver,
 	}
+	if len(incident) > 0 {
+		s.incident = incident[0]
+	}
+	return s
 }
 
 func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string, req CreateIssueRequest) (*IssueResult, error) {
 	if strings.TrimSpace(req.Title) == "" {
 		return nil, fmt.Errorf("title is required")
+	}
+	if incidentID, ok := ctx.Value(incidentContextKey{}).(string); ok {
+		return s.createIncidentIssue(ctx, orgID, projectID, req, incidentID)
+	}
+	if req.ComponentName != "" || req.ActionStatuses != nil {
+		return nil, ErrIncidentContextRequired
+	}
+	for _, label := range req.Labels {
+		if strings.EqualFold(strings.TrimSpace(label), "sre-agent") {
+			return nil, ErrIncidentContextRequired
+		}
 	}
 
 	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)

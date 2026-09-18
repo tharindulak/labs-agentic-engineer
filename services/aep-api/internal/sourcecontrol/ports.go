@@ -22,6 +22,27 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
+// IncidentPorts connects authoritative incident filing to delivery and
+// recurrence evidence. Nil ports preserve filing but cannot claim adoption or
+// safely reopen a closed incident.
+type IncidentPorts struct {
+	Adopter    IssueAdopter
+	Recurrence IncidentRecurrence
+}
+
+// IssueAdopter admits an issue to the existing delivery path. It must return an
+// error when delivery cannot accept the issue, including degraded boot.
+type IssueAdopter interface {
+	AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error
+}
+
+// IncidentRecurrence records recurrence evidence before an issue is reopened.
+// It owns recurrence eligibility and durable counting; errors leave the issue
+// closed. Repeating a failed reopen must not append duplicate evidence.
+type IncidentRecurrence interface {
+	RecordRecurrence(ctx context.Context, orgID, projectID string, issue IssueInfo, req CreateIssueRequest) (count int64, err error)
+}
+
 // The git-provider capability ports.
 //
 // These interfaces are the provider-neutral seam between gitrepo's domain
