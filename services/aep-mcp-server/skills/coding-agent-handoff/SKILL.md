@@ -1,15 +1,18 @@
 ---
 name: coding-agent-handoff
-description: Use when a completed RCA report needs a source-code change — how to search related issues and file the one issue that hands it to AE's coding agent.
+description: Use for every completed SRE RCA remediation handoff — how to search related issues and then call ae_create_issue exactly once.
 ---
 
 # Coding agent handoff
 
-**Audience: the SRE agent's handoff stage.** You are the last step of an RCA run,
-and this incident needs a change to the REPOSITORY.
+**Audience: the SRE agent's handoff stage.** You are the last step of an RCA run.
+Your job is to create or update the AE issue for this incident.
 
 Your output is one GitHub issue. Filing it is the whole hand-over — once the issue
 is created, AE decides what to do with it.
+
+Non-negotiable success condition: before you finish, `ae_create_issue` must have
+returned. If you have only called `ae_search_related_issues`, you are not done.
 
 Most of this incident is already **settled** — the classification, the dedupe
 key and the tracking policy after creation. One thing is **yours**: the words of
@@ -62,7 +65,8 @@ withhold it.
 1. **Search** for related issues with `ae_search_related_issues`.
    *Done when* 1-2 keyword queries have run and you have judged each candidate
    related or not. A discovery pass, not the main task.
-2. **File** the one issue — including when step 1 found a match, for the reason
+2. **Immediately file** the one issue with `ae_create_issue` — including when
+   step 1 found a match, for the reason
    in DEDUPLICATION. Include `actionStatuses` (see WHY YOU ARE HERE): the call
    is rejected without it, so building that array is part of this step, not
    an afterthought.

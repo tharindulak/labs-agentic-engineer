@@ -32,32 +32,27 @@ import { HANDOFF_LABELS, resolveHandoff } from "./handoffContext.js";
 const ARGS = { project: "argproj", componentName: "argcomp", labels: ["needs-triage"], actionStatuses: ["revised"] };
 
 test("project and componentName are taken straight from the arguments", () => {
-  const resolved = resolveHandoff(ARGS, true);
+  const resolved = resolveHandoff(ARGS);
 
   assert.equal(resolved.project, "argproj");
   assert.equal(resolved.componentName, "argcomp");
 });
 
 test("no component leaves componentName absent", () => {
-  const resolved = resolveHandoff({ project: "argproj", actionStatuses: [] }, true);
+  const resolved = resolveHandoff({ project: "argproj", actionStatuses: [] });
 
   assert.equal(resolved.componentName, undefined);
 });
 
 test("the handoff labels are added once, on top of the model's own", () => {
-  const resolved = resolveHandoff({ project: "p", labels: ["bug", "mine"], actionStatuses: [] }, true);
+  const resolved = resolveHandoff({ project: "p", labels: ["bug", "mine"], actionStatuses: [] });
 
   assert.deepEqual(resolved.labels, ["bug", "mine", "sre-agent"]);
   for (const label of HANDOFF_LABELS) assert.ok(resolved.labels.includes(label));
 });
 
-test("adoption is the operator's, carried through untouched", () => {
-  assert.equal(resolveHandoff(ARGS, false).adopt, false);
-  assert.equal(resolveHandoff(ARGS, true).adopt, true);
-});
-
 test("actionStatuses is carried through exactly, including nulls", () => {
-  const resolved = resolveHandoff({ project: "p", actionStatuses: ["suggested", null, "revised"] }, true);
+  const resolved = resolveHandoff({ project: "p", actionStatuses: ["suggested", null, "revised"] });
   assert.deepEqual(resolved.actionStatuses, ["suggested", null, "revised"]);
 });
 

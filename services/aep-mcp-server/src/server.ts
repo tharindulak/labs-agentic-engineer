@@ -32,10 +32,6 @@ function errorResult(err: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-export interface HandoffRequestContext {
-  adopt: boolean;
-}
-
 /**
  * Builds an McpServer bound to one caller's bearer token. Called once per
  * incoming HTTP request (see main.ts) — this server holds no credentials or
@@ -46,17 +42,19 @@ export interface HandoffRequestContext {
  * create-issue, so filing an issue and handing it to the coding agent are one
  * call and cannot come apart. The other way to adopt an issue that already
  * exists is the `aep` arming GitHub label, which AE's event plane watches —
- * a human's route, not this server's.
+ * a human's route, not this server's. Adoption itself is entirely aep-api's
+ * call (classification-driven — see CreateIssueRequest in
+ * packages/contracts/api/v1/openapi.yaml, which has no adopt-like property):
+ * there is no operator or caller override to forward here.
  */
 export function createAepMcpServer(
   client: AepClientOptions,
-  handoff: HandoffRequestContext,
   create: typeof createIssue = createIssue,
 ): McpServer {
   const server = new McpServer({ name: "aep-mcp-server", version: "0.0.0" });
 
   server.registerTool(
-    "ae_search_related_issues",
+    "search_related_issues",
     {
       title: "Search related AE issues",
       description:
@@ -88,7 +86,7 @@ export function createAepMcpServer(
   );
 
   server.registerTool(
-    "ae_create_issue",
+    "create_issue",
     {
       title: "Create a GitHub issue via AE",
       description:
@@ -118,21 +116,17 @@ export function createAepMcpServer(
     },
     async ({ project, title, body, labels, componentName, actionStatuses }) => {
       try {
-        const resolved = resolveHandoff(
-          {
-            project,
-            ...(componentName !== undefined ? { componentName } : {}),
-            ...(labels !== undefined ? { labels } : {}),
-            actionStatuses,
-          },
-          handoff.adopt,
-        );
+        const resolved = resolveHandoff({
+          project,
+          ...(componentName !== undefined ? { componentName } : {}),
+          ...(labels !== undefined ? { labels } : {}),
+          actionStatuses,
+        });
         const issue = await create(client, resolved.project, {
           title,
           body,
           labels: resolved.labels,
           ...(resolved.componentName !== undefined ? { componentName: resolved.componentName } : {}),
-          adopt: resolved.adopt,
           actionStatuses: resolved.actionStatuses,
         });
         return textResult(issue);

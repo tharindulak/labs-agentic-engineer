@@ -327,6 +327,10 @@ if [ "${SKIP_DEV_SEED:-0}" = "1" ]; then
 elif grep -qE '^(LOCAL_DEV_ADMIN_GITHUB_PAT|ANTHROPIC_API_KEY)=.+' "$DEPLOY_DIR/.env" 2>/dev/null; then
     bash "$SCRIPT_DIR/seed-dev.sh" || \
         echo "⚠️  seed-dev did not complete cleanly — see output above."
+    if [ -x "$SCRIPT_DIR/sync-sre-anthropic-secret.sh" ]; then
+        bash "$SCRIPT_DIR/sync-sre-anthropic-secret.sh" || \
+            echo "⚠️  SRE Anthropic secret sync did not complete cleanly — see output above."
+    fi
 else
     echo "⏭️  no LOCAL_DEV_ADMIN_GITHUB_PAT / ANTHROPIC_API_KEY in .env — skipping dev seed (scripts/seed-dev.sh)"
 fi

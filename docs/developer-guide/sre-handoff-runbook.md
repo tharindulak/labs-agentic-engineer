@@ -51,6 +51,27 @@ Local setup and `aectl sre install` both mount an optional Kubernetes secret at
 `/etc/rca-agent/anthropic`. The key value must not be placed in the image,
 checked into config, or logged.
 
+For local Docker Compose + k3d development, `scripts/start.sh` runs
+`scripts/repair-secrets.sh`, which also syncs the AE-stored default org
+Anthropic key into the SRE agent secret:
+
+```text
+openchoreo-observability-plane/rca-agent-anthropic-secret
+  RCA_LLM_API_KEY -> /etc/rca-agent/anthropic/RCA_LLM_API_KEY
+```
+
+If you rotate or reconnect the Anthropic key from the AE Console after the
+stack is already running, run:
+
+```bash
+cd deployments
+bash scripts/sync-sre-anthropic-secret.sh
+```
+
+The script is local-only, refuses non-`k3d-openchoreo` contexts, decrypts
+through AE's credential encryption format, writes only the Kubernetes Secret,
+and restarts `sre-agent` so the projected volume is re-read.
+
 ## Local setup
 
 Use the scripted local install:

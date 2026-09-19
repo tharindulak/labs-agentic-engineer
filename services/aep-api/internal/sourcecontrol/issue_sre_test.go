@@ -290,6 +290,30 @@ func TestSREConcurrentDedupDispatchesOnce(t *testing.T) {
 	}
 }
 
+// TestWithAdopterInjectsAfterConstruction pins the composition-root pattern
+// internal/app/app.go relies on: the event plane (the only IssueAdopter
+// implementation) is itself built from issueService-derived services, so it
+// cannot be passed into NewIssueService's IncidentPorts at construction time.
+// Before WithAdopter existed, aep-api's real composition root never wired an
+// adopter at all — every SRE-filed code-level issue got AdoptionError
+// "incident adoption is not configured" in production, silently.
+func TestWithAdopterInjectsAfterConstruction(t *testing.T) {
+	gh := &fakeGitHub{}
+	adopter := &incidentAdopter{}
+	svc := NewIssueService(fakeRepoRepo{}, gh, fakeResolver{})
+	svc.WithAdopter(adopter)
+
+	result, err := svc.CreateIssue(WithIncidentContext(context.Background(), "sre-handoff"), "org", "proj", CreateIssueRequest{
+		Title: "checkout times out", ComponentName: "checkout", ActionStatuses: []*string{nil},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Adopted || result.AdoptionError != "" || len(adopter.numbers) != 1 {
+		t.Fatalf("adopter not consulted after WithAdopter: result=%+v adopted=%v", result, adopter.numbers)
+	}
+}
+
 func TestSREIdentityCannotBeMintedThroughLegacyCreate(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -327,4 +351,45 @@ func TestSREIdentityReservationPreservesOtherLegacyDedup(t *testing.T) {
 	if first.Deduped || !second.Deduped || first.Number != second.Number || gh.createCount != 1 {
 		t.Fatalf("legacy dedupe changed: first=%+v second=%+v creates=%d", first, second, gh.createCount)
 	}
+}
+
+// TestSREHandoffShapedRequestNeedsIncidentContext pins the exact contract
+// internal/edge/sre_handoff_gate.go relies on: aep-mcp-server sends
+// componentName + actionStatuses straight from the model's tool-call
+// arguments (handoffContext.ts's resolveHandoff), with no dedupe key and no
+// trusted-identity header — there is no generic-extensions transport left to
+// carry one (docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md
+// §2/§5). Without SOME incident context bound onto ctx first, that shape is
+// indistinguishable from a spoofed legacy call and CreateIssue's own
+// anti-spoofing guard rejects it — this reproduces the exact failure the SRE
+// agent hit in production before the edge gate bound one.
+func TestSREHandoffShapedRequestNeedsIncidentContext(t *testing.T) {
+	req := CreateIssueRequest{
+		Title:          "service1 logs an error",
+		Body:           "RCA report body",
+		ComponentName:  "service1",
+		ActionStatuses: []*string{nil},
+	}
+
+	t.Run("no incident context: rejected exactly like a spoofed call", func(t *testing.T) {
+		gh := &fakeGitHub{}
+		_, err := newDedupService(gh).CreateIssue(context.Background(), "org", "hello", req)
+		if !errors.Is(err, ErrIncidentContextRequired) || gh.createCount != 0 {
+			t.Fatalf("want ErrIncidentContextRequired and no create, got err=%v creates=%d", err, gh.createCount)
+		}
+	})
+
+	t.Run("bound incident context: the same request succeeds", func(t *testing.T) {
+		gh := &fakeGitHub{}
+		// "sre-handoff" — must match internal/edge/sre_handoff_gate.go's
+		// sreHandoffIncidentID constant; that file is the one production caller.
+		ctx := WithIncidentContext(context.Background(), "sre-handoff")
+		result, err := newDedupService(gh).CreateIssue(ctx, "org", "hello", req)
+		if err != nil {
+			t.Fatalf("want success once a trusted transport bound an incident context, got %v", err)
+		}
+		if gh.createCount != 1 || result.Number == 0 {
+			t.Fatalf("issue not created: result=%+v creates=%d", result, gh.createCount)
+		}
+	})
 }

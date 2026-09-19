@@ -13,6 +13,16 @@ deduplication, recurrence, adoption, dispatch, and human-attention state.
   arguments, or documentation examples.
 - The MCP bearer token is separate from the Anthropic key and is used only to
   let `aep-mcp-server` forward the caller identity to `aep-api`.
+- That bearer is a dedicated long-lived secret (`AEP_MCP_TOKEN` /
+  `AEP_MCP_DEFAULT_BEARER` on `aep-mcp-server`, `SRE_HANDOFF_TOKEN` on
+  `aep-api`), not a Thunder-issued JWT: the OpenChoreo SRE agent's generic
+  extensions loader resolves an MCP server's `headers` from `${VAR}` once at
+  process start and never refreshes them, so a short-lived Thunder token
+  would expire mid pod-lifetime. `aep-api` verifies it with a narrow,
+  disabled-by-default checker (`auth.SREHandoffVerifier`) scoped to exactly
+  `create_issue`/`search_related_issues` and bound to one configured org
+  (`SRE_HANDOFF_ORG`) — it never widens what the normal Thunder JWT verifier
+  accepts, and any other route still requires a real JWT.
 
 ## Automation boundaries
 

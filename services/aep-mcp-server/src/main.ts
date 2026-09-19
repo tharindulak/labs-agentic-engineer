@@ -20,9 +20,11 @@
  * The composition root: a stateless Streamable HTTP MCP server. Each POST
  * /mcp request gets its OWN McpServer + transport pair, built with the
  * caller's bearer token captured from the Authorization header — see
- * server.ts. Stateless mode (sessionIdGenerator: undefined) is required
- * here: a shared/session-scoped server would let one caller's bearer leak
- * into another's tool calls.
+ * server.ts. Local development may provide AEP_MCP_DEFAULT_BEARER for callers
+ * that cannot send headers to a plaintext loopback URL (the OC SRE extension
+ * loader refuses that combination). Stateless mode (sessionIdGenerator:
+ * undefined) is required here: a shared/session-scoped server would let one
+ * caller's bearer leak into another's tool calls.
  *
  *   pnpm --filter @aep/aep-mcp-server dev
  */
@@ -31,12 +33,12 @@ import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import { intEnv, loadAepApiBaseUrl, loadHandoffAdopt } from "./env.js";
+import { intEnv, loadAepApiBaseUrl } from "./env.js";
 import { createAepMcpServer } from "./server.js";
 
 const port = intEnv(process.env.PORT, 3400);
 const aepApiBaseUrl = loadAepApiBaseUrl();
-const handoffAdopt = loadHandoffAdopt();
+const defaultBearer = process.env.AEP_MCP_DEFAULT_BEARER?.trim();
 
 const app = express();
 app.use(express.json());
@@ -48,13 +50,13 @@ app.get("/healthz", (_req, res) => {
 // The coding agent's MCP server is used by the coding agent to communicate with the AEP API. 
 // We should consider merging these two servers into one.
 app.post("/mcp", async (req, res) => {
-  const bearer = req.headers.authorization;
+  const bearer = req.headers.authorization ?? defaultBearer;
   if (!bearer) {
     res.status(401).json({ error: "missing Authorization header" });
     return;
   }
 
-  const server = createAepMcpServer({ baseUrl: aepApiBaseUrl, bearer }, { adopt: handoffAdopt });
+  const server = createAepMcpServer({ baseUrl: aepApiBaseUrl, bearer });
   // No options ⇒ sessionIdGenerator stays undefined ⇒ stateless mode (per the
   // SDK's own doc comment on StreamableHTTPServerTransport). Passing
   // `{ sessionIdGenerator: undefined }` explicitly is what the SDK's docs
@@ -91,6 +93,6 @@ app.post("/mcp", async (req, res) => {
 
 app.listen(port, () => {
   process.stdout.write(
-    `@aep/aep-mcp-server listening on :${port} (aep-api: ${aepApiBaseUrl}, adopt: ${handoffAdopt})\n`,
+    `@aep/aep-mcp-server listening on :${port} (aep-api: ${aepApiBaseUrl})\n`,
   );
 });

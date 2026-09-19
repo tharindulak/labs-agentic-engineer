@@ -49,10 +49,11 @@ SETUP_SCRIPT="$REPO_DIR/deployments/scripts/setup-observability.sh"
 [ -f "$CONTEXT_MD" ] || fail "missing $CONTEXT_MD"
 [ -f "$HANDOFF_SKILL" ] || fail "missing $HANDOFF_SKILL"
 
-assert_file_contains "$MCP_JSON" '"aep"'
+assert_file_contains "$MCP_JSON" '"ae"'
 assert_file_contains "$MCP_JSON" '"type": "http"'
 assert_file_contains "$MCP_JSON" '${AEP_MCP_URL}'
-assert_file_contains "$MCP_JSON" 'Bearer ${AEP_MCP_TOKEN}'
+assert_file_not_contains "$MCP_JSON" '"headers"'
+assert_file_not_contains "$MCP_JSON" 'Bearer ${AEP_MCP_TOKEN}'
 
 assert_file_contains "$CONTEXT_MD" "load_skill('coding-agent-handoff')"
 assert_file_contains "$CONTEXT_MD" "ae_create_issue"
@@ -68,6 +69,7 @@ assert_file_contains "$SETUP_SCRIPT" "deployments/sre-agent-extensions/remediati
 assert_file_contains "$SETUP_SCRIPT" "coding-agent-handoff"
 assert_file_contains "$SETUP_SCRIPT" "remediation/skills/coding-agent-handoff/SKILL.md"
 assert_file_contains "$SETUP_SCRIPT" "AEP_MCP_TOKEN"
+assert_file_contains "$SETUP_SCRIPT" "AEP_MCP_DEFAULT_BEARER"
 assert_file_not_contains "$SETUP_SCRIPT" "services/aep-mcp-server/skills/issue-fix"
 
 echo "✅ setup-observability SRE extension assertions passed"

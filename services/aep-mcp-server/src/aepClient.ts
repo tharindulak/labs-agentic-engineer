@@ -22,10 +22,12 @@
  * no credentials of its own; aep-api's org-scoped JWT verification is the only
  * auth boundary. See AE-HANDOFF-DESIGN.md (openchoreo/agents/sre-agent) §4/§9.
  *
- * There is no separate dispatch call: creating an issue IS the dispatch, unless
- * the caller opts out with `adopt: false`. aep-api files the issue into the
- * deployed version's milestone and starts (or wakes) the run in one write, so
- * there is no window in which the issue exists but nothing will work it.
+ * There is no separate dispatch call: creating an issue IS the dispatch, when
+ * aep-api's own classification says it should be. aep-api files the issue into
+ * the deployed version's milestone and starts (or wakes) the run in one write,
+ * so there is no window in which the issue exists but nothing will work it.
+ * Adoption has no caller-side override — CreateIssueRequest carries no such
+ * property; forwarding one 400s the whole request.
  */
 
 export interface AepClientOptions {
@@ -113,7 +115,6 @@ export function createIssue(
     body: string;
     labels?: string[];
     componentName?: string;
-    adopt?: boolean;
     /** One entry per recommended action on the RCA report, in its order, null where the remediation agent set no status. aep-api derives the classification and the adoption from these; omitting the field entirely leaves both alone. */
     actionStatuses?: (string | null)[];
   },

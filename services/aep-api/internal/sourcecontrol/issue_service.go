@@ -180,7 +180,7 @@ func (k *keyedMutex) lock(key string) func() {
 	}
 }
 
-func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Resolver, incident ...IncidentPorts) IssueService {
+func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Resolver, incident ...IncidentPorts) *issueService {
 	s := &issueService{
 		repo:     repo,
 		github:   github,
@@ -192,6 +192,19 @@ func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Reso
 	if s.incident.Recurrence == nil {
 		s.incident.Recurrence = s
 	}
+	return s
+}
+
+// WithAdopter injects the SRE/RCA handoff's promote-from-issue leg after
+// construction — the composition root builds the event plane (the only
+// IssueAdopter implementation) from services that themselves depend on this
+// issue service, so the two can't be constructed in either order alone.
+// nil-safe (adoptIncident already reports "not configured" for a nil
+// Adopter); omitting this call keeps that behaviour, matching every test that
+// constructs an issueService without one. Returns the receiver to allow
+// chained construction, matching organization.CredentialService's With* idiom.
+func (s *issueService) WithAdopter(adopter IssueAdopter) *issueService {
+	s.incident.Adopter = adopter
 	return s
 }
 

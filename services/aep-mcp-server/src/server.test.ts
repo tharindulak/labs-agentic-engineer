@@ -35,7 +35,7 @@ interface RegisteredTool {
 }
 
 function server() {
-  return createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, { adopt: true });
+  return createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" });
 }
 
 function toolSchema(name: string): Record<string, unknown> {
@@ -46,11 +46,11 @@ function toolSchema(name: string): Record<string, unknown> {
 test("the handoff server exposes exactly the two SRE handoff tools", () => {
   const registered = (server() as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
 
-  assert.deepEqual(Object.keys(registered).sort(), ["ae_create_issue", "ae_search_related_issues"]);
+  assert.deepEqual(Object.keys(registered).sort(), ["create_issue", "search_related_issues"]);
 });
 
 test("the model is never shown the dedupe key or the adoption flag", () => {
-  const schema = toolSchema("ae_create_issue");
+  const schema = toolSchema("create_issue");
 
   assert.equal("dedupeKey" in schema, false);
   assert.equal("adopt" in schema, false);
@@ -59,7 +59,7 @@ test("the model is never shown the dedupe key or the adoption flag", () => {
 });
 
 test("actionStatuses is a required field in the schema (no .optional())", () => {
-  const schema = toolSchema("ae_create_issue");
+  const schema = toolSchema("create_issue");
   const field = schema.actionStatuses as { isOptional?: () => boolean } | undefined;
 
   assert.ok(field, "actionStatuses must be declared in the schema");
@@ -68,16 +68,12 @@ test("actionStatuses is a required field in the schema (no .optional())", () => 
 
 test("project and componentName pass straight through to aep-api", async () => {
   const seen: unknown[] = [];
-  const s = createAepMcpServer(
-    { baseUrl: "http://aep-api", bearer: "Bearer t" },
-    { adopt: false },
-    async (_opts, project, req) => {
-      seen.push({ project, req });
-      return { number: 1, url: "u", nodeId: "n" };
-    },
-  );
+  const s = createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, async (_opts, project, req) => {
+    seen.push({ project, req });
+    return { number: 1, url: "u", nodeId: "n" };
+  });
   const registered = (s as unknown as { _registeredTools: Record<string, RegisteredTool> })._registeredTools;
-  const handler = registered["ae_create_issue"]!.handler;
+  const handler = registered["create_issue"]!.handler;
 
   await handler({
     project: "myproj",
@@ -96,7 +92,6 @@ test("project and componentName pass straight through to aep-api", async () => {
         body: "b",
         labels: ["mine", "bug", "sre-agent"],
         componentName: "service1",
-        adopt: false,
         actionStatuses: ["revised", null],
       },
     },
@@ -105,20 +100,16 @@ test("project and componentName pass straight through to aep-api", async () => {
 
 test("a call omitting actionStatuses is rejected before the handler forwards anything", async () => {
   const seen: unknown[] = [];
-  const s = createAepMcpServer(
-    { baseUrl: "http://aep-api", bearer: "Bearer t" },
-    { adopt: true },
-    async (_opts, _project, req) => {
-      seen.push(req);
-      return { number: 1, url: "u", nodeId: "n" };
-    },
-  );
+  const s = createAepMcpServer({ baseUrl: "http://aep-api", bearer: "Bearer t" }, async (_opts, _project, req) => {
+    seen.push(req);
+    return { number: 1, url: "u", nodeId: "n" };
+  });
 
   await assert.rejects(() =>
     s.server.request(
       {
         method: "tools/call",
-        params: { name: "ae_create_issue", arguments: { project: "p", title: "t", body: "b" } },
+        params: { name: "create_issue", arguments: { project: "p", title: "t", body: "b" } },
       },
       // Minimal shape: exercised through the SDK's own schema validation path
       // rather than calling the raw handler directly, since the point under

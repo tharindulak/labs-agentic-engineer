@@ -85,9 +85,10 @@
 #   AEP_API_URL     aep-api REST base for report publishing
 #                   (default: http://host.k3d.internal:9090). NOT AE_API_URL
 #                   (that is the MCP server on :3401).
-#   AEP_MCP_TOKEN   bearer token forwarded by aep-mcp-server to aep-api. The
-#                   local default is intentionally non-secret; override it when
-#                   running with enforced auth.
+#   AEP_MCP_TOKEN   local bearer configured on aep-mcp-server as
+#                   AEP_MCP_DEFAULT_BEARER. The SRE extension does not send it
+#                   as an HTTP header because the extension loader rejects
+#                   credentials over plaintext local URLs.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -119,7 +120,6 @@ AE_HANDOFF="${AE_HANDOFF:-true}"
 AE_AUTO_DISPATCH="${AE_AUTO_DISPATCH:-true}"
 AE_API_URL="${AE_API_URL:-http://host.k3d.internal:3401}"
 AEP_MCP_URL="${AEP_MCP_URL:-${AE_API_URL}/mcp}"
-AEP_MCP_TOKEN="${AEP_MCP_TOKEN:-local-aep-mcp-token}"
 # Report publishing: POST each completed RCA report to aep-api
 # so it surfaces in the console Alerts bell/list. AEP_API_URL is aep-api's REST
 # base — DISTINCT from AE_API_URL (the MCP server on :3401); reports go to the
@@ -476,7 +476,10 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #     AE_PUBLISH_REPORTS       publish RCA reports to aep-api (console Alerts)
 #     AEP_API_URL              aep-api REST base (host.k3d.internal:9090)
 #     AEP_MCP_URL              full MCP URL used by remediation/mcp.json
-#     AEP_MCP_TOKEN            bearer token used by remediation/mcp.json
+#     AEP_MCP_URL              full MCP URL used by remediation/mcp.json.
+#                              Auth is supplied by aep-mcp-server's local
+#                              AEP_MCP_DEFAULT_BEARER fallback, not this
+#                              plaintext client config.
 echo ""
 echo "3️⃣b Alert→RCA auto-trigger + AEP handoff wiring"
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=merge -p \
@@ -484,7 +487,7 @@ kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm observer-config --type=me
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/observer
 if [ "$AE_HANDOFF" = "true" ]; then
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch cm rca-agent-config --type=merge -p \
-        "{\"data\":{\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${AE_AUTO_DISPATCH}\",\"AE_API_URL\":\"${AE_API_URL}\",\"AEP_MCP_URL\":\"${AEP_MCP_URL}\",\"AEP_MCP_TOKEN\":\"${AEP_MCP_TOKEN}\",\"AE_PUBLISH_REPORTS\":\"${AE_PUBLISH_REPORTS}\",\"AEP_API_URL\":\"${AEP_API_URL}\"}}"
+        "{\"data\":{\"AE_HANDOFF\":\"true\",\"AE_AUTO_DISPATCH\":\"${AE_AUTO_DISPATCH}\",\"AE_API_URL\":\"${AE_API_URL}\",\"AEP_MCP_URL\":\"${AEP_MCP_URL}\",\"AE_PUBLISH_REPORTS\":\"${AE_PUBLISH_REPORTS}\",\"AEP_API_URL\":\"${AEP_API_URL}\"}}"
     kubectl --context "$CLUSTER_CONTEXT" -n "$NS" rollout restart deploy/${RCA_DEPLOYMENT}
     echo "   AE handoff: enabled (auto-dispatch=${AE_AUTO_DISPATCH}, mcp=${AEP_MCP_URL})"
     echo "   Report publishing: ${AE_PUBLISH_REPORTS} (aep-api=${AEP_API_URL})"
@@ -551,15 +554,12 @@ echo "✅ auto-trigger + handoff wiring applied"
 # ── 3c. Dynamic Anthropic key — reuse the org's key as set via the AE console ──
 # AnthropicCredentialService.Connect() (aep-api) stores the console-connected
 # key in Postgres (org_secrets, AES-256-GCM) and best-effort mirrors it into
-# OpenBao via the SM-API stub. aep-api pushes nothing into this namespace: the
-# observability workstream owns the RCA agent's own ExternalSecret, declared
-# against the org's Anthropic KV path with a refreshInterval that re-syncs it
-# after a connect or a rotation.
+# OpenBao via the SM-API stub. For local Docker Compose + k3d development,
+# scripts/repair-secrets.sh / scripts/sync-sre-anthropic-secret.sh project that
+# AE-stored key into this namespace as rca-agent-anthropic-secret.
 #
-# So THIS script neither creates nor discovers that ExternalSecret — it only
-# ensures the one-time STRUCTURAL piece exists: the volume + mount + env var
-# wiring below, which the ExternalSecret (whenever the RCA agent's own manifest
-# declares one) feeds into. If no key has been synced, `optional: true` on the
+# THIS script ensures the one-time STRUCTURAL piece exists: the volume + mount
+# + env var wiring below. If no key has been synced, `optional: true` on the
 # volume's secret source means the mount is just an empty dir rather than
 # blocking the pod in ContainerCreating — resolve_api_key() falls back to the
 # static RCA_LLM_API_KEY exactly as before, and main.py's boot-time LLM test
@@ -590,8 +590,8 @@ spec:
               value: /etc/rca-agent/anthropic/RCA_LLM_API_KEY
 '
 echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the dynamic Anthropic key"
-echo "   The RCA agent's own ExternalSecret (against the org's Anthropic KV path) fills this mount."
-echo "   Until one exists it falls back to the static RCA_LLM_API_KEY from step 1b."
+echo "   Local start/repair projects AE's org Anthropic key into rca-agent-anthropic-secret."
+echo "   Until that secret exists it falls back to the static RCA_LLM_API_KEY from step 1b."
 
 # ── 3d. AEP-owned SRE remediation extension — deploy-time mount ───────────
 # The OC SRE agent loads remediation extensions from EXTENSIONS_DIR. AE owns
@@ -615,11 +615,17 @@ if [ "$AE_HANDOFF" = "true" ]; then
         # Render deterministically (create --dry-run) then apply, so re-runs are
         # idempotent and the ConfigMap can be diffed. ConfigMap keys are flat;
         # the Deployment volume items below map them back to remediation paths.
+        #
+        # The SRE extension loader validates the MCP URL before env expansion in
+        # the remediation path, so render the concrete URL into mcp.json here.
+        _rendered_mcp_json="$(mktemp)"
+        sed "s|\\${AEP_MCP_URL}|${AEP_MCP_URL}|g" "$HANDOFF_MCP_JSON" > "$_rendered_mcp_json"
         kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap sre-agent-extensions \
             --from-file=CONTEXT.md="$HANDOFF_CONTEXT" \
-            --from-file=mcp.json="$HANDOFF_MCP_JSON" \
+            --from-file=mcp.json="$_rendered_mcp_json" \
             --from-file=SKILL.md="$HANDOFF_SKILL" \
             --dry-run=client -o yaml | kubectl --context "$CLUSTER_CONTEXT" apply -f - >/dev/null
+        rm -f "$_rendered_mcp_json"
         echo "✅ sre-agent-extensions ConfigMap applied"
 
         # Patch the Deployment: mount the extension at

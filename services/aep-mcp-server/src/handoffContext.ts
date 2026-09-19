@@ -18,7 +18,10 @@
 
 /**
  * What resolveHandoff derives from a caller's ae_create_issue arguments: the
- * label set every SRE-filed issue carries and whether AE should adopt it.
+ * label set every SRE-filed issue carries. Adoption is not among these — it is
+ * entirely aep-api's call (classification-driven), never a caller or operator
+ * override; CreateIssueRequest in packages/contracts/api/v1/openapi.yaml has
+ * no such property, and forwarding one 400s the whole request.
  *
  * project/componentName are trusted straight from the call. Both the RCA and
  * remediation OpenChoreo agents receive their project/component/environment
@@ -48,14 +51,15 @@ export interface ResolvedHandoff {
   project: string;
   componentName?: string;
   labels: string[];
-  adopt: boolean;
   actionStatuses: (string | null)[];
 }
 
-export function resolveHandoff(
-  args: { project: string; componentName?: string; labels?: string[]; actionStatuses: (string | null)[] },
-  adopt: boolean,
-): ResolvedHandoff {
+export function resolveHandoff(args: {
+  project: string;
+  componentName?: string;
+  labels?: string[];
+  actionStatuses: (string | null)[];
+}): ResolvedHandoff {
   const labels = [...(args.labels ?? [])];
   for (const label of HANDOFF_LABELS) {
     if (!labels.includes(label)) labels.push(label);
@@ -64,7 +68,6 @@ export function resolveHandoff(
   const resolved: ResolvedHandoff = {
     project: args.project,
     labels,
-    adopt,
     actionStatuses: args.actionStatuses,
   };
   if (args.componentName !== undefined) {
