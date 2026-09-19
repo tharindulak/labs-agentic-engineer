@@ -23,6 +23,15 @@ deduplication, recurrence, adoption, dispatch, and human-attention state.
   `create_issue`/`search_related_issues` and bound to one configured org
   (`SRE_HANDOFF_ORG`) — it never widens what the normal Thunder JWT verifier
   accepts, and any other route still requires a real JWT.
+- Local dev wires it in `deployments/docker-compose.yml`. A full k8s install
+  wires it through `deployments/helm-charts/platform`: `values.yaml`'s
+  `sreHandoff` block (`enabled`, default `false`; `org`), an `ExternalSecret`
+  in `templates/external-secrets/external-secrets.yaml` that reads the same
+  `aep/aep-mcp-token` OpenBao path `aectl sre install` already provisions for
+  `aep-mcp-server`'s `AEP_MCP_TOKEN` (one shared credential, not a second
+  secret to keep in sync), and the `SRE_HANDOFF_TOKEN`/`SRE_HANDOFF_ORG` env
+  vars in `templates/aep-api/deployment.yaml`. Off by default — enabling it
+  requires that OpenBao path to exist.
 
 ## Automation boundaries
 

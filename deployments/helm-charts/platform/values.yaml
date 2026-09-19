@@ -226,6 +226,19 @@ postgres:
 # workflow state is durable across Temporal pod restarts. enabled=false turns
 # the whole feature off (no server deployed, no TEMPORAL_* env on aep-api, and
 # /devflows answers 503).
+# SRE-agent issue-handoff shortcut (auth.SREHandoffVerifier,
+# internal/edge/sre_handoff_gate.go). Off by default — most installs don't run
+# the OpenChoreo SRE agent. Enabling requires the aep/aep-mcp-token OpenBao
+# path (the same one aectl sre install already provisions for
+# aep-mcp-server's AEP_MCP_TOKEN) so both services share one credential, the
+# same way deployments/docker-compose.yml ties SRE_HANDOFF_TOKEN to
+# AEP_MCP_TOKEN. org is not secret — it's the one org this aep-api's SRE
+# integration is scoped to, matching today's one-install-per-org model. See
+# docs/developer-guide/sre-handoff-security.md.
+sreHandoff:
+  enabled: false
+  org: "default"
+
 temporal:
   enabled: true
   # Temporal namespace aep-api connects to; auto-setup registers it on startup.
