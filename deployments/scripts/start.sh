@@ -247,6 +247,34 @@ else
     echo "    will fail its ae_* tool calls. Check: docker logs aep-mcp-server"
 fi
 
+# 7c. Converge AE-managed credentials before checking/restarting SRE.
+#     The SRE agent reads Anthropic from a Kubernetes Secret projected from the
+#     org key the user saved in the AE Console. This must happen BEFORE the pod
+#     is considered ready for alerts; otherwise the first alert after start can
+#     reach RCA and fail at LLM authentication time. seed-dev, when enabled, is
+#     only a local convenience that writes through the same /config API the
+#     Console uses. reconcile-sre-anthropic-externalsecret.sh then points
+#     ExternalSecrets at the already-stored AE org key so ESO materializes
+#     openchoreo-observability-plane/rca-agent-anthropic-secret.
+echo ""
+if [ -x "$SCRIPT_DIR/repair-secrets.sh" ]; then
+    bash "$SCRIPT_DIR/repair-secrets.sh" || \
+        echo "⚠️  repair-secrets did not complete cleanly — see output above."
+fi
+echo ""
+if [ "${SKIP_DEV_SEED:-0}" = "1" ]; then
+    echo "⏭️  SKIP_DEV_SEED=1 — skipping dev seed (run scripts/seed-dev.sh manually when needed)"
+elif grep -qE '^(LOCAL_DEV_ADMIN_GITHUB_PAT|ANTHROPIC_API_KEY)=.+' "$DEPLOY_DIR/.env" 2>/dev/null; then
+    bash "$SCRIPT_DIR/seed-dev.sh" || \
+        echo "⚠️  seed-dev did not complete cleanly — see output above."
+else
+    echo "⏭️  no LOCAL_DEV_ADMIN_GITHUB_PAT / ANTHROPIC_API_KEY in .env — skipping dev seed (scripts/seed-dev.sh)"
+fi
+if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
+    bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \
+        echo "⚠️  SRE Anthropic ExternalSecret reconcile did not complete cleanly — set the org Anthropic key in the AE Console and rerun start.sh."
+fi
+
 # 7c. Verify the cluster half of the handoff — the RCA agent deployment.
 #     Best-effort: a rebuilt cluster loses the locally-imported RCA image and
 #     the pod sits in ImagePullBackOff; re-running setup-observability.sh
@@ -299,40 +327,6 @@ if kubectl cluster-info --context "${CLUSTER_CONTEXT}" --request-timeout=5s &>/d
         echo "ℹ️  $RCA_DEPLOYMENT not installed — run scripts/setup-observability.sh to"
         echo "    enable the alert→RCA→coding-agent pipeline."
     fi
-fi
-
-# 8. Repair per-org secrets in OpenBao. When the local cluster (or just the
-#    OpenBao volume) has been torn down since the last credential connect,
-#    the SM-API metadata rows still point at OpenBao paths that no longer
-#    exist. Without this stage every coding-agent dispatch hangs in
-#    CreateContainerConfigError. Best-effort: failure here doesn't fail
-#    start.sh. Safe in remote envs because repair-secrets.sh refuses to
-#    run unless the kubectl context matches the local k3d cluster.
-echo ""
-if [ -x "$SCRIPT_DIR/repair-secrets.sh" ]; then
-    bash "$SCRIPT_DIR/repair-secrets.sh" || \
-        echo "⚠️  repair-secrets did not complete cleanly — see output above."
-fi
-
-# 9. Local-dev seed. Opt-in: runs only when the operator has set
-#    LOCAL_DEV_ADMIN_GITHUB_PAT and/or ANTHROPIC_API_KEY in .env (both
-#    are preserved across setup-aep.sh re-runs). Connects the default
-#    org's credentials exactly as a user would via Settings — idempotent
-#    on re-runs, and best-effort: failure here doesn't fail start.sh.
-#    SKIP_DEV_SEED=1 disables the auto-run (e.g. to exercise the manual
-#    Settings clickthrough, or to run scripts/seed-dev.sh yourself later).
-echo ""
-if [ "${SKIP_DEV_SEED:-0}" = "1" ]; then
-    echo "⏭️  SKIP_DEV_SEED=1 — skipping dev seed (run scripts/seed-dev.sh manually when needed)"
-elif grep -qE '^(LOCAL_DEV_ADMIN_GITHUB_PAT|ANTHROPIC_API_KEY)=.+' "$DEPLOY_DIR/.env" 2>/dev/null; then
-    bash "$SCRIPT_DIR/seed-dev.sh" || \
-        echo "⚠️  seed-dev did not complete cleanly — see output above."
-    if [ -x "$SCRIPT_DIR/sync-sre-anthropic-secret.sh" ]; then
-        bash "$SCRIPT_DIR/sync-sre-anthropic-secret.sh" || \
-            echo "⚠️  SRE Anthropic secret sync did not complete cleanly — see output above."
-    fi
-else
-    echo "⏭️  no LOCAL_DEV_ADMIN_GITHUB_PAT / ANTHROPIC_API_KEY in .env — skipping dev seed (scripts/seed-dev.sh)"
 fi
 
 echo ""

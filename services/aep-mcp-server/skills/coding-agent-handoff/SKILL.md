@@ -1,6 +1,6 @@
 ---
 name: coding-agent-handoff
-description: Use for every completed SRE RCA remediation handoff — how to search related issues and then call ae_create_issue exactly once.
+description: Use for every completed SRE RCA remediation handoff — how to search related issues, then file the incident with ae_create_issue.
 ---
 
 # Coding agent handoff
@@ -137,7 +137,7 @@ material to the code change you are filing:
 
 - **`observability_recommendations`.** Advice for making FUTURE analyses
   easier ("add a metric", "raise the log level") — never this incident's fix.
-  Do not turn one into an issue heading or a bullet in the body.
+  Leave it out of the issue body entirely.
 - **The `change` patch on an already-`revised` action.** You may say THAT
   configuration already handled part of the incident (see "Mention each
   `revised` action" above); never quote or describe the ReleaseBinding patch

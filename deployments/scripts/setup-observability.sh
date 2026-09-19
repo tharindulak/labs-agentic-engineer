@@ -120,6 +120,10 @@ AE_HANDOFF="${AE_HANDOFF:-true}"
 AE_AUTO_DISPATCH="${AE_AUTO_DISPATCH:-true}"
 AE_API_URL="${AE_API_URL:-http://host.k3d.internal:3401}"
 AEP_MCP_URL="${AEP_MCP_URL:-${AE_API_URL}/mcp}"
+case "$AEP_MCP_URL" in
+    http://*|https://*) ;;
+    *) AEP_MCP_URL="http://${AEP_MCP_URL}" ;;
+esac
 # Report publishing: POST each completed RCA report to aep-api
 # so it surfaces in the console Alerts bell/list. AEP_API_URL is aep-api's REST
 # base — DISTINCT from AE_API_URL (the MCP server on :3401); reports go to the
@@ -270,8 +274,9 @@ else
 fi
 ANTHROPIC_API_KEY="$(grep -E '^ANTHROPIC_API_KEY=' "$SCRIPT_DIR/../.env" 2>/dev/null | head -1 | cut -d= -f2-)"
 if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "⚠️  ANTHROPIC_API_KEY not set in deployments/.env — RCA agent will fail its"
-    echo "    LLM connection test. Set it (or switch rca.llm.modelName to an OpenAI model)."
+    echo "ℹ️  ANTHROPIC_API_KEY not set in deployments/.env — static RCA fallback is empty."
+    echo "   This is OK when the org key is configured in the AE Console; the required"
+    echo "   rca-agent-anthropic-secret projection below is the runtime source."
 fi
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create secret generic rca-agent-secret \
     --from-literal=RCA_LLM_API_KEY="$ANTHROPIC_API_KEY" \
@@ -555,15 +560,17 @@ echo "✅ auto-trigger + handoff wiring applied"
 # AnthropicCredentialService.Connect() (aep-api) stores the console-connected
 # key in Postgres (org_secrets, AES-256-GCM) and best-effort mirrors it into
 # OpenBao via the SM-API stub. For local Docker Compose + k3d development,
-# scripts/repair-secrets.sh / scripts/sync-sre-anthropic-secret.sh project that
-# AE-stored key into this namespace as rca-agent-anthropic-secret.
+# scripts/repair-secrets.sh / scripts/reconcile-sre-anthropic-externalsecret.sh
+# point ExternalSecrets at the AE-stored org key so ESO materializes it into
+# this namespace as rca-agent-anthropic-secret.
 #
-# THIS script ensures the one-time STRUCTURAL piece exists: the volume + mount
-# + env var wiring below. If no key has been synced, `optional: true` on the
-# volume's secret source means the mount is just an empty dir rather than
-# blocking the pod in ContainerCreating — resolve_api_key() falls back to the
-# static RCA_LLM_API_KEY exactly as before, and main.py's boot-time LLM test
-# skips (warns, doesn't crash) when neither source has a key.
+# THIS script ensures the STRUCTURAL piece exists: the volume + mount + env var
+# wiring below. The secret is NOT optional when AE_HANDOFF is on. A Ready SRE
+# pod without an AE-managed org key is worse than a blocked pod: the first alert
+# reaches RCA and fails at analysis time. The reconcile below makes the key the
+# user saved through the AE Console (or local seed-dev's call into the same
+# config API) available as rca-agent-anthropic-secret before the final readiness
+# step.
 echo ""
 echo "3️⃣c Dynamic Anthropic key (volume wiring; the ExternalSecret is owned by the RCA agent's own manifest)"
 # Patched onto the Deployment (not chart values) for the same "survives a
@@ -577,7 +584,6 @@ spec:
         - name: anthropic-key
           secret:
             secretName: rca-agent-anthropic-secret
-            optional: true
             defaultMode: 0400
       containers:
         - name: '"${RCA_DEPLOYMENT}"'
@@ -591,7 +597,12 @@ spec:
 '
 echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the dynamic Anthropic key"
 echo "   Local start/repair projects AE's org Anthropic key into rca-agent-anthropic-secret."
-echo "   Until that secret exists it falls back to the static RCA_LLM_API_KEY from step 1b."
+echo "   With AE_HANDOFF=true the secret is required before the SRE pod can become Ready."
+if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
+    echo "🤖 Reconciling SRE Anthropic ExternalSecret if local AE metadata is available..."
+    bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \
+        echo "   ⚠️  could not reconcile SRE Anthropic ExternalSecret now; start.sh will retry."
+fi
 
 # ── 3d. AEP-owned SRE remediation extension — deploy-time mount ───────────
 # The OC SRE agent loads remediation extensions from EXTENSIONS_DIR. AE owns
@@ -619,7 +630,7 @@ if [ "$AE_HANDOFF" = "true" ]; then
         # The SRE extension loader validates the MCP URL before env expansion in
         # the remediation path, so render the concrete URL into mcp.json here.
         _rendered_mcp_json="$(mktemp)"
-        sed "s|\\${AEP_MCP_URL}|${AEP_MCP_URL}|g" "$HANDOFF_MCP_JSON" > "$_rendered_mcp_json"
+        awk -v url="$AEP_MCP_URL" '{ gsub(/\$\{AEP_MCP_URL\}/, url); print }' "$HANDOFF_MCP_JSON" > "$_rendered_mcp_json"
         kubectl --context "$CLUSTER_CONTEXT" -n "$NS" create configmap sre-agent-extensions \
             --from-file=CONTEXT.md="$HANDOFF_CONTEXT" \
             --from-file=mcp.json="$_rendered_mcp_json" \
@@ -848,6 +859,18 @@ EOF
 echo "⏳ Waiting for bootstrap Job to finish..."
 kubectl --context "$CLUSTER_CONTEXT" -n "$NS" wait --for=condition=complete job/opensearch-bootstrap-templates --timeout=300s
 echo "✅ OpenSearch index-template bootstrap complete"
+
+echo ""
+echo "7️⃣  Ensure observability workloads are running"
+# setup-observability.sh is the repair/reconcile entry point for the
+# alert→RCA→coding-agent pipeline. If a prior full setup or a manual
+# park-observability.sh down left OpenSearch, Fluent Bit, the logs adapter, or
+# the SRE agent parked at zero replicas, a direct re-run of this script must
+# bring them back; otherwise the install reports success while no alert can be
+# evaluated and no RCA can run. The full setup script may still choose to park
+# them after all setup steps finish, but this script's own postcondition is an
+# active observability/SRE pipeline.
+bash "$SCRIPT_DIR/park-observability.sh" up
 
 echo ""
 echo "✅ Observability Plane installation complete!"

@@ -49,11 +49,24 @@ if [ "${ENABLE_AGENT_MANAGER:-1}" = "1" ]; then
 else
     echo "  7. Agent Management Platform skipped (ENABLE_AGENT_MANAGER=0)"
 fi
-echo "  8. Park the observability plane's heavy workloads — OpenSearch,"
-echo "     Prometheus, Alertmanager, the RCA agent, Fluent Bit, the collector"
-echo "     and the adapters go to zero replicas (installed, idle, ~2 GB of"
-echo "     requests saved). Turn them on any time, no reinstall:"
-echo "     bash scripts/park-observability.sh up   (down parks again)"
+if [ "${PARK_OBSERVABILITY_AFTER_SETUP:-}" = "" ]; then
+    if [ "${ENABLE_AGENT_MANAGER:-1}" = "1" ]; then
+        PARK_OBSERVABILITY_AFTER_SETUP=1
+    else
+        PARK_OBSERVABILITY_AFTER_SETUP=0
+    fi
+fi
+if [ "$PARK_OBSERVABILITY_AFTER_SETUP" = "1" ]; then
+    echo "  8. Park the observability plane's heavy workloads — OpenSearch,"
+    echo "     Prometheus, Alertmanager, the RCA agent, Fluent Bit, the collector"
+    echo "     and the adapters go to zero replicas (installed, idle, ~2 GB of"
+    echo "     requests saved). Turn them on any time, no reinstall:"
+    echo "     bash scripts/park-observability.sh up   (down parks again)"
+else
+    echo "  8. Keep the observability plane running. This is the default when"
+    echo "     ENABLE_AGENT_MANAGER=0 so the alert → RCA → coding-agent handoff"
+    echo "     works immediately after setup."
+fi
 echo ""
 
 # The runner image (Debian + Go + Playwright + baked chromium, multi-GB) has no
@@ -136,14 +149,18 @@ else
     echo ""
 fi
 
-# Park the observability plane's heavy workloads. Running them costs about 2 GB
-# of requests on an 8 GB VM, and most local work never reads a trace, a metric
-# or the log archive. This is the LAST step because the installs above need the
-# plane up — Agent Manager's tracing module writes OpenSearch index templates,
-# and setup-observability.sh's own bootstrap Job does too. There is no flag:
-# park-observability.sh up turns the plane on for a live cluster without a
-# reinstall, and a setup re-run parks it again here.
-bash "$SCRIPT_DIR/park-observability.sh" down
+# Park the observability plane's heavy workloads only when the operator asks for
+# the memory-saving profile. Running them costs about 2 GB of requests on an
+# 8 GB VM, but parking OpenSearch and the SRE agent also turns off the
+# alert→RCA→coding-agent path. Default to parking for the full Agent Manager
+# stack, where traces/metrics are optional during ordinary local work, but keep
+# the plane running for AEP-only/SRE setups (ENABLE_AGENT_MANAGER=0). Override
+# either default explicitly with PARK_OBSERVABILITY_AFTER_SETUP=0|1.
+if [ "${PARK_OBSERVABILITY_AFTER_SETUP:-1}" = "1" ]; then
+    bash "$SCRIPT_DIR/park-observability.sh" down
+else
+    bash "$SCRIPT_DIR/park-observability.sh" up
+fi
 echo ""
 
 echo "============================================"
@@ -168,7 +185,12 @@ echo "  Agent Manager console: http://console.amp.localhost:8080"
 echo "  Agent Manager API:     http://api.amp.localhost:8080"
 echo "  Same login as the AEP console — one platform IdP serves both."
 echo ""
-echo "  Observability plane:   installed, heavy workloads PARKED (no traces,"
-echo "                         metrics, log archive or alert→RCA until"
-echo "                         bash scripts/park-observability.sh up)"
+if [ "${PARK_OBSERVABILITY_AFTER_SETUP:-1}" = "1" ]; then
+    echo "  Observability plane:   installed, heavy workloads PARKED (no traces,"
+    echo "                         metrics, log archive or alert→RCA until"
+    echo "                         bash scripts/park-observability.sh up)"
+else
+    echo "  Observability plane:   installed and RUNNING (OpenSearch, logs-adapter,"
+    echo "                         Fluent Bit, and SRE agent active for alerts/RCA)"
+fi
 echo ""

@@ -36,10 +36,11 @@ dispatch the coding agent directly.
 
 ## Credentials
 
-Anthropic credentials are managed by AE per organization. The Console writes the
-org's Anthropic key through the organization credential flow; AE stores the value
-in its org secret store and mirrors the secret-ref metadata for runtime
-projection.
+Anthropic credentials are managed by AE per organization. The Console is the
+authoritative write path: it saves the org's default Anthropic key through AE's
+organization credential flow; AE stores the value in its org secret store and
+mirrors the secret-ref metadata for runtime projection. The SRE agent must not
+have a separate hand-entered Anthropic key.
 
 The SRE hotfix image consumes the key from a file:
 
@@ -51,26 +52,37 @@ Local setup and `aectl sre install` both mount an optional Kubernetes secret at
 `/etc/rca-agent/anthropic`. The key value must not be placed in the image,
 checked into config, or logged.
 
-For local Docker Compose + k3d development, `scripts/start.sh` runs
-`scripts/repair-secrets.sh`, which also syncs the AE-stored default org
-Anthropic key into the SRE agent secret:
+For local Docker Compose + k3d development, `scripts/start.sh` runs credential
+convergence before it checks or restarts `sre-agent`. That convergence installs
+an ExternalSecret which watches the AE-stored default org Anthropic key and
+projects it into the SRE agent secret:
 
 ```text
-openchoreo-observability-plane/rca-agent-anthropic-secret
-  RCA_LLM_API_KEY -> /etc/rca-agent/anthropic/RCA_LLM_API_KEY
+AE Console org key
+  -> AE org secret store / OpenBao
+  -> ExternalSecret openchoreo-observability-plane/rca-agent-anthropic-secret
+  -> /etc/rca-agent/anthropic/RCA_LLM_API_KEY
 ```
 
 If you rotate or reconnect the Anthropic key from the AE Console after the
-stack is already running, run:
+stack is already running, no SRE-specific key entry is needed. External Secrets
+Operator refreshes `rca-agent-anthropic-secret` from the AE-managed OpenBao
+path. To repair the watcher itself, run:
 
 ```bash
 cd deployments
-bash scripts/sync-sre-anthropic-secret.sh
+bash scripts/reconcile-sre-anthropic-externalsecret.sh
 ```
 
-The script is local-only, refuses non-`k3d-openchoreo` contexts, decrypts
-through AE's credential encryption format, writes only the Kubernetes Secret,
-and restarts `sre-agent` so the projected volume is re-read.
+The reconcile script is local-only and refuses non-`k3d-openchoreo` contexts.
+It does not ask for or store a separate SRE key; it only points the SRE
+Kubernetes Secret at AE's default org Anthropic credential.
+
+`setup-observability.sh` also attempts the same ExternalSecret reconcile after wiring the
+`RCA_LLM_API_KEY_FILE` volume. With handoff enabled, the projected secret is a
+required SRE pod dependency rather than an optional fallback: a pod that cannot
+mount the AE-managed key should wait instead of accepting an alert and failing
+inside the RCA analysis.
 
 ## Local setup
 
@@ -95,6 +107,29 @@ Fast local assertions:
 ```bash
 bash deployments/scripts/setup-observability_test.sh
 docker compose -f deployments/docker-compose.yml config >/dev/null
+```
+
+`setup-observability.sh` has an active-pipeline postcondition: it restores the
+observability workloads with `park-observability.sh up` before it exits. That is
+intentional. A parked OpenSearch, Fluent Bit, logs adapter, or SRE agent means
+no log alert is evaluated and no RCA handoff can run, even though the Helm
+releases and CRDs still exist.
+
+The full `scripts/setup.sh` still supports the memory-saving parked profile,
+but it no longer applies that profile to AEP-only/SRE setups by default. When
+`ENABLE_AGENT_MANAGER=0`, setup keeps observability running so a freshly set up
+cluster can exercise the alert → RCA → coding-agent path immediately. Override
+the default explicitly when needed:
+
+```bash
+# Keep OpenSearch/logs-adapter/Fluent Bit/SRE agent running after full setup.
+ENABLE_AGENT_MANAGER=0 PARK_OBSERVABILITY_AFTER_SETUP=0 bash deployments/scripts/setup.sh
+
+# Save local memory; disables alert evaluation and SRE handoff until restored.
+PARK_OBSERVABILITY_AFTER_SETUP=1 bash deployments/scripts/setup.sh
+
+# Restore an already parked observability plane without reinstalling.
+bash deployments/scripts/park-observability.sh up
 ```
 
 ## Kubernetes setup with aectl
@@ -150,3 +185,48 @@ dispatch.
   attention reason.
 - The notification bell includes SRE attention items for alert-linked issues
   with `unverified_fix`, `no_change_verdict`, or `escalated`.
+
+## Troubleshooting findings
+
+### `ae_create_issue` was called, but no GitHub issue appeared
+
+Finding from the local cluster on 2026-09-19: the SRE remediation agent did
+call `ae_create_issue`, but `aep-mcp-server` forwarded its local MCP fallback
+token to the public `aep-api` issue endpoint. The public endpoint expects a
+Thunder user JWT, so `aep-api` rejected the downstream request with:
+
+```text
+JWT validation failed: token is malformed
+```
+
+Permanent fix direction: keep the SRE-to-MCP bearer separate from the trusted
+MCP-to-AEP issue transport. The public `/api/v1` issue API must remain user-JWT
+only; the SRE handoff should use a narrow internal, token-gated route that binds
+the server-owned org and incident context before calling the existing issue
+service.
+
+### Alert rule is ready, but SRE never runs
+
+First check whether the observability plane is parked:
+
+```bash
+bash deployments/scripts/park-observability.sh status
+```
+
+If `opensearch-master`, `logs-adapter-opensearch`, `fluent-bit`, or `sre-agent`
+is parked, alerts will not be evaluated and no RCA request will reach the SRE
+agent. Restore them with:
+
+```bash
+bash deployments/scripts/park-observability.sh up
+```
+
+If SRE receives the RCA request but immediately fails with
+`Anthropic authentication failed`, check the projected key secret:
+
+```bash
+kubectl -n openchoreo-observability-plane get secret rca-agent-anthropic-secret
+bash deployments/scripts/reconcile-sre-anthropic-externalsecret.sh
+```
+
+The fixed setup path runs that reconcile automatically when local AE is available.
