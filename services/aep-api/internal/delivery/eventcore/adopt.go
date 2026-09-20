@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // ErrNoDeployedMilestone is adoption's honest refusal: a bare issue joins the
@@ -94,7 +95,7 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		target.Labels = issue.Labels
 		target.State = issue.State
 	}
-	if delivery.HasLabel(target.Labels, "sre-agent") {
+	if sourcecontrol.HasIncidentLabel(target.Labels) {
 		if strings.EqualFold(target.State, "closed") {
 			return nil
 		}
@@ -114,7 +115,7 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 			"issue", target.Number, "kind", delivery.KindOf(target.Labels))
 		return nil
 	}
-	if delivery.HasLabel(target.Labels, "sre-agent") && !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
+	if sourcecontrol.HasIncidentLabel(target.Labels) && !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
 		if err := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); err != nil {
 			return err
 		}

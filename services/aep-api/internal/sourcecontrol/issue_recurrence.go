@@ -27,6 +27,15 @@ import (
 
 var recurrenceHeading = regexp.MustCompile(`(?m)^## Recurrence ([1-9][0-9]*)\r?$`)
 
+const (
+	incidentTrackingLabel       = "incident"
+	legacyIncidentTrackingLabel = "sre-agent"
+)
+
+func HasIncidentLabel(labels []string) bool {
+	return slices.Contains(labels, incidentTrackingLabel) || slices.Contains(labels, legacyIncidentTrackingLabel)
+}
+
 // recurrenceCount reads the numbered entries in the durable issue ledger.
 func recurrenceCount(body string) int64 {
 	return int64(len(recurrenceHeading.FindAllStringIndex(body, -1)))
@@ -34,12 +43,12 @@ func recurrenceCount(body string) int64 {
 
 // IsNoChangeVerdict identifies an SRE incident's terminal no-code-change closure.
 func IsNoChangeVerdict(issue IssueInfo) bool {
-	return slices.Contains(issue.Labels, "sre-agent") && issue.State == "closed" && issue.StateReason == "not_planned"
+	return HasIncidentLabel(issue.Labels) && issue.State == "closed" && issue.StateReason == "not_planned"
 }
 
 // IsUnverifiedFix identifies a reopened SRE incident left for human review.
 func IsUnverifiedFix(issue IssueInfo) bool {
-	return slices.Contains(issue.Labels, "sre-agent") && issue.State == "open" &&
+	return HasIncidentLabel(issue.Labels) && issue.State == "open" &&
 		issue.StateReason == "reopened" && !slices.Contains(issue.Labels, "aep")
 }
 
@@ -51,7 +60,7 @@ func AttentionReasonFor(issue IssueInfo) string {
 	if IsNoChangeVerdict(issue) {
 		return "no_change_verdict"
 	}
-	if slices.Contains(issue.Labels, "sre-agent") && issue.State == "open" && recurrenceCount(issue.Body) >= 3 {
+	if HasIncidentLabel(issue.Labels) && issue.State == "open" && recurrenceCount(issue.Body) >= 3 {
 		return "escalated"
 	}
 	if IsUnverifiedFix(issue) {
@@ -86,5 +95,5 @@ func (s *issueService) RecordRecurrence(ctx context.Context, orgID, projectID st
 }
 
 func canRecur(issue IssueInfo) bool {
-	return slices.Contains(issue.Labels, "sre-agent") && issue.State == "closed" && issue.StateReason == "completed"
+	return HasIncidentLabel(issue.Labels) && issue.State == "closed" && issue.StateReason == "completed"
 }

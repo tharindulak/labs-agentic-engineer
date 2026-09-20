@@ -47,7 +47,7 @@ test("no component leaves componentName absent", () => {
 test("the handoff labels are added once, on top of the model's own", () => {
   const resolved = resolveHandoff({ project: "p", labels: ["bug", "mine"], actionStatuses: [] });
 
-  assert.deepEqual(resolved.labels, ["bug", "mine", "sre-agent"]);
+  assert.deepEqual(resolved.labels, ["bug", "mine", "incident"]);
   for (const label of HANDOFF_LABELS) assert.ok(resolved.labels.includes(label));
 });
 
@@ -76,7 +76,7 @@ function readGoConstant(path: string, name: string): string {
 test("HANDOFF_LABELS is pinned, element for element and in order, to aep-api's label constants", () => {
   const kindBug = readGoConstant(KIND_BUG_SOURCE, "KindBug");
   const sreSource = readFileSync(SRE_ISSUE_SOURCE, "utf8");
-  assert.match(sreSource, /labels\s*:=\s*\[\]string\{"bug",\s*"sre-agent"\}/);
+  assert.match(sreSource, /labels\s*:=\s*\[\]string\{"bug",\s*incidentTrackingLabel\}/);
 
-  assert.deepEqual(HANDOFF_LABELS, [kindBug, "sre-agent"]);
+  assert.deepEqual(HANDOFF_LABELS, [kindBug, "incident"]);
 });

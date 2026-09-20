@@ -166,8 +166,8 @@ covers this incident is settled by the platform, not by you writing on it.
   argument feeds it, and when the calling process has no identity for this
   incident your value is the only thing that produces a key at all. A wrong one
   dedupes against the wrong history.
-- **The tracking labels are settled.** `bug` and `sre-agent` are added to every
-  issue you file, on top of any `labels` you pass. `sre-agent` is what lets
+- **The tracking labels are settled.** `bug` and `incident` are added to every
+  issue you file, on top of any `labels` you pass. `incident` is what lets
   a human filter for every issue this system has ever filed, independent of the
   per-component dedupe key.
 

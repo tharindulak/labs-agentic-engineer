@@ -71,7 +71,7 @@ func newFake(t *testing.T, status int, respBody string) (*Client, *capture) {
 func TestRecurrenceStateReasonReads(t *testing.T) {
 	for _, reason := range []string{"completed", "not_planned", "reopened", ""} {
 		t.Run(reason, func(t *testing.T) {
-			payload := `{"number":42,"state":"closed","state_reason":"` + reason + `","closed_at":"2026-09-18T08:00:00Z","labels":[{"name":"sre-agent"}]}`
+			payload := `{"number":42,"state":"closed","state_reason":"` + reason + `","closed_at":"2026-09-18T08:00:00Z","labels":[{"name":"incident"}]}`
 			client, _ := newFake(t, http.StatusOK, "["+payload+"]")
 			issues, err := client.ListIssues(context.Background(), "acme", "repo", stubCred{}, nil)
 			if err != nil || len(issues) != 1 {

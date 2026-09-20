@@ -30,7 +30,7 @@ beforeEach(() => {
       Body: "The SRE agent found a code-level issue.",
       URL: "https://github.com/acme/shop/issues/42",
       State: "open",
-      Labels: ["bug", "sre-agent", "aep"],
+      Labels: ["bug", "incident", "aep"],
     },
     {
       Number: 43,
@@ -38,7 +38,7 @@ beforeEach(() => {
       Body: "The coding agent left this open.",
       URL: "https://github.com/acme/shop/issues/43",
       State: "open",
-      Labels: ["bug", "sre-agent"],
+      Labels: ["bug", "incident"],
       attentionReason: "unverified_fix",
     },
     {
@@ -47,7 +47,7 @@ beforeEach(() => {
       Body: "Repeated recurrence.",
       URL: "https://github.com/acme/shop/issues/44",
       State: "open",
-      Labels: ["bug", "sre-agent"],
+      Labels: ["bug", "incident"],
       attentionReason: "escalated",
     },
   ];

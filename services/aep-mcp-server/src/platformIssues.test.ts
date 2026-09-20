@@ -34,7 +34,7 @@ import {
 } from "./platformIssues.js";
 
 const platformIssue = { Number: 4, Title: "Implement service2 slow backend", Labels: ["aep"] };
-const bugIssue = { Number: 9, Title: "service1 times out", Labels: ["bug", "sre-agent"] };
+const bugIssue = { Number: 9, Title: "service1 times out", Labels: ["bug", "incident"] };
 
 test("AE's own planned work is marked as the spec record it is", () => {
   const [annotated] = annotatePlatformIssues([platformIssue]) as Record<string, unknown>[];

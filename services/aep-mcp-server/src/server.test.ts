@@ -90,7 +90,7 @@ test("project and componentName pass straight through to aep-api", async () => {
       req: {
         title: "t",
         body: "b",
-        labels: ["mine", "bug", "sre-agent"],
+        labels: ["mine", "bug", "incident"],
         componentName: "service1",
         actionStatuses: ["revised", null],
       },

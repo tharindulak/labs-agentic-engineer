@@ -51,7 +51,7 @@ func TestUnverifiedSREFixStaysOpenAndDisarmedAfterMerge(t *testing.T) {
 	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
 	h.cycles.latest = aCycle("cycle-1", "run-1")
 	issues := &unverifiedIssues{adoptionIssues: &adoptionIssues{fakeIssues: h.issues, issue: sourcecontrol.IssueInfo{
-		Number: 12, State: "closed", StateReason: "completed", Labels: []string{"bug", "sre-agent", "aep"},
+		Number: 12, State: "closed", StateReason: "completed", Labels: []string{"bug", "incident", "aep"},
 	}}}
 	h.events.p.Issues, h.events.p.Writer = issues, delivery.NewIssueWriter(issues)
 	require.NoError(t, h.deliver(t, "pull_request", prBody("closed", "aep/m7-c1", "Resolves #12\nConfidence: low", 42, false, true, "merged")))
@@ -64,7 +64,7 @@ func TestHighConfidenceSREFixClosesNormally(t *testing.T) {
 	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
 	h.cycles.latest = aCycle("cycle-1", "run-1")
 	issues := &unverifiedIssues{adoptionIssues: &adoptionIssues{fakeIssues: h.issues, issue: sourcecontrol.IssueInfo{
-		Number: 12, State: "closed", StateReason: "completed", Labels: []string{"bug", "sre-agent", "aep"},
+		Number: 12, State: "closed", StateReason: "completed", Labels: []string{"bug", "incident", "aep"},
 	}}}
 	h.events.p.Issues, h.events.p.Writer = issues, delivery.NewIssueWriter(issues)
 
@@ -79,6 +79,6 @@ func TestSRENoWorkEventWakesCodingAttemptWithoutPullRequest(t *testing.T) {
 	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
 	h.cycles.latest = aCycle("cycle-1", "run-1")
 	h.issues.withCounts(7, 0, 0, 1)
-	require.NoError(t, h.deliver(t, "issues", issueBodyWithLabels("unlabeled", 12, 7, "aep", []string{"bug", "sre-agent"}, "coding-agent")))
+	require.NoError(t, h.deliver(t, "issues", issueBodyWithLabels("unlabeled", 12, 7, "aep", []string{"bug", "incident"}, "coding-agent")))
 	require.Len(t, h.sup.named(delivery.SigRunNoWork), 1)
 }

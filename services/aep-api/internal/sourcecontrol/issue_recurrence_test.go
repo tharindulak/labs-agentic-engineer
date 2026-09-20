@@ -27,22 +27,22 @@ func TestNoChangeUnverifiedAttention(t *testing.T) {
 		labels                               []string
 		noChange, unverified                 bool
 	}{
-		{name: "terminal SRE verdict", state: "closed", reason: "not_planned", labels: []string{"sre-agent"}, noChange: true, attention: "no_change_verdict"},
+		{name: "terminal SRE verdict", state: "closed", reason: "not_planned", labels: []string{"incident"}, noChange: true, attention: "no_change_verdict"},
 		{name: "ordinary rejection", state: "closed", reason: "not_planned", labels: []string{"bug"}},
-		{name: "completed SRE", state: "closed", reason: "completed", labels: []string{"sre-agent"}},
-		{name: "reopened disarmed", state: "open", reason: "reopened", labels: []string{"sre-agent"}, unverified: true, attention: "unverified_fix"},
-		{name: "reopened armed", state: "open", reason: "reopened", labels: []string{"sre-agent", "aep"}},
-		{name: "new ledger", state: "open", labels: []string{"sre-agent"}},
+		{name: "completed SRE", state: "closed", reason: "completed", labels: []string{"incident"}},
+		{name: "reopened disarmed", state: "open", reason: "reopened", labels: []string{"incident"}, unverified: true, attention: "unverified_fix"},
+		{name: "reopened armed", state: "open", reason: "reopened", labels: []string{"incident", "aep"}},
+		{name: "new ledger", state: "open", labels: []string{"incident"}},
 		{name: "ordinary reopened", state: "open", reason: "reopened", labels: []string{"bug"}},
-		{name: "third attempt", state: "open", reason: "reopened", body: thirdAttempt, labels: []string{"sre-agent", "aep"}},
-		{name: "fourth attempt", state: "open", reason: "reopened", body: fourthAttempt, labels: []string{"sre-agent", "aep"}, attention: "escalated"},
-		{name: "fourth recurrence armed", state: "open", reason: "reopened", body: fifthAttempt, labels: []string{"sre-agent", "aep"}, attention: "escalated"},
-		{name: "fourth attempt disarmed", state: "open", reason: "reopened", body: fourthAttempt, labels: []string{"sre-agent"}, unverified: true, attention: "escalated"},
-		{name: "fifth attempt", state: "open", reason: "reopened", body: fifthAttempt, labels: []string{"sre-agent"}, unverified: true, attention: "escalated"},
-		{name: "completed fourth", state: "closed", reason: "completed", body: fourthAttempt, labels: []string{"sre-agent"}},
-		{name: "terminal overrides escalation", state: "closed", reason: "not_planned", body: fourthAttempt, labels: []string{"sre-agent"}, noChange: true, attention: "no_change_verdict"},
+		{name: "third attempt", state: "open", reason: "reopened", body: thirdAttempt, labels: []string{"incident", "aep"}},
+		{name: "fourth attempt", state: "open", reason: "reopened", body: fourthAttempt, labels: []string{"incident", "aep"}, attention: "escalated"},
+		{name: "fourth recurrence armed", state: "open", reason: "reopened", body: fifthAttempt, labels: []string{"incident", "aep"}, attention: "escalated"},
+		{name: "fourth attempt disarmed", state: "open", reason: "reopened", body: fourthAttempt, labels: []string{"incident"}, unverified: true, attention: "escalated"},
+		{name: "fifth attempt", state: "open", reason: "reopened", body: fifthAttempt, labels: []string{"incident"}, unverified: true, attention: "escalated"},
+		{name: "completed fourth", state: "closed", reason: "completed", body: fourthAttempt, labels: []string{"incident"}},
+		{name: "terminal overrides escalation", state: "closed", reason: "not_planned", body: fourthAttempt, labels: []string{"incident"}, noChange: true, attention: "no_change_verdict"},
 		{name: "ordinary fourth", state: "open", reason: "reopened", body: fourthAttempt, labels: []string{"bug"}},
-		{name: "heading mentioned in prose", state: "open", body: "Discuss ## Recurrence 4", labels: []string{"sre-agent"}},
+		{name: "heading mentioned in prose", state: "open", body: "Discuss ## Recurrence 4", labels: []string{"incident"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			issue := IssueInfo{State: tc.state, StateReason: tc.reason, Body: tc.body, Labels: tc.labels}

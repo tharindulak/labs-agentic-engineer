@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // RegisterFunc is the webhook-router registration seam (the same closure shape
@@ -427,7 +428,7 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	if err != nil || run == nil {
 		return err
 	}
-	if run.State == delivery.RunStateRunning && delivery.HasLabel(p.issueLabels(), "sre-agent") {
+	if run.State == delivery.RunStateRunning && sourcecontrol.HasIncidentLabel(p.issueLabels()) {
 		cycle := e.openCycle(ctx, run)
 		if cycle == nil || cycle.PRNumber != 0 || cycle.Kind == delivery.CycleKindValidation {
 			return nil

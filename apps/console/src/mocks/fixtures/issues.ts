@@ -9,7 +9,7 @@ export const seedIssues: IssueInfo[] = [
     Body: "The SRE agent found a code-level RCA and dispatched the coding agent.",
     URL: "https://github.com/acme/checkout/issues/42",
     State: "open",
-    Labels: ["bug", "sre-agent", "aep"],
+    Labels: ["bug", "incident", "aep"],
   },
   {
     Number: 43,
@@ -17,7 +17,7 @@ export const seedIssues: IssueInfo[] = [
     Body: "The coding agent opened a low-confidence fix and left the issue for human review.",
     URL: "https://github.com/acme/checkout/issues/43",
     State: "open",
-    Labels: ["bug", "sre-agent"],
+    Labels: ["bug", "incident"],
     attentionReason: "unverified_fix",
   },
   {
@@ -26,7 +26,7 @@ export const seedIssues: IssueInfo[] = [
     Body: "The coding agent closed this incident as not planned.",
     URL: "https://github.com/acme/checkout/issues/44",
     State: "closed",
-    Labels: ["bug", "sre-agent"],
+    Labels: ["bug", "incident"],
     attentionReason: "no_change_verdict",
   },
   {
@@ -35,7 +35,7 @@ export const seedIssues: IssueInfo[] = [
     Body: "The same incident signature has recurred and needs escalation.",
     URL: "https://github.com/acme/checkout/issues/45",
     State: "open",
-    Labels: ["bug", "sre-agent"],
+    Labels: ["bug", "incident"],
     attentionReason: "escalated",
   },
 ];

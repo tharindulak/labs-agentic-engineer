@@ -69,12 +69,12 @@ test("issue search forwards the space-separated query to the issue list API", as
   await listIssues(
     { baseUrl: "http://aep-api", bearer: "Bearer token" },
     "project/a",
-    { query: "service timeout panic", labels: ["bug", "sre-agent"] },
+    { query: "service timeout panic", labels: ["bug", "incident"] },
   );
 
   assert.equal(
     seen?.url,
-    "http://aep-api/api/v1/projects/project%2Fa/issues?labels=bug%2Csre-agent&q=service+timeout+panic",
+    "http://aep-api/api/v1/projects/project%2Fa/issues?labels=bug%2Cincident&q=service+timeout+panic",
   );
   assert.equal(seen?.authorization, "Bearer token");
   mock.restoreAll();

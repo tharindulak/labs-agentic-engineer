@@ -50,7 +50,7 @@ func TestRecurrence_RealGitHubPayloadPreservesEvidenceBeforeReopen(t *testing.T)
 	t.Parallel()
 	stub := gittest.NewStub(t)
 	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK,
-		`[{"number":7,"html_url":"https://github.com/acme/widgets/issues/7","state":"closed","state_reason":"completed","closed_at":"2026-09-18T08:00:00Z","body":"Original RCA evidence","labels":[{"name":"sre-agent"}]}]`)
+		`[{"number":7,"html_url":"https://github.com/acme/widgets/issues/7","state":"closed","state_reason":"completed","closed_at":"2026-09-18T08:00:00Z","body":"Original RCA evidence","labels":[{"name":"incident"}]}]`)
 	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
 	svc := newIssueSvcOnStub(t, stub)
 	result, err := svc.CreateIssue(sourcecontrol.WithIncidentContext(testContext(), "alert-123"), "org1", "proj1", sourcecontrol.CreateIssueRequest{

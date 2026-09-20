@@ -222,7 +222,8 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 		return nil, ErrIncidentContextRequired
 	}
 	for _, label := range req.Labels {
-		if strings.EqualFold(strings.TrimSpace(label), "sre-agent") || reservedIncidentLabel(label) {
+		normalized := strings.ToLower(strings.TrimSpace(label))
+		if normalized == incidentTrackingLabel || normalized == legacyIncidentTrackingLabel || reservedIncidentLabel(label) {
 			return nil, ErrIncidentContextRequired
 		}
 	}

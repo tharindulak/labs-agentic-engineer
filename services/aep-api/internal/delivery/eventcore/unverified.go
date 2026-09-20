@@ -36,7 +36,7 @@ func (e *Events) keepUnverifiedIssuesOpen(ctx context.Context, orgID, projectID 
 		if err != nil {
 			return err
 		}
-		if issue == nil || !delivery.HasLabel(issue.Labels, "sre-agent") ||
+		if issue == nil || !sourcecontrol.HasIncidentLabel(issue.Labels) ||
 			sourcecontrol.IsNoChangeVerdict(*issue) || sourcecontrol.IsUnverifiedFix(*issue) {
 			continue
 		}

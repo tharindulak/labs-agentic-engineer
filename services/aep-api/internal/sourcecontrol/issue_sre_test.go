@@ -37,7 +37,7 @@ func TestSRECreateStampsLabelsAndClassifies(t *testing.T) {
 	if result.Classification != "code-level" {
 		t.Fatalf("classification = %q", result.Classification)
 	}
-	if !hasLabel(gh.issues[0], "bug") || !hasLabel(gh.issues[0], "sre-agent") {
+	if !hasLabel(gh.issues[0], "bug") || !hasLabel(gh.issues[0], "incident") {
 		t.Fatalf("SRE labels missing: %v", gh.issues[0].Labels)
 	}
 	if result.Adopted || result.AdoptionError == "" {
@@ -184,7 +184,7 @@ func TestSRERequiresTrustedContextAndComponent(t *testing.T) {
 	}{
 		{"component without context", context.Background(), CreateIssueRequest{Title: "timeout", ComponentName: "checkout", DedupeKey: "spoof"}},
 		{"statuses without context", context.Background(), CreateIssueRequest{Title: "timeout", ActionStatuses: []*string{nil}}},
-		{"SRE label without context", context.Background(), CreateIssueRequest{Title: "timeout", Labels: []string{"sre-agent"}}},
+		{"SRE label without context", context.Background(), CreateIssueRequest{Title: "timeout", Labels: []string{"incident"}}},
 		{"missing component", WithIncidentContext(context.Background(), "alert-1"), CreateIssueRequest{Title: "timeout"}},
 		{"empty context identity", WithIncidentContext(context.Background(), " "), CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}},
 	} {
@@ -263,7 +263,7 @@ func TestSREClientCannotSetDeliveryLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, label := range gh.issues[0].Labels {
-		if label != "bug" && label != "sre-agent" && label != "customer-visible" && !strings.HasPrefix(label, "dedupe:sre-config-") {
+		if label != "bug" && label != "incident" && label != "customer-visible" && !strings.HasPrefix(label, "dedupe:sre-config-") {
 			t.Fatalf("client delivery label retained: %q", label)
 		}
 	}

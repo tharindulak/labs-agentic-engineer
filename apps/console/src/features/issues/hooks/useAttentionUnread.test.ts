@@ -33,7 +33,7 @@ describe("attention unread helpers", () => {
         Body: "",
         URL: "https://github.com/acme/shop/issues/1",
         State: "open",
-        Labels: ["sre-agent"],
+        Labels: ["incident"],
       },
       {
         Number: 2,
@@ -41,7 +41,7 @@ describe("attention unread helpers", () => {
         Body: "",
         URL: "https://github.com/acme/shop/issues/2",
         State: "open",
-        Labels: ["sre-agent"],
+        Labels: ["incident"],
         attentionReason: "unverified_fix",
       },
       {
@@ -50,7 +50,7 @@ describe("attention unread helpers", () => {
         Body: "",
         URL: "https://github.com/acme/shop/issues/3",
         State: "open",
-        Labels: ["sre-agent"],
+        Labels: ["incident"],
         attentionReason: "escalated",
       },
     ];

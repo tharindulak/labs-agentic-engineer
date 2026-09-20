@@ -146,9 +146,9 @@ func TestIssueComponent_AttentionFromGitHubEvidence(t *testing.T) {
 	t.Parallel()
 	stub := gittest.NewStub(t)
 	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK, `[
-  {"number":1,"title":"review fix","state":"open","state_reason":"reopened","labels":[{"name":"sre-agent"}]},
-  {"number":2,"title":"no code change","state":"closed","state_reason":"not_planned","labels":[{"name":"sre-agent"}]},
-  {"number":3,"title":"repeated incident","state":"open","state_reason":"reopened","body":"Original\n\n## Recurrence 1\nEvidence\n\n## Recurrence 2\nEvidence\n\n## Recurrence 3\nEvidence","labels":[{"name":"sre-agent"},{"name":"aep"}]},
+	{"number":1,"title":"review fix","state":"open","state_reason":"reopened","labels":[{"name":"incident"}]},
+	{"number":2,"title":"no code change","state":"closed","state_reason":"not_planned","labels":[{"name":"incident"}]},
+	{"number":3,"title":"repeated incident","state":"open","state_reason":"reopened","body":"Original\n\n## Recurrence 1\nEvidence\n\n## Recurrence 2\nEvidence\n\n## Recurrence 3\nEvidence","labels":[{"name":"incident"},{"name":"aep"}]},
   {"number":4,"title":"ordinary","state":"open","state_reason":"reopened","labels":[{"name":"bug"}]}
 ]`)
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, newIssueSvcOnStub(t, stub))}})

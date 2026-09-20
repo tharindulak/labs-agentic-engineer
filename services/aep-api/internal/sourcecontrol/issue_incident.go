@@ -51,11 +51,11 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 	classification := ops.ClassifyActions(req.ActionStatuses)
 	req.ComponentName = strings.ToLower(strings.Join(strings.Fields(req.ComponentName), "-"))
 	req.DedupeKey = ""
-	labels := []string{"bug", "sre-agent"}
+	labels := []string{"bug", incidentTrackingLabel}
 	for _, label := range req.Labels {
 		normalized := strings.ToLower(strings.TrimSpace(label))
 		switch normalized {
-		case "", "aep", "bug", "sre-agent", "development", "validation", "provision", "conflict":
+		case "", "aep", "bug", incidentTrackingLabel, legacyIncidentTrackingLabel, "development", "validation", "provision", "conflict":
 			continue
 		}
 		if !strings.HasPrefix(normalized, "dedupe:") && !strings.HasPrefix(normalized, "aep:") {

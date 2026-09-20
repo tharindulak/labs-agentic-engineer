@@ -37,7 +37,7 @@ func (f *adoptionIssues) GetIssue(context.Context, string, string, int) (*source
 func TestSREAdoptionArmsCodeIssueInOrdinaryMilestoneQueue(t *testing.T) {
 	h := newHarness(t, aRun("deployed", 5, delivery.RunStateSucceeded))
 	h.events.p.Issues = &adoptionIssues{fakeIssues: h.issues, issue: sourcecontrol.IssueInfo{
-		Number: 31, State: "open", Labels: []string{"bug", "sre-agent", "dedupe:sre-code-123"},
+		Number: 31, State: "open", Labels: []string{"bug", "incident", "dedupe:sre-code-123"},
 	}}
 	require.NoError(t, h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 31}))
 	require.Equal(t, []string{"31+aep"}, h.issues.labelled)
@@ -54,9 +54,9 @@ func TestSREAdoptionGuards(t *testing.T) {
 		reason string
 		labels []string
 	}{
-		{"config", "open", "", []string{"bug", "sre-agent", "dedupe:sre-config-123"}},
-		{"provision", "open", "", []string{"provision", "sre-agent", "dedupe:sre-code-123"}},
-		{"not_planned", "closed", "not_planned", []string{"bug", "sre-agent", "dedupe:sre-code-123"}},
+		{"config", "open", "", []string{"bug", "incident", "dedupe:sre-config-123"}},
+		{"provision", "open", "", []string{"provision", "incident", "dedupe:sre-code-123"}},
+		{"not_planned", "closed", "not_planned", []string{"bug", "incident", "dedupe:sre-code-123"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, aRun("deployed", 5, delivery.RunStateSucceeded))

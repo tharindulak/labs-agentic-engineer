@@ -105,7 +105,7 @@ func TestRecurrenceCompletedPreservesEvidenceAndEscalates(t *testing.T) {
 		if issue.State != "open" || issue.AttentionReason != want {
 			t.Fatalf("detail=%+v, want %s", issue, want)
 		}
-		listed, err := svc.ListIssues(ctx, "org", "proj", []string{"sre-agent"})
+		listed, err := svc.ListIssues(ctx, "org", "proj", []string{"incident"})
 		if err != nil || len(listed) != 1 || listed[0].AttentionReason != want {
 			t.Fatalf("list=%+v err=%v", listed, err)
 		}

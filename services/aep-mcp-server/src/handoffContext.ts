@@ -36,7 +36,7 @@
 /**
  * Applied to every issue filed through this server.
  *
- * `sre-agent` is load-bearing, not a human convenience: aep-api's recurrence
+ * `incident` is load-bearing, not a human convenience: aep-api's recurrence
  * lookup queries GitHub with the dedupe label AND this one together
  * (internal/sourcecontrol/issue_service.go), so an issue filed without it drops
  * out of recurrence detection and a real recurrence reads as a first filing.
@@ -45,7 +45,7 @@
  * cannot import, so a test in handoffContext.test.ts reads that declaration
  * out of the Go source and pins this copy against it.
  */
-export const HANDOFF_LABELS: readonly string[] = ["bug", "sre-agent"];
+export const HANDOFF_LABELS: readonly string[] = ["bug", "incident"];
 
 export interface ResolvedHandoff {
   project: string;
