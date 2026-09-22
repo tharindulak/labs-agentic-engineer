@@ -191,6 +191,9 @@ type FilesService interface {
 	// why the fan-out is expensive AND incoherent.
 	Bundle(ctx context.Context, orgID, projectID, prefix, at string) (*FileBundle, error)
 	Apply(ctx context.Context, orgID, projectID string, req ApplyRequest) (*ApplyResult, []Conflict, error)
+	// SetRegisteredResourceReader wires the org resource registry Apply copies
+	// a Registered External resource from when a batch lands a stub naming one.
+	SetRegisteredResourceReader(r RegisteredResourceReader)
 	// PutReferences replaces the project's reference documents — the files
 	// attached on the create view. They are NOT spec files and never enter the
 	// repo (console ADR-0017); the workspace engine stores them beside the
@@ -203,12 +206,29 @@ type FilesService interface {
 type service struct {
 	repos FilesRepoResolver
 	git   FilesGitGateway
+	// registry completes a stub dependency file that names a Registered
+	// External resource (registry_copy.go). Nil until the composition root
+	// wires it; a stub then lands with a warning.
+	registry RegisteredResourceReader
+	// fetchDocument fetches a provider's published contract document for a
+	// dependency that named one by URL (registry_copy.go,
+	// completeProviderDocuments). FetchSpecFromURL in production; tests
+	// inject a fake. Nil leaves such a definition as written.
+	fetchDocument func(context.Context, string) ([]byte, error)
+}
+
+// SetRegisteredResourceReader wires the org resource registry the apply
+// path copies from. A nil reader is a documented no-op.
+func (s *service) SetRegisteredResourceReader(r RegisteredResourceReader) {
+	if s != nil {
+		s.registry = r
+	}
 }
 
 // NewFilesService wires the Files API. Either dep may be nil in degraded boot; the
 // operations then surface ErrProjectRepoNotFound.
 func NewFilesService(repos FilesRepoResolver, git FilesGitGateway) FilesService {
-	return &service{repos: repos, git: git}
+	return &service{repos: repos, git: git, fetchDocument: FetchSpecFromURL}
 }
 
 // repoRow looks up the project's repo row, mapping absence to
@@ -432,12 +452,36 @@ func (s *service) Apply(ctx context.Context, orgID, projectID string, req ApplyR
 	}
 	author, committer := s.git.ResolveSaveIdentities(ref.Cred)
 
+	// Registry copies (registry_copy.go): a stub dependency file that names a
+	// Registered External resource is completed from the org record — read
+	// here, once, never inside the CAS-retried fn.
+	copies, copyWarnings := completeRegistryCopies(ctx, s.registry, orgID, req.Writes)
+	// Provider documents (same file): a contract the agent pointed at by URL
+	// is fetched by the platform, once, and landed beside the definition.
+	fetched, fetchWarnings := completeProviderDocuments(ctx, s.fetchDocument, req.Writes, copies)
+	for p, c := range fetched {
+		copies[p] = c
+	}
+	copyWarnings = append(copyWarnings, fetchWarnings...)
+	// A document the platform lands beside a definition is platform-authored:
+	// the request must not also write or delete it. Deletes are applied after
+	// writes, so a request that deleted one would commit a definition pointing
+	// at a document the same commit removed. `seen` already holds every
+	// explicitly named path.
+	for _, c := range copies {
+		for _, p := range sortedPaths(c.Files) {
+			if seen[p] {
+				return nil, nil, fmt.Errorf("%w: %s is written by the platform for this dependency and cannot be written or deleted in the same request", ErrPathInvalid, p)
+			}
+		}
+	}
+
 	var conflicts []Conflict
 	var files []FileMeta
 	var warnings []Warning
 	res, err := s.git.Workspace().Mutate(ctx, ref, func(tx sourcecontrol.Tx) error {
 		// fn re-runs against a fresh base on a CAS retry — start clean.
-		conflicts, files, warnings = nil, nil, nil
+		conflicts, files, warnings = nil, nil, append([]Warning(nil), copyWarnings...)
 
 		// The committed base tree this attempt builds on: path → blob sha,
 		// the input to every per-file baseSha precondition.
@@ -456,14 +500,25 @@ func (s *service) Apply(ctx context.Context, orgID, projectID string, req ApplyR
 
 		batch := map[string]bool{}
 		for _, w := range req.Writes {
-			tx.Write(w.Path, []byte(w.Content))
+			content := w.Content
+			if c, copied := copies[w.Path]; copied {
+				// The completed copy replaces the stub; its document lands in
+				// the same commit, platform-authored, beside the file.
+				content = c.Definition
+				for _, p := range sortedPaths(c.Files) {
+					tx.Write(p, []byte(c.Files[p]))
+					batch[p] = true
+					files = append(files, FileMeta{Path: p, SHA: blobSHA([]byte(c.Files[p]))})
+				}
+			}
+			tx.Write(w.Path, []byte(content))
 			batch[w.Path] = true
 			// The staged blob's object name is a pure function of its content
 			// (what `git hash-object` will produce), so the response carries
 			// the exact sha a subsequent read returns — the FE folds it into
 			// its baseShas.
-			files = append(files, FileMeta{Path: w.Path, SHA: blobSHA([]byte(w.Content))})
-			warnings = append(warnings, softValidate(w.Path, w.Content)...)
+			files = append(files, FileMeta{Path: w.Path, SHA: blobSHA([]byte(content))})
+			warnings = append(warnings, softValidate(w.Path, content)...)
 		}
 		for _, d := range req.Deletes {
 			tx.Delete(d.Path)
@@ -485,10 +540,19 @@ func (s *service) Apply(ctx context.Context, orgID, projectID string, req ApplyR
 			for _, path := range sortedPaths(scaffolds) {
 				content := scaffolds[path]
 				tx.Write(path, []byte(content))
+				batchContent[path] = content
 				files = append(files, FileMeta{Path: path, SHA: blobSHA([]byte(content))})
 				warnings = append(warnings, Warning{Path: path, Message: "scaffolded from design.cell — enrich, don't author, the mechanical fields"})
 			}
 		}
+		// The security design's coverage notices. softValidate above judges ONE
+		// file at a time; these need the whole design bundle, which this is the
+		// first place to hold — the committed tree plus what this batch lands.
+		deleted := map[string]bool{}
+		for _, d := range req.Deletes {
+			deleted[d.Path] = true
+		}
+		warnings = append(warnings, securityDesignNotices(tx.Base(), current, batchContent, deleted)...)
 		return nil
 	}, sourcecontrol.CommitOpts{
 		Message:   applyMessage(req.Message),
@@ -545,6 +609,76 @@ func checkPreconditions(req ApplyRequest, current map[string]string) []Conflict 
 		}
 	}
 	return conflicts
+}
+
+// treeReader is the one thing securityDesignNotices needs of the committed
+// base tree: the content of a path it already knows exists.
+type treeReader interface {
+	Read(rel string) ([]byte, string, error)
+}
+
+// securityDesignNotices are the security design's non-blocking coverage notices
+// for the tree this apply LANDS. They are the soft-tier twin of the build
+// gate's hard rules: "declared, used nowhere", "unreachable by any role", and
+// the INFO note that an assignTo group is one the directory already holds.
+//
+// This is the apply path's seam for them because it is the earliest place that
+// holds the WHOLE bundle: softValidate sees one file's
+// content, and a coverage fact is a statement about security.json read against
+// design.cell, the wireframes and the component specs together. Every one of
+// those files may be untouched by this batch, so the committed tree is read for
+// the ones the batch does not carry.
+//
+// It costs those reads, so it runs only when the batch touches specs/design/
+// AND the landed tree actually has a security.json — a project with no security
+// design pays nothing.
+func securityDesignNotices(base treeReader, current, batch map[string]string, deleted map[string]bool) []Warning {
+	touchesDesign := false
+	for path := range batch {
+		if strings.HasPrefix(path, designPrefix) {
+			touchesDesign = true
+			break
+		}
+	}
+	if !touchesDesign {
+		return nil
+	}
+	if _, inBatch := batch[securityspec.Path]; !inBatch {
+		if _, inTree := current[securityspec.Path]; !inTree || deleted[securityspec.Path] {
+			return nil
+		}
+	}
+
+	bundle := map[string]string{}
+	for path := range current {
+		rel, ok := strings.CutPrefix(path, designPrefix)
+		if !ok || rel == "" || !designBundleFilter(rel) || deleted[path] {
+			continue
+		}
+		if _, inBatch := batch[path]; inBatch {
+			continue // the batch's version is the one that lands
+		}
+		content, _, err := base.Read(path)
+		if err != nil {
+			continue // unreadable is the same as absent: the rule that needs it is skipped
+		}
+		bundle[rel] = string(content)
+	}
+	for path, content := range batch {
+		rel, ok := strings.CutPrefix(path, designPrefix)
+		if !ok || rel == "" || !designBundleFilter(rel) {
+			continue
+		}
+		bundle[rel] = content
+	}
+
+	// buildGateWarnings speaks bundle-relative paths; this channel is keyed by
+	// repo path, the same as every other Warning the apply returns.
+	notices := buildGateWarnings(bundle)
+	for i := range notices {
+		notices[i].Path = designPrefix + notices[i].Path
+	}
+	return notices
 }
 
 // softValidate returns non-blocking warnings for a written file (§8's soft tier

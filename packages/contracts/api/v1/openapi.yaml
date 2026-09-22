@@ -1728,6 +1728,66 @@ paths:
       summary: Collect an external dependency's values and provision it
       tags:
       - Dependencies
+  /projects/{projectName}/dependencies/external-resources/{name}/promote:
+    post:
+      operationId: promote-external-resource
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      - description: The project's own external resource (dependency) name
+        in: path
+        name: name
+        required: true
+        schema:
+          description: The project's own external resource (dependency) name
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteExternalResourceRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalResourceDTO'
+          description: The organization now holds the record; the project's dependency file was rewritten as a copy of it
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing instructions, a key without a value in some environment and nothing to carry over, or a project resource with no provider or keys
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The project has no such external dependency
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The dependency already reuses a record, or the organization already registered this name
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Promote a project's own external resource to the organization's registry
+      tags:
+      - Dependencies
   /projects/{projectName}/dependencies/{depName}/contract:
     post:
       operationId: provide-dependency-contract
@@ -4413,10 +4473,12 @@ components:
       description: A component's unified, kind-discriminated dependency entry. status/reason/flags
         are read-time computed by spec.ComputeDependencyStatus — never authored,
         never persisted (Design.json write-gate rejects them). An external
-        dependency's definition (source, provider, style, contract, sdk, package,
-        provenance, suggestions, config, assumed) is HYDRATED from its own file,
+        dependency is HYDRATED from its own file,
         specs/design/dependencies/<name>/dependency.json — one dependency, one
-        definition, referenced by name from every component that uses it.
+        definition, holding a full `resource` block (a copy from the org registry
+        when resourceRef is set, else one the project defined). style,
+        contractAssumed and contractDerived are COMPUTED from the contract's type
+        and origin; nothing here is stored as such.
       x-go-type: contracts.Dependency
       x-go-type-import:
         path: github.com/wso2/aep/aep-api/internal/contracts
@@ -4433,22 +4495,34 @@ components:
         reason:
           type: string
         flags:
-          description: Read-time qualifiers on a resolved external dependency — registered, assumed, derived, sdk-only.
+          description: Read-time qualifiers on a resolved external dependency — registered, assumed, derived, sdk-only, stale.
           items:
             type: string
           type: array
           nullable: true
         source:
-          description: project (agent-authored here) or org (a platform-stamped copy of a Registered External resource).
+          description: project (the resource block was defined here) or org (it was copied from a Registered External resource — resourceRef is set). Computed.
+          type: string
+        resourceRef:
+          description: The registry name the resource block was copied from; empty for a Project External resource.
           type: string
         provider:
           description: The concrete system chosen; absent until the user chose one (suggestions may be open).
           type: string
+        consumptionInstructions:
+          description: The organization's instructions for a copied resource; never on a project-defined one.
+          type: string
         style:
-          description: rest-api | graphql | sdk
+          description: rest-api | graphql | sdk — computed from contractType.
+          type: string
+        contractType:
+          description: openapi | graphql | sdk — the contract object's type.
+          type: string
+        contractOrigin:
+          description: registry | provider | derived | assumed — where the project's contract file came from.
           type: string
         contract:
-          description: The contract file name in the dependency's directory, present only when the file is on disk.
+          description: The contract file name in the dependency's directory, present only when the file is on disk (sdk contracts report it under sdk).
           type: string
         sdk:
           description: The SDK manifest file name (sdk.json), present only when it is on disk.
@@ -4463,7 +4537,7 @@ components:
           description: For an sdk dependency, the package for this component's language, from the manifest.
           type: string
         provenance:
-          $ref: '#/components/schemas/DependencyProvenance'
+          $ref: '#/components/schemas/ResourceProvenance'
         assumed:
           $ref: '#/components/schemas/DependencyAssumption'
         suggestions:
@@ -4511,22 +4585,82 @@ components:
           description: Optional note recorded with the acceptance; defaults to the agent's own note of what it was unsure about.
           type: string
       type: object
-    DependencyProvenance:
-      description: Where a committed contract came from — the source document, its full-document
-        hash, when it was read, and whether the committed file is a slice of it.
-      x-go-type: contracts.DependencyProvenance
+    ResourceProvenance:
+      description: Where a copy of a contract document came from, at either level — the
+        internet address an org copy was fetched from, or the registry file a project copy
+        was taken from — with the whole document's hash at the time and when it was read.
+      x-go-type: contracts.ResourceProvenance
       x-go-type-import:
         path: github.com/wso2/aep/aep-api/internal/contracts
       additionalProperties: false
       properties:
         sourceUrl:
           type: string
+        registry:
+          description: The org-resource-docs path (<name>/<file>) a project copy was taken from. Never a URL.
+          type: string
         sha256:
           type: string
-        fetchedAt:
+        readOn:
           type: string
-        sliced:
-          type: boolean
+      type: object
+    ResourceContract:
+      description: The contract as held at one level — `{ type, path }`, the path relative to that
+        level's store (the org docs repo for a registry record, the dependency directory for a
+        project copy). No URL form exists. On a project copy, origin says where the file came from
+        and accepted is the user's permission for an assumed one (platform-written).
+      x-go-type: contracts.ResourceContract
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/contracts
+      additionalProperties: false
+      properties:
+        type:
+          $ref: '#/components/schemas/ResourceContractType'
+        path:
+          type: string
+        origin:
+          enum:
+          - registry
+          - provider
+          - derived
+          - assumed
+          type: string
+        accepted:
+          $ref: '#/components/schemas/DependencyAssumption'
+      required:
+      - type
+      - path
+      type: object
+    ResourceDefinition:
+      description: An External resource in the one shape it has at both levels — the org registry
+        record and a dependency's `resource` block. Values are never here.
+      x-go-type: contracts.ResourceDefinition
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/contracts
+      additionalProperties: false
+      properties:
+        ref:
+          description: Project copy only — the registry name the block was copied from; equals the dependency name.
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        provider:
+          type: string
+        config:
+          items:
+            $ref: '#/components/schemas/ConfigKey'
+          type: array
+          nullable: true
+        contract:
+          $ref: '#/components/schemas/ResourceContract'
+        consumptionInstructions:
+          type: string
+        provenance:
+          $ref: '#/components/schemas/ResourceProvenance'
+      required:
+      - name
       type: object
     DependencyAssumption:
       description: The user's permission to build against a contract the agent wrote from research —
@@ -4921,6 +5055,12 @@ components:
           - asyncapi
           - protobuf
           type: string
+          x-enum-varnames:
+          - ResourceDocWriteDTOTypeDocumentation
+          - ResourceDocWriteDTOTypeOpenapi
+          - ResourceDocWriteDTOTypeGraphql
+          - ResourceDocWriteDTOTypeAsyncapi
+          - ResourceDocWriteDTOTypeProtobuf
         url:
           type: string
         path:
@@ -4949,11 +5089,43 @@ components:
       type: object
     EnvironmentDTO:
       additionalProperties: false
+      description: >-
+        One environment in the org's deployment pipeline, in promotion order.
+        `name` is the OpenChoreo Environment's immutable identity; everything
+        else is presentation or flow. `validation` says whether this
+        environment runs a validation step; it is always present in the
+        response, because an Environment whose annotation is missing or
+        unrecognised is served as "off".
       properties:
         name:
           type: string
+          description: Immutable OpenChoreo Environment name. Bindings and cell namespaces reference it.
+        displayName:
+          type: string
+          description: From the openchoreo.dev/display-name annotation; falls back to a titlecased name.
+        isProduction:
+          type: boolean
+          description: From Environment.spec.isProduction. Never inferred from the name.
+        validation:
+          type: string
+          enum: [on, off]
+          description: >-
+            From the aep.wso2.com/validation annotation. Always present in the
+            response: when the annotation is missing or unrecognised on the
+            Environment, the server serves "off".
+        position:
+          type: integer
+          format: int32
+          description: 0-based index in promotion order. The array is already ordered; this is a convenience.
+        promotesTo:
+          type: string
+          description: The next environment's name. Omitted on the last environment, which has no promote step.
       required:
       - name
+      - displayName
+      - isProduction
+      - validation
+      - position
       type: object
     RegisterExternalResourceRequest:
       additionalProperties: false
@@ -4964,25 +5136,20 @@ components:
           type: array
         consumptionInstructions:
           type: string
+        contract:
+          allOf:
+          - $ref: '#/components/schemas/ResourceContractWriteDTO'
+          x-go-type-skip-optional-pointer: false
         description:
           type: string
         envValues:
           items:
-            additionalProperties: false
-            properties:
-              environment:
-                type: string
-              key:
-                type: string
-              value:
-                type: string
-            required:
-            - environment
-            - key
-            - value
-            type: object
+            $ref: '#/components/schemas/EnvValueWriteDTO'
           type: array
         name:
+          type: string
+        provider:
+          description: The concrete system this resource is ("Open Exchange Rates").
           type: string
         resourceDocs:
           items:
@@ -4992,9 +5159,79 @@ components:
       required:
       - name
       - description
+      - provider
       - consumptionInstructions
       - config
       - envValues
+      type: object
+    EnvValueWriteDTO:
+      additionalProperties: false
+      description: One value of one config key in one environment, as written by a form.
+      properties:
+        environment:
+          type: string
+        key:
+          type: string
+        value:
+          type: string
+      required:
+      - environment
+      - key
+      - value
+      type: object
+    PromoteExternalResourceRequest:
+      additionalProperties: false
+      description: >
+        What the organization adds when it takes over a project's own resource: how
+        its consumers should use it and a value for every key in every environment.
+        Name, provider, keys, description and contract come from the project's copy.
+        An environment left out of envValues is carried over from the project's own
+        values when it has them.
+      properties:
+        consumptionInstructions:
+          type: string
+        description:
+          description: Replaces the project's description when set.
+          type: string
+        envValues:
+          items:
+            $ref: '#/components/schemas/EnvValueWriteDTO'
+          type: array
+      required:
+      - consumptionInstructions
+      type: object
+    ResourceContractType:
+      description: The kind of document a resource's contract is.
+      enum:
+      - openapi
+      - graphql
+      - sdk
+      - asyncapi
+      - protobuf
+      - documentation
+      type: string
+    ResourceContractWriteDTO:
+      additionalProperties: false
+      description: >
+        The resource's contract document on register/update. Exactly one of url (fetched
+        by the platform, hashed and committed to the org docs repo — the URL is kept only
+        as provenance) or fileName+content (uploaded). At most 5 MiB.
+        Accepted shapes, enforced by the server (any other is a 400 naming the rule):
+        `{type, url}` or `{type, fileName, content}` — never both forms, never type alone.
+        The pair is not expressed as a JSON-Schema oneOf on purpose: the generators this
+        contract feeds turn it into an unusable union (a `json.RawMessage` union field in
+        Go, `unknown` in TypeScript) that hides the three plain fields callers actually set.
+      properties:
+        type:
+          $ref: '#/components/schemas/ResourceContractType'
+        url:
+          type: string
+        fileName:
+          type: string
+        content:
+          type: string
+      required:
+      - type
       type: object
     ExternalResourceDTO:
       additionalProperties: false
@@ -5028,6 +5265,29 @@ components:
           nullable: true
           type: array
         name:
+          type: string
+        provider:
+          type: string
+        contract:
+          allOf:
+          - $ref: '#/components/schemas/ResourceContract'
+          x-go-type-skip-optional-pointer: false
+        provenance:
+          allOf:
+          - $ref: '#/components/schemas/ResourceProvenance'
+          x-go-type-skip-optional-pointer: false
+        scope:
+          description: >
+            org — a Registered External resource, held by the organization; project — a
+            project's own resource, listed with its project so the organization can
+            promote it. Org-only readers (the design agent's catalog, Register's
+            uniqueness check) never see project rows.
+          enum:
+          - org
+          - project
+          type: string
+        project:
+          description: The project that holds this resource; set on scope project only.
           type: string
         resourceDocs:
           items:
@@ -5782,6 +6042,64 @@ components:
       required:
       - items
       type: object
+    ProjectRole:
+      additionalProperties: false
+      description: One role THIS project owns on the identity provider. A different kind of object
+        from ProjectRoleState, which is a SHARED org group. A project role is named
+        `<project>/<Role>`, exactly one project creates it, and that project's builds converge it
+        and its delete removes it.
+      properties:
+        assignedTo:
+          description: The GROUPS holding the role, in binding order. EMPTY is meaningful, not
+            missing data - it is the normal shape for a self-service role (which carries no
+            assignTo, and whose test logins hold it as user principals instead) and for a service
+            role (an application principal holds it).
+          items:
+            $ref: '#/components/schemas/ProjectRoleAssignment'
+          type: array
+          nullable: true
+        directoryName:
+          description: The name the directory carries - `<project>/<Role>`. The prefix is the
+            platform's ownership device; render `name`, not this.
+          type: string
+        name:
+          description: The role as the design declares it (`Approver`), which is what a test user
+            reference names and what the console renders.
+          type: string
+        resourceServer:
+          description: The resource server identifier every grant of this role is on. Every role of
+            one project carries the same value, so a reader that wants the project's answer - and
+            wants it before any role exists - reads `resourceServer` on the view instead.
+          type: string
+        scopes:
+          description: The catalog handles the role grants, read from the identity provider and
+            sorted. Empty when the directory could not be asked - "unknown", not "grants nothing".
+          items:
+            type: string
+          type: array
+          nullable: true
+      required:
+      - name
+      - resourceServer
+      type: object
+    ProjectRoleAssignment:
+      additionalProperties: false
+      description: One group a project role is assigned to, with how load-bearing that group already
+        is. The count travels with the assignment because "assigned to Finance" and "assigned to
+        Finance, which holds roles in two projects" are different facts to somebody deciding whether
+        to reuse a group.
+      properties:
+        group:
+          description: The group name, verbatim from the design's `assignTo`.
+          type: string
+        projects:
+          description: How many DISTINCT projects on this directory assign any role to the group. A
+            group only this project binds reads 1.
+          type: integer
+      required:
+      - group
+      - projects
+      type: object
     ProjectRoleState:
       additionalProperties: false
       description: One role as it exists on the identity provider right now, joined against the
@@ -5802,8 +6120,14 @@ components:
           type: string
         platformCreated:
           description: True when the platform created this role and may therefore enrol test users
-            into it. A hand-made group reads false and the platform leaves it alone.
+            into it. A hand-made group reads false and the platform leaves it alone. It is also the
+            new-or-reused answer a role card renders - there is no separate directory status.
           type: boolean
+        projects:
+          description: How many DISTINCT projects on this directory assign a role to this group -
+            the "reused, holds roles in n projects" a role card shows. A group nobody has bound a
+            role to yet reads 0.
+          type: integer
       required:
       - name
       - platformCreated
@@ -5825,6 +6149,24 @@ components:
             $ref: '#/components/schemas/ProjectRoleState'
           type: array
           nullable: true
+        projectRoles:
+          description: The roles THIS project owns, which `roles` above deliberately does not
+            contain - the two are different kinds of object with different ownership rules, and one
+            list would make "which existing group does this design reuse" unanswerable. Derived from
+            the platform's own records, so they survive a directory outage with everything but their
+            scopes.
+          items:
+            $ref: '#/components/schemas/ProjectRole'
+          type: array
+          nullable: true
+        resourceServer:
+          description: The resource server this project's grants are on - the access token's `aud`,
+            the audience the gateway checks and the `resource` a scoped token is asked for. Read
+            from the platform's record, or derived from (org, project) when no build has written
+            one, so it answers before the first build too. Absent only when the panel could not be
+            scoped to an environment at all, which is the same condition that empties every other
+            field.
+          type: string
         testUsers:
           description: The test accounts THIS project's design references, role-ordered.
           items:
@@ -5839,10 +6181,6 @@ components:
       description: One test account this project references. The account itself is shared at the
         identity provider's scope; only the reference is the project's.
       properties:
-        coldStart:
-          description: True for the account holding this project's cold-start role — the one served
-            when a caller asks for credentials without naming a role.
-          type: boolean
         exists:
           description: True when the account is present on the identity provider. Meaningless when
             directoryAvailable is false.
@@ -5864,9 +6202,23 @@ components:
             type: string
           type: array
           nullable: true
-        roleName:
-          description: The role this account holds.
-          type: string
+        roles:
+          description: Every project role this login holds - the one the account exists FOR
+            first, then any other role of this project whose group the account is also a member of,
+            read from the identity provider. Empty only when the account references no role at
+            all.
+          items:
+            type: string
+          type: array
+          nullable: true
+        scopes:
+          description: The union of those roles' grants, sorted - the catalog handles this login's
+            access token will carry. Empty when the directory could not be asked, which is "unknown"
+            rather than "none".
+          items:
+            type: string
+          type: array
+          nullable: true
         rotatedAt:
           description: When the password was last replaced; null when never.
           format: date-time
@@ -5881,9 +6233,7 @@ components:
           type: string
       required:
       - username
-      - roleName
       - supplied
-      - coldStart
       - exists
       - owned
       type: object

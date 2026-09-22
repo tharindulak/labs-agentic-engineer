@@ -18,10 +18,20 @@
 
 // Mock mode — copied verbatim to <app-path>/mock/browser.ts, never edited.
 // The handlers beside it are the app's; this file only starts them.
+//
+// THE ORDER IS THE DESIGN. MSW takes the first handler that matches AND
+// answers; a resolver that returns nothing falls through to the next one. So
+// the three layers below are the deployed request path, in the deployed order:
+//
+//   gatewayHandlers  the API gateway — may this caller call this at all? (401)
+//   handlers         the service — the app's own data, ownership and 404s
+//   unhandledApi     nothing answered: the mock's own gap, said out loud (501)
 
 import { http, HttpResponse, type RequestHandler } from "msw";
 import { setupWorker } from "msw/browser";
+import { gatewayHandlers } from "./authz/gateway";
 import { handlers } from "./handlers";
+import { mountRoleBadge } from "./badge";
 
 // Closes the API surface, and it has to be closed explicitly: MSW passes an
 // unhandled request THROUGH to the network, so a call nobody wrote a handler
@@ -38,10 +48,21 @@ const unhandledApi: RequestHandler = http.all("/api/*", ({ request }) => {
   );
 });
 
-// Last, so every handler the app authored wins over it.
-export const worker = setupWorker(...handlers, unhandledApi);
+export const worker = setupWorker(...gatewayHandlers, ...handlers, unhandledApi);
 
 export async function startMockWorker(): Promise<void> {
+  // Who am I / switch. Mounted in both modes and before the early return below,
+  // because wired mode is the one where a person walks every role in one
+  // sitting and it is the only thing this module does there.
+  mountRoleBadge();
+
+  // WIRED MODE (the playground's `wire` verb): `/api` is proxied to the real
+  // service and the dev server is the gateway in front of it — see
+  // mock/wired.ts. Starting the worker here would intercept those calls in the
+  // browser and answer them from seed data, which is precisely the thing wired
+  // mode exists not to do.
+  if ((globalThis as { __AEP_WIRED__?: boolean }).__AEP_WIRED__) return;
+
   // Everything else the page asks for — modules, assets, HMR — is the dev
   // server's and passes through untouched.
   await worker.start({ onUnhandledRequest: "bypass" });

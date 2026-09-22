@@ -57,7 +57,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | `Deployer` · `DeploymentReader` | offers | `delivery/run` — plan a reconcile pass over the version's state, promote each target at its OWN commit, and read back whether components are serving. The supervisor owns the verdict and what to do with a held component; this domain owns the plan and the OpenChoreo writes, which is what keeps a cluster client out of the run loop |
 | `BindingConverger` (`Converge`) | offers | the config slice — an env-var edit pushes onto the live binding through the deploy path rather than patching a field of it, so the two can never write different desired states onto one object |
 | `ComponentEnvVarReader` · `RuntimeFileProvider` | needs | the config slice and `dependencies/runtimeconfig` — the two projections whose values ride the binding's workload overrides. Both are declared consumer-side and both distinguish "no values" from "cannot compute yet": an unready projection leaves its field UNMANAGED rather than writing an empty one over the user's values |
-| CRT catalog · binding patcher · `ThunderApplicationReader` | needs | after OC Ready, a web-app whose platform-resource CRT carries `ConsumerURLEnvConfig` stays pending until the ThunderApplication CR has the SPA callback. Wired via `SetResourceCatalog` / `SetResourceClient` / `SetThunderApplicationReader`. Any nil (or a nil store) skips the wait, so OC-only `DeploymentState` tests stay green. Service components never enter it. This domain consumes `ThunderApplicationView`; it does not GET Kubernetes |
+| CRT catalog · binding patcher · `ThunderApplicationReader` | needs | after OC Ready, a web-app whose platform-resource CRT carries `ConsumerURLEnvConfig` stays pending until the ThunderApplication CR carries THAT web app's callback. Registration is PROJECT-scoped and happens once per read, ahead of the per-component fold (`thunderPass`), because several web apps can share one dependency and therefore one callback field. Wired via `SetResourceCatalog` / `SetResourceClient` / `SetThunderApplicationReader`. Any nil (or a nil store) skips the wait, so OC-only `DeploymentState` tests stay green. Service components never enter it. This domain consumes `ThunderApplicationView`; it does not GET Kubernetes |
 | `EndpointGate` | needs | after OC Ready, a component that advertises an external URL stays pending until that URL ANSWERS. ONE gate, wired via `SetEndpointGate` onto BOTH the deploy-stage read (`DeploymentState`) and the status poll (`holdUnreachable`), so the supervisor and the console cannot answer differently about one component and the first probe serves both. The URL rides `ReleaseBindingSummary.ExternalURL` — the same object, no second request. Nil skips the gate, and the composition root wires one only when the data-plane gateway fronts TLS: a plane without it has no certificate to wait for, and its `*.openchoreoapis.localhost` names resolve to loopback from this process. A component that advertises no URL passes untouched |
 | `OrgPublisher` | needs | `organization` — per-org Thunder publisher provisioning + the IDP profile a protected API's JWT validation is pinned to. Best-effort: a failure composes an unpinned trait rather than failing a version's deploy |
 | `ProjectLister` | needs | `sourcecontrol`, at the root — every project the platform tracks, for the converge sweep. The git-repository index rather than the executions table, because the run loop mints no execution rows and a sweep reading those saw nothing on that rail |
@@ -69,8 +69,9 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 - **The DEPLOY** (`DeploymentService`): cut a component's release from the Workload its build posted, compose
   the whole desired binding, write it once, and report what the cluster says back. Plus `ConvergeWatcher`,
   the sweep that re-asserts deployed bindings for drift no event causes.
-- **The desired-state projection** (`DesiredDeploymentFor`, `api_traits.go`, `alert_rule_trait.go`,
-  `gateway_address.go`): design facts → the two objects the platform owns, as pure functions.
+- **The desired-state projection** (`DesiredDeploymentFor`, `api_traits.go`, `api_operations.go`,
+  `alert_rule_trait.go`, `gateway_address.go`): design facts → the two objects the platform owns, as pure
+  functions.
 - **Persistence**: the `component_config` gorm and its entities live in this domain (`repository_config.go`
   over `component_config.go`), single write-authority.
 
@@ -85,6 +86,23 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   without its config does not degrade — it fails the whole binding render. The two halves land at different
   times (the shape pre-build, since a ComponentRelease freezes it; the config at deploy, since it needs a
   release to bind) and that split is forced by OpenChoreo, not chosen.
+- **The gateway's operation table is projected, and refused rather than guessed** (`api_operations.go`).
+  A component behind END-USER sign-in gets one `operations` row per (method, path) in its openapi.yaml —
+  `public: true`, a `jwt-auth v1` policy carrying one `scopes.anyOf` handle, or a `jwt-auth v1` policy with
+  NO `scopes` param, which is how "signed in, no particular permission" is expressed (`anyOf: [openid]`
+  would admit every signed-in account in the org, silently). Three rules hold it together. The document is
+  read by `spec.OpenAPIOperations` — the SAME classifier the openapi.yaml security gate judges it with, so
+  a spec the gate passed cannot be projected as something else. An `OPTIONS` row is SYNTHESISED per path,
+  because routing runs before policy and an undeclared method+path is a 404 the CORS policy never sees.
+  And anything unrenderable is refused whole: one operation the RestApi CRD rejects leaves EVERY path on
+  that API 404 — policy-free siblings included — so the projection falls back to the trait's `/*` default
+  (every operation needs a token, none needs a scope) and reports why in `APIOperationsProblem`. The
+  rendered parameter keys must all be declared by the trait's schema: OpenChoreo PRUNES an undeclared key
+  silently, which does not fail a deployment — it serves the operation without the policy it was meant to
+  carry. `api_operations_test.go` asserts the rendered keys against the trait yaml itself for that reason.
+  The scope rides the trait PARAMETER (the contract, one value for every environment) while the issuers and
+  the audience ride `traitEnvironmentConfigs` (the environment): the operation names the permission, the
+  environment names whose tokens count.
 - **A protected sibling is addressed through the gateway** (`gateway_address.go`). OpenChoreo resolves a
   `component`-kind dependency to the provider's project Service — right for a trusted service-to-service
   caller, wrong for a consumer that forwards UNTRUSTED traffic, because a SPA's nginx proxying the browser's
@@ -96,7 +114,9 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   `internal` or the gateway is not admitted by the component's NetworkPolicy (it authenticates, then 503s).
   The address rides the binding's env field and is overlaid ONLY when that field is already managed —
   merging into an unmanaged (nil) one would replace the user's whole config with the platform's variable.
-- **OpenChoreo Ready is not deployed for a Thunder SPA.** A web-application with a platform-resource whose CRT carries `ConsumerURLEnvConfig` stays pending until `ThunderApplication.spec.redirectUris` equals the SPA callback and that generation is ready (`status.ready` and `observedGeneration >= generation`). Failed and Undeploy skip the wait; a patch or CR GET error is returned for activity retry, not invented as Failed. `FilesForComponent` is a different seam — this wait does not grade the callback onto env-config.js.
+- **OpenChoreo Ready is not deployed for a Thunder SPA.** A web-application with a platform-resource whose CRT carries `ConsumerURLEnvConfig` stays pending until `ThunderApplication.spec.redirectUris` CONTAINS that web app's callback and that generation is ready (`status.ready` and `observedGeneration >= generation`). A patch or CR GET error is returned for activity retry, not invented as Failed. `FilesForComponent` is a different seam — this wait does not grade the callback onto env-config.js.
+- **A consumer-URL dependency is registered from the whole PROJECT, never from one component.** `cell-design` models `user-auth` as one external that several components edge into, so two web apps legitimately share one sign-in client, one `ResourceReleaseBinding` and one `redirectUris`. The value written is therefore the SORTED set of every declaring web app's resolved callback, computed once per read and written once per dependency. Sorted because the binding client skips an unchanged value: a set joined in map order would differ between two identical reads and turn every deploy poll into a real write. A component whose external URL has not resolved contributes nothing and is the one held. **Undeploy** is dropped from the set outright — a web app being withdrawn must not keep a redirect URI — while **Failed** is deliberately kept, because its previous release is usually still serving at that URL and de-registering it would sign users out of an app that works. Neither is waited on.
+- **Every hold states its cause on `ComponentDeploy.Reason`.** A held component is PENDING, not Failed, and the deploy budget reports the still-pending set as the failure when it expires — so this is the only channel by which "what was it waiting for" reaches the fix issue that expiry mints. `classifyCycleDeploys` carries reasons for pending components as well as failed ones, and the expiry branch files them.
 - **OpenChoreo Ready is not reachable.** OC reports a binding Ready when the control plane is done —
   release rendered, workload rolled out. Every consumer reads it as a claim about the EDGE: the
   validation sweep dispatches on it, the console counts components live by it, and a person clicks the

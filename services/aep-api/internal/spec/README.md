@@ -53,21 +53,32 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 - git spec content (`prd.md`, `specs/design/**`), the annotated version tag (the version store),
   the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam).
 - **One external dependency, one definition** (ADR-0027). An external dependency lives in
-  `specs/design/dependencies/<name>/` — `dependency.json` (provider, style, config keys, open
-  suggestions, provenance, the user's `assumed` record) beside the committed contract it points at
-  (an OpenAPI/GraphQL slice, an `sdk.json` manifest). A component's `design.json` references it by
-  name only; `AssembleDesign` hydrates every reference from the directory (`dependency_json.go`), so
-  downstream readers keep the flat `Dependency`, and `SplitDesign` writes both halves back. A design
-  from before the directory existed is lifted into one at its next save (the legacy fields on the
-  component are decoded, never re-encoded). `ComputeDependencyStatus` reads the state off the
-  hydrated edge — org/registry → resolved+registered; no provider (the user has not chosen a
-  service; `suggestions` may be open) → needs-input; a style with no contract or manifest on disk
-  → needs-contract; an agent-written
-  contract (`x-aep-assumed: true` in the file) with no acceptance → needs-acceptance; else resolved,
-  flagged assumed / derived (`x-aep-derived: true` — written from the provider's own reference) /
-  sdk-only — and the build gate blocks on nothing else. The write-gates (zod in
-  `@aep/agent-stream`, `agentfold/dependencygate.go`, `designspec` at save) validate the file; the
-  `assumed` record is the one field only the platform writes (`designdeps`).
+  `specs/design/dependencies/<name>/` — `dependency.json` holds a full `resource` block in the one
+  shape a resource has everywhere (name, description, provider, config keys, `contract {type, path,
+  origin, accepted}`, the organization's consumption instructions when it is a copy — `ref` set),
+  plus this project's `provenance` and open `suggestions` — beside the contract DOCUMENT it points at
+  (a whole OpenAPI/GraphQL document or an `sdk.json` manifest; never a slice, never a URL). Style is
+  computed from the contract type, not stored. A component's `design.json` references the dependency
+  by name only; `AssembleDesign` hydrates every reference from the directory (`dependency_json.go`),
+  so downstream readers keep the flat `Dependency`, and `SplitDesign` writes both halves back. A file
+  in the previous flat shape, or a design from before the directory existed, is lifted into the nested
+  shape in memory and rewritten at its next save. `ComputeDependencyStatus` reads the state off the
+  hydrated edge plus ONE registry lookup for a copy — `ref` set and the org has a REGISTERED resource
+  of that name → the copy stands; `ref` set and none → needs-input; no provider → needs-input; no
+  contract file on disk → needs-contract; an assumed contract with no acceptance → needs-acceptance;
+  else resolved, flagged registered / assumed / derived / sdk-only / stale (the copy's document hash
+  no longer matches the registry's) — and the build gate blocks on nothing else. The write-gates
+  (zod in `@aep/agent-stream`, `agentfold/dependencygate.go`, `designspec` at save) validate the
+  file; `consumptionInstructions` and `contract.accepted` are the fields only the platform writes
+  (the registry copy, `designdeps`). **The platform copies at the design write** (`registry_copy.go`,
+  inside `FilesService.Apply`): a stub `{ name, resource: { ref, name } }` is completed from the org
+  record — block, document, provenance — and a `contract` of origin `provider` with a
+  `provenance.sourceUrl` and no hash has its document fetched (https, 5 MiB) and landed beside it.
+  Both read the registry / the URL BEFORE `Workspace.Mutate` and never fail the apply: a miss lands the
+  stub with a warning and the dependency reads needs-input / needs-contract. **Promote reuses the
+  same renderer** (`promote.go`): `ReadProjectResource` hands the project's own block and document to
+  the registry side, and `RewriteAsRegistryCopy` lands `renderRegistryCopy` of a stub over the
+  existing files under their CAS tokens — so a promoted dependency and a reused one are the same bytes.
 - **The Skill library.** One flat authored library at repo-root `skills/`, COPY'd into the image and read
   at runtime from `config.SkillsDir` (default `/app/skills`) — not go:embed'd. A skill dir is `SKILL.md`
   plus the [Agent Skills standard structure](https://agentskills.io/specification) — `scripts/`,
@@ -210,6 +221,33 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
     disabled path does not reject every build. Membership is against the live catalog map, never
     a hardcoded type name (ADR-0007). Wiring derivation still treats an unknown type as "not
     derivable yet"; the membership pass is a separate gate before persist.
+- **A component `openapi.yaml` is judged against its two siblings, at save AND at build**
+  (`openapi_security_gate.go`). A component behind end-user sign-in declares the `oauth2` scheme and
+  the document default `security: [{oauth2: []}]`; each operation's `security` is absent, `[]`
+  (public), or ONE requirement object naming `oauth2` with at most one scope; every operation scope
+  and every `flows.*.scopes` key is a handle `specs/design/security.json` declares AND whose resource
+  THIS component owns; the five OIDC scopes (`openid profile email group ou`) are refused anywhere,
+  because one emitted as an API scope admits every signed-in account while looking guarded; an
+  `X-User-*` header parameter is `required: false` (the generated server binds parameters before the
+  auth middleware, so `required: true` answers 400 where the design promises 401) and a public
+  operation declares none at all. Code `INVALID_OPENAPI`, wording from the ONE vendored table
+  (`platform/securityspec/openapi-security-messages.json`) the agent's write gate renders from, so
+  the model never meets one rule in two wordings.
+  - **Protected is read off committed truth, never a type name**: `exposesAPI.auth =
+    end-user-required`, which design-save already derived from the CRT role marker (ADR-0007). No
+    cluster round-trip, and a new sign-in flavour needs no app-factory release. The agent's bundle
+    still keys on the literal `thunder-app` resourceType, so a renamed or aliased sign-in CRT is
+    protected here and unprotected there — recorded in the file header.
+  - **The gate and the gateway read the block ONCE** (`openapi_operations.go`). `OpenAPIOperations`
+    turns a protected spec into `(method, path, public | signedIn | scope)` for the deployment
+    projection (`projects.OperationsFromSpec`), and the gate's per-operation rules ARE that
+    function's structural half plus the two catalog rules. Two readings of `security` that can
+    disagree would be a silent authorization bug: the gate would pass a document the projection
+    then renders as something else, visible only as a 401 nobody can explain. Nothing else in
+    aep-api parses an OpenAPI `security` block.
+  - **A missing sibling narrows the check, it never refuses.** No `design.json` → no security verdict
+    (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
+    membership and ownership wait. The build gate is the backstop that sees every file at the tag.
 - The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
   `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
   gate, secrets fence) → [../../README.md](../../README.md).

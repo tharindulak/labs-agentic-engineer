@@ -30,51 +30,183 @@ func newTestEnvironmentClient(t *testing.T, srv *httptest.Server) EnvironmentCli
 	return NewEnvironmentClient(Config{BaseURL: srv.URL})
 }
 
-func TestEnvironmentClient_ListNames_MapsMetadata(t *testing.T) {
+func TestEnvironmentClient_List_ReadsAnnotationsAndIsProduction(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		writeJSON(t, w, http.StatusOK, map[string]any{
 			"items": []any{
-				map[string]any{"metadata": map[string]any{"name": "default"}},
-				map[string]any{"metadata": map[string]any{"name": "staging-local"}},
+				map[string]any{
+					"metadata": map[string]any{
+						"name": "production",
+						"annotations": map[string]string{
+							"openchoreo.dev/display-name": "Production",
+							"aep.wso2.com/validation":     "on",
+						},
+					},
+					"spec": map[string]any{"isProduction": true},
+				},
 			},
 			"pagination": map[string]any{},
 		})
 	}))
 	defer srv.Close()
 
-	got, err := newTestEnvironmentClient(t, srv).ListNames(context.Background(), "acme")
+	got, err := newTestEnvironmentClient(t, srv).List(context.Background(), "acme")
 	if err != nil {
-		t.Fatalf("ListNames: %v", err)
-	}
-	if len(got) != 2 || got[0] != "default" || got[1] != "staging-local" {
-		t.Fatalf("ListNames = %#v", got)
+		t.Fatalf("List: %v", err)
 	}
 	if gotPath != "/api/v1/namespaces/acme/environments" {
 		t.Fatalf("path = %q, want /api/v1/namespaces/acme/environments", gotPath)
 	}
+	want := EnvironmentInfo{
+		Name:         "production",
+		DisplayName:  "Production",
+		IsProduction: true,
+		Validation:   "on",
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("List = %#v, want [%+v]", got, want)
+	}
 }
 
-func TestEnvironmentClient_ListNames_EmptyItems(t *testing.T) {
+func TestEnvironmentClient_List_DisplayNameAnnotationAbsent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusOK, map[string]any{
-			"items":      []any{},
+			"items": []any{
+				map[string]any{
+					"metadata": map[string]any{
+						"name": "staging-local",
+						"annotations": map[string]string{
+							"aep.wso2.com/validation": "on",
+						},
+					},
+					"spec": map[string]any{"isProduction": false},
+				},
+			},
 			"pagination": map[string]any{},
 		})
 	}))
 	defer srv.Close()
 
-	got, err := newTestEnvironmentClient(t, srv).ListNames(context.Background(), "acme")
+	got, err := newTestEnvironmentClient(t, srv).List(context.Background(), "acme")
 	if err != nil {
-		t.Fatalf("ListNames: %v", err)
+		t.Fatalf("List: %v", err)
 	}
-	if got == nil || len(got) != 0 {
-		t.Fatalf("empty items = %#v, want non-nil empty slice", got)
+	// The client is a plain read: an absent display-name annotation is an
+	// empty string here. The titlecased fallback is provisioning.Service's
+	// job, not this client's.
+	if len(got) != 1 || got[0].DisplayName != "" {
+		t.Fatalf("List = %#v, want DisplayName empty", got)
+	}
+	if got[0].Validation != "on" {
+		t.Fatalf("List = %#v, want Validation=on", got)
 	}
 }
 
-func TestEnvironmentClient_ListNames_EmptyOrg(t *testing.T) {
+func TestEnvironmentClient_List_ValidationAnnotationAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"items": []any{
+				map[string]any{
+					"metadata": map[string]any{
+						"name": "staging-local",
+						"annotations": map[string]string{
+							"openchoreo.dev/display-name": "Staging Local",
+						},
+					},
+					"spec": map[string]any{"isProduction": false},
+				},
+			},
+			"pagination": map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).List(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	// The client is a plain read: an absent validation annotation is an
+	// empty string here. The absent/unrecognised-is-off default is
+	// provisioning.Service's job, not this client's.
+	if len(got) != 1 || got[0].Validation != "" {
+		t.Fatalf("List = %#v, want Validation empty", got)
+	}
+	if got[0].DisplayName != "Staging Local" {
+		t.Fatalf("List = %#v, want DisplayName=Staging Local", got)
+	}
+}
+
+func TestEnvironmentClient_List_SpecNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"items": []any{
+				map[string]any{
+					"metadata": map[string]any{"name": "sandbox"},
+				},
+			},
+			"pagination": map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).List(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].IsProduction {
+		t.Fatalf("List = %#v, want IsProduction=false with spec entirely absent (no panic)", got)
+	}
+}
+
+func TestEnvironmentClient_List_IsProductionNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"items": []any{
+				map[string]any{
+					"metadata": map[string]any{"name": "sandbox"},
+					"spec":     map[string]any{},
+				},
+			},
+			"pagination": map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).List(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].IsProduction {
+		t.Fatalf("List = %#v, want IsProduction=false with spec.isProduction absent (no panic)", got)
+	}
+}
+
+func TestEnvironmentClient_List_IsProductionTrue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"items": []any{
+				map[string]any{
+					"metadata": map[string]any{"name": "production"},
+					"spec":     map[string]any{"isProduction": true},
+				},
+			},
+			"pagination": map[string]any{},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).List(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || !got[0].IsProduction {
+		t.Fatalf("List = %#v, want IsProduction=true", got)
+	}
+}
+
+func TestEnvironmentClient_List_EmptyOrg(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -82,9 +214,9 @@ func TestEnvironmentClient_ListNames_EmptyOrg(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newTestEnvironmentClient(t, srv).ListNames(context.Background(), "")
+	got, err := newTestEnvironmentClient(t, srv).List(context.Background(), "")
 	if err != nil {
-		t.Fatalf("ListNames empty org: %v", err)
+		t.Fatalf("List empty org: %v", err)
 	}
 	if got == nil || len(got) != 0 {
 		t.Fatalf("empty org = %#v, want non-nil empty slice", got)
@@ -94,13 +226,13 @@ func TestEnvironmentClient_ListNames_EmptyOrg(t *testing.T) {
 	}
 }
 
-func TestEnvironmentClient_ListNames_NonOK(t *testing.T) {
+func TestEnvironmentClient_List_NonOK(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusForbidden, map[string]any{"error": "denied"})
 	}))
 	defer srv.Close()
 
-	_, err := newTestEnvironmentClient(t, srv).ListNames(context.Background(), "acme")
+	_, err := newTestEnvironmentClient(t, srv).List(context.Background(), "acme")
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("want ErrForbidden, got %v", err)
 	}
@@ -213,5 +345,87 @@ func TestEnvironmentClient_GetThunderBinding_AdminURLIsOptional(t *testing.T) {
 	}
 	if got.AdminURL != "" {
 		t.Fatalf("adminURL = %q, want empty", got.AdminURL)
+	}
+}
+
+// ---- the gateway assertion --------------------------------------------------
+
+// Read off the SAME projection as the Thunder binding, for the same reason: the
+// annotations are the only copy of an environment-level fact this process can
+// see. setup-environment-gateway.sh writes them when it provisions the
+// environment gateway's signing keypair.
+func TestEnvironmentClient_GetGatewayAssertion_ReadsTheAnnotations(t *testing.T) {
+	const cert = "-----BEGIN CERTIFICATE-----\nMIIDazCCAlOgAwIB\n-----END CERTIFICATE-----"
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"metadata": map[string]any{
+				"name": "default",
+				"annotations": map[string]string{
+					"aep.wso2.com/gateway-assertion-issuer":      "aep-gateway-acme-default",
+					"aep.wso2.com/gateway-assertion-header":      "x-jwt-assertion",
+					"aep.wso2.com/gateway-assertion-certificate": cert,
+					"aep.wso2.com/thunder-issuer":                "an unrelated annotation",
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).GetGatewayAssertion(context.Background(), "acme", "default")
+	if err != nil {
+		t.Fatalf("GetGatewayAssertion: %v", err)
+	}
+	if gotPath != "/api/v1/namespaces/acme/environments/default" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	want := GatewayAssertion{
+		OrgID: "acme", Environment: "default",
+		Issuer:      "aep-gateway-acme-default",
+		Header:      "x-jwt-assertion",
+		Certificate: cert,
+	}
+	if got != want {
+		t.Fatalf("assertion =\n%+v\nwant\n%+v", got, want)
+	}
+	if !got.Configured() {
+		t.Fatal("a published certificate must report Configured")
+	}
+}
+
+// An environment that publishes none is NOT an error, unlike a missing Thunder
+// binding: every environment provisioned before assertions existed is in this
+// state, and failing the deploy there would make the feature a breaking change.
+func TestEnvironmentClient_GetGatewayAssertion_UnpublishedIsNotAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"metadata": map[string]any{"name": "staging"},
+		})
+	}))
+	defer srv.Close()
+
+	got, err := newTestEnvironmentClient(t, srv).GetGatewayAssertion(context.Background(), "acme", "staging")
+	if err != nil {
+		t.Fatalf("an unpublished assertion must not be an error, got %v", err)
+	}
+	if got.Configured() {
+		t.Fatal("nothing published, yet Configured")
+	}
+}
+
+// A certificate with no issuer is reported ABSENT, not partial. A service
+// handed one with no issuer to pin would accept any assertion that key happens
+// to verify — the one outcome publishing the pair together is meant to prevent.
+func TestGatewayAssertionFromAnnotations_CertWithoutIssuerIsAbsent(t *testing.T) {
+	got := gatewayAssertionFromAnnotations("acme", "default", map[string]string{
+		"aep.wso2.com/gateway-assertion-certificate": "-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----",
+		"aep.wso2.com/gateway-assertion-header":      "x-jwt-assertion",
+	})
+	if got.Configured() {
+		t.Fatalf("a certificate with no issuer must read as absent, got %+v", got)
+	}
+	if got.Certificate != "" || got.Header != "" {
+		t.Fatalf("an absent assertion must carry nothing, got %+v", got)
 	}
 }

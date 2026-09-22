@@ -71,6 +71,7 @@ vi.mock("./NotificationBell", () => ({
 // has to be present or absent.
 vi.mock("../features/agent-chat/components/AgentChatPanel", () => ({
   AgentChatPanel: () => <div data-testid="agent-chat-panel" />,
+  AGENT_CHAT_PANEL_WIDTH: 440,
 }));
 vi.mock("../features/agent-chat/useHasPendingSeed", () => ({
   useHasPendingSeed: () => false,

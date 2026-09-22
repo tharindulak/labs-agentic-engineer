@@ -54,6 +54,7 @@ import { computeDependencyUsedBy } from "../lib/dependencyUsedBy";
 import { useCollabSpec } from "../collab/useCollabSpec";
 import { SpecQuestionForm } from "./SpecQuestionForm";
 import { SecurityPanel } from "./SecurityPanel";
+import { useApiViewSecurity } from "../hooks/useApiViewSecurity";
 import { useSecurityEntry } from "../hooks/useSecurityEntry";
 import { useRoomQuestion } from "../../agent-chat/useRoomQuestion";
 import { CollabTextArea } from "../collab/CollabTextArea";
@@ -300,10 +301,6 @@ export function SpecView({ projectName }: { projectName: string }) {
       .filter((e): e is NonNullable<typeof e> => e !== null)
       .sort((a, b) => a.path.localeCompare(b.path));
   }, [spec.data, collab.docPaths]);
-  // Which references resolve is decided against this list. `files` is rebuilt
-  // on every render (`collab.docPaths` is derived, not memoized), so the editor
-  // compares it BY VALUE rather than by identity — see `knownPaths` there.
-  const specPaths = useMemo(() => files.map((f) => f.path), [files]);
   // A live design turn is signalled by `?generate=design` (the Generate-design
   // CTA) and, more durably, by an agent peer streaming design.cell into the
   // room. In either case the Architecture (cell-diagram) tab is where the user
@@ -489,6 +486,16 @@ export function SpecView({ projectName }: { projectName: string }) {
     () => computeDependencyStates(dependencies.data ?? []),
     [dependencies.data],
   );
+  // Which externals are COPIES of a Registered External resource. Preflight
+  // diffs names against the last tag and cannot tell the two apart, so the
+  // Build dialog takes it from the design read model.
+  const reusedExternals = useMemo(
+    () =>
+      Object.values(dependencyStates)
+        .filter((s) => Boolean(s.dependency.resourceRef))
+        .map((s) => s.dependency.name),
+    [dependencyStates],
+  );
   // The definition view's Resolve / Reconsider. The component is context for
   // the reconsider's prose only; the resolve is the skill command.
   const handleResolveFromDefinition = (name: string, intent: DependencyResolutionIntent) => {
@@ -580,6 +587,14 @@ export function SpecView({ projectName }: { projectName: string }) {
     files,
     collab,
     agentInRoom,
+  });
+  // What the API view cannot read off the contract in front of it: who grants
+  // each scope, and the audience those scopes are on. Read only while a
+  // contract is the selection.
+  const apiSecurity = useApiViewSecurity({
+    projectName,
+    active: isOpenApiFile,
+    collab,
   });
 
   const content = useSpecFileContent(
@@ -860,6 +875,10 @@ export function SpecView({ projectName }: { projectName: string }) {
     intent: "change" | "discuss",
   ): Promise<boolean> => anchoredTurn.send(instruction, { anchor, intent });
 
+  // The dependency and design views read the same reason: their Resolve /
+  // Reconsider / Select a provider buttons fire a turn like a lens does, and
+  // their Provide interface / Accept writes land in a directory the agent may
+  // be working in. One gate, one wording, across the whole spec view.
   const lensBusyReason = specTurnGate({ agentBusy, localTurnActivity, awaitingAnswers });
 
   // Build (#162, #164): commit the room's live edits FIRST (POST /build tags
@@ -1261,6 +1280,7 @@ export function SpecView({ projectName }: { projectName: string }) {
           specUnchanged={preview?.specUnchanged ?? false}
           changes={preview?.changes ?? []}
           takenVersions={tags.data?.tags ?? []}
+          reusedExternals={reusedExternals}
           submitting={buildPhase === "building"}
           onClose={() => setBuildDialog(null)}
           onBuild={runBuild}
@@ -1371,10 +1391,15 @@ export function SpecView({ projectName }: { projectName: string }) {
                 />
               ) : effectiveSelection.kind === "security" ? (
                 <SecurityPanel
+                  projectName={projectName}
                   securityJson={security.securityJson}
                   live={security.live}
                   isPending={security.isPending}
                   isError={security.isError}
+                  references={security.references}
+                  roomLive={security.roomLive}
+                  writeSecurityJson={security.writeSecurityJson}
+                  dependencies={dependencies.data}
                 />
               ) : effectiveSelection.kind === "wireframe" ? (
                 <WireframePanel
@@ -1393,7 +1418,11 @@ export function SpecView({ projectName }: { projectName: string }) {
                     // Fresh from the live collab doc — ahead of (or newer
                     // than) the committed copy.
                     isOpenApiFile ? (
-                      <OpenApiView spec={structuredLive} />
+                      <OpenApiView
+                        spec={structuredLive}
+                        roles={apiSecurity.roles}
+                        resourceServer={apiSecurity.resourceServer}
+                      />
                     ) : isValidationCriteriaFile ? (
                       <ValidationView criteria={structuredLive} />
                     ) : isDependencyDefinitionFile ? (
@@ -1406,6 +1435,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                         onResolve={(name) => handleResolveFromDefinition(name, "resolve")}
                         onReconsider={(name) => handleResolveFromDefinition(name, "reconsider")}
                         onCommitted={handleDependencyCommitted}
+                        busyReason={lensBusyReason}
                       />
                     ) : (
                       <DesignView
@@ -1413,6 +1443,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                         dependencyStatus={dependencyStatus}
                         dependencyUsedBy={dependencyUsedBy}
                         onResolveDependency={handleResolveDependency}
+                        busyReason={lensBusyReason}
                       />
                     )
                   ) : content.data ? (
@@ -1420,6 +1451,8 @@ export function SpecView({ projectName }: { projectName: string }) {
                       <OpenApiView
                         key={content.data.sha}
                         spec={content.data.content}
+                        roles={apiSecurity.roles}
+                        resourceServer={apiSecurity.resourceServer}
                       />
                     ) : isValidationCriteriaFile ? (
                       <ValidationView
@@ -1437,6 +1470,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                         onResolve={(name) => handleResolveFromDefinition(name, "resolve")}
                         onReconsider={(name) => handleResolveFromDefinition(name, "reconsider")}
                         onCommitted={handleDependencyCommitted}
+                        busyReason={lensBusyReason}
                       />
                     ) : (
                       <DesignView
@@ -1445,6 +1479,7 @@ export function SpecView({ projectName }: { projectName: string }) {
                         dependencyStatus={dependencyStatus}
                         dependencyUsedBy={dependencyUsedBy}
                         onResolveDependency={handleResolveDependency}
+                        busyReason={lensBusyReason}
                       />
                     )
                   ) : agentBusy ? (
@@ -1513,11 +1548,6 @@ export function SpecView({ projectName }: { projectName: string }) {
                       busyReason: anchoredTurn.ready
                         ? lensBusyReason
                         : "Still opening this project's conversation",
-                    }}
-                    links={{
-                      path: selectedFile.path,
-                      knownPaths: specPaths,
-                      open: (path) => selectManually({ kind: "file", path }),
                     }}
                   />
                 ) : ytext ? (

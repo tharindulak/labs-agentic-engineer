@@ -273,14 +273,21 @@ vi.mock("../api/queries", () => ({
 
 // The Security entry's own wiring. Stubbed like every other query here: these
 // tests render SpecView without a QueryClientProvider, and the hook's and the
-// panel's behavior are covered by their own tests.
+// panel's behavior are covered by their own tests. Delegated through a vi.fn()
+// so the block below can hand the page a real document and assert what this
+// view threads INTO the panel.
+const mockUseSecurityEntry = vi.fn();
 vi.mock("../hooks/useSecurityEntry", () => ({
-  useSecurityEntry: () => ({
-    securityJson: null,
-    live: undefined,
-    isPending: false,
-    isError: false,
-  }),
+  useSecurityEntry: (...args: unknown[]) => mockUseSecurityEntry(...args),
+}));
+
+// What the API view is decorated with — the catalog's granting roles and the
+// project's resource server. Stubbed for the same reason (it reads the spec
+// tree and the platform's role record through react-query); the assertions
+// below are about what this view hands the API renderer.
+const mockUseApiViewSecurity = vi.fn();
+vi.mock("../hooks/useApiViewSecurity", () => ({
+  useApiViewSecurity: (...args: unknown[]) => mockUseApiViewSecurity(...args),
 }));
 
 // A preflight that reports something but blocks nothing: config values are
@@ -382,6 +389,16 @@ beforeEach(() => {
     isPending: false,
     isError: false,
     error: null,
+  });
+  mockUseSecurityEntry.mockReturnValue({
+    securityJson: null,
+    live: undefined,
+    isPending: false,
+    isError: false,
+  });
+  mockUseApiViewSecurity.mockReturnValue({
+    roles: undefined,
+    resourceServer: undefined,
   });
 });
 
@@ -916,6 +933,47 @@ describe("SpecView onBuild routing (#164)", () => {
     expect(
       within(dialog).getByText(/removed dependency keeps its resource/i),
     ).toBeInTheDocument();
+  });
+
+  // The preflight diffs names against the last tag, so it calls a copy of a
+  // Registered External resource `new` like anything else. The design read
+  // model is what knows better, and the dialog takes it from there.
+  it("says an external that reuses a registered resource is reused, not new", async () => {
+    mockUseDesignDependencies.mockReturnValue({
+      data: [
+        {
+          componentName: "checkout-api",
+          dependencies: [
+            {
+              kind: "external",
+              name: "currency-service",
+              status: "resolved",
+              source: "org",
+              resourceRef: "currency-service",
+            },
+          ],
+        },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockPreflightRefetch.mockResolvedValue({
+      data: ready({
+        changes: [
+          { name: "currency-service", kind: "external", state: "new" },
+          { name: "reports-web", kind: "component", state: "new" },
+        ],
+      }),
+    });
+
+    render(<SpecView projectName="proj1" />);
+    clickBuild();
+
+    const dialog = await screen.findByTestId("start-build-dialog");
+    expect(within(dialog).getByText("reused · organization")).toBeInTheDocument();
+    // The component beside it is still new.
+    expect(within(dialog).getByText("new")).toBeInTheDocument();
   });
 
   // `tag` is optional on BuildResponse, so the version page it names may not
@@ -1905,5 +1963,226 @@ describe("SpecView validation criteria explanation", () => {
     expect(screen.getByText("b")).toBeInTheDocument();
     expect(screen.queryByText("AC-001-a")).not.toBeInTheDocument();
     expect(screen.queryByText("REQ-001")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What this view hands the Security page and the API view
+// ---------------------------------------------------------------------------
+//
+// Both panels render facts that live OUTSIDE the document they are given —
+// which components provision sign-in, which roles grant a scope, which audience
+// the scopes are on. The panels' own tests prove they render them; only a test
+// here proves this view actually hands them over, which is exactly the step
+// that was missing.
+
+const SECURITY_PATH = "specs/design/security.json";
+const ORDERS_OPENAPI_PATH = "specs/design/components/orders-api/openapi.yaml";
+
+/** A minimal v2 catalog: one resource, one action, one role. */
+const SECURITY_DOC = JSON.stringify(
+  {
+    version: 3,
+    permissions: [
+      {
+        resource: "orders",
+        component: "orders-api",
+        actions: [
+          { handle: "read", description: "See own orders" },
+        ],
+      },
+    ],
+    groups: [],
+    roles: [
+      {
+        name: "Shopper",
+        description: "Buys things",
+        stories: [1],
+        grants: ["orders:read"],
+      },
+    ],
+    testUsers: [],
+  },
+  null,
+  2,
+);
+
+const ORDERS_OPENAPI = `openapi: 3.0.3
+info:
+  title: Orders API
+  version: 1.0.0
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows: {}
+security:
+  - oauth2: []
+paths:
+  /orders:
+    get:
+      summary: List orders
+      security:
+        - oauth2: ["orders:read"]
+      responses:
+        "200":
+          description: ok
+`;
+
+describe("SpecView — the Security page's architecture facts", () => {
+  beforeEach(() => {
+    mockUseSpecFiles.mockReturnValue({
+      // The rail shows its Design section once the design has any document in
+      // it, so the overview row rides along to put the Security row on screen.
+      data: [
+        { path: "specs/design/overview.md", sha: "def", group: "designs" },
+        { path: SECURITY_PATH, sha: "abc", group: "designs" },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSecurityEntry.mockReturnValue({
+      securityJson: SECURITY_DOC,
+      live: undefined,
+      isPending: false,
+      isError: false,
+    });
+    mockUseDesignDependencies.mockReturnValue({
+      data: [
+        {
+          componentName: "orders-api",
+          dependencies: [
+            {
+              kind: "platform-resource",
+              name: "sign-in",
+              resourceType: "thunder-app",
+            },
+          ],
+        },
+        { componentName: "public-site", dependencies: [] },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+  });
+
+  function openSecurity() {
+    render(<SpecView projectName="proj1" />);
+    fireEvent.click(screen.getByText("Security"));
+  }
+
+  // The row exists only because this view passes `dependencies` down; without
+  // the thread the panel has nothing to derive it from and omits the row.
+  it("names the components that provision no sign-in at all", () => {
+    openSecurity();
+
+    const row = screen.getByText("No sign-in at all").closest("tr")!;
+    // Named as a COMPONENT, the way the rows above name an operation or a
+    // screen — the sub-header they share cannot say it for all three.
+    expect(within(row).getByText("component public-site")).toBeInTheDocument();
+    expect(within(row).queryByText(/orders-api/)).not.toBeInTheDocument();
+  });
+
+  it("omits that row while the dependency read has not answered", () => {
+    mockUseDesignDependencies.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+      error: null,
+    });
+    openSecurity();
+
+    // No row and no sub-header: the baseline exists only to name an exposure,
+    // and an unanswered read has none to name. The grid itself still renders.
+    const grid = screen.getByRole("table");
+    expect(within(grid).queryByText("No sign-in at all")).not.toBeInTheDocument();
+    expect(
+      within(grid).queryByText("Reachable without a permission"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("draws nothing when every component provisions sign-in", () => {
+    mockUseDesignDependencies.mockReturnValue({
+      data: [
+        {
+          componentName: "orders-api",
+          dependencies: [
+            {
+              kind: "platform-resource",
+              name: "sign-in",
+              resourceType: "thunder-app",
+            },
+          ],
+        },
+      ],
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    openSecurity();
+
+    expect(screen.queryByText("Reachable without a permission")).not.toBeInTheDocument();
+    expect(screen.queryByText("No sign-in at all")).not.toBeInTheDocument();
+  });
+});
+
+describe("SpecView — the API view's granting roles and audience", () => {
+  beforeEach(() => {
+    mockUseSpecFiles.mockReturnValue({
+      data: [{ path: ORDERS_OPENAPI_PATH, sha: "abc", group: "designs" }],
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseSpecFileContent.mockReturnValue({
+      data: { sha: "abc", content: ORDERS_OPENAPI },
+      isPending: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+    mockUseApiViewSecurity.mockReturnValue({
+      roles: { "orders:read": { roles: ["Shopper"], note: "filtered by caller" } },
+      resourceServer: "https://aep.wso2.com/orgs/acme/projects/shop",
+    });
+  });
+
+  it("reads the catalog only while a contract is the selection", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(mockUseApiViewSecurity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ projectName: "proj1", active: true }),
+    );
+  });
+
+  it("names the roles that grant an operation's scope", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("orders:read")).toBeInTheDocument();
+    expect(screen.getByText("Shopper · filtered by caller")).toBeInTheDocument();
+  });
+
+  it("names the audience the scopes are granted on", () => {
+    render(<SpecView projectName="proj1" />);
+
+    expect(
+      screen.getByText("aud https://aep.wso2.com/orgs/acme/projects/shop"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the contract unchanged when the platform knows neither", () => {
+    mockUseApiViewSecurity.mockReturnValue({
+      roles: undefined,
+      resourceServer: undefined,
+    });
+    render(<SpecView projectName="proj1" />);
+
+    expect(screen.getByText("Orders API")).toBeInTheDocument();
+    expect(screen.queryByText(/^aud /)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Shopper/)).not.toBeInTheDocument();
   });
 });

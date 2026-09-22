@@ -30,12 +30,16 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Copy, Eye, EyeOff, X } from "@wso2/oxygen-ui-icons-react";
-import { StatusChip } from "../../../components/StatusChip";
 import type { PublishedTestUser } from "../lib/publishedTestUsers";
+import { TestUserScopesCell } from "./TestUserScopesDialog";
 
 /** The password's placeholder while it is hidden. Fixed width, monospace, so
  *  revealing swaps the characters without moving the icons beside them. */
 export const MASK = "**********";
+
+// Re-exported so the table's own tests and callers keep one import for the
+// row; it is defined beside the cell that renders it.
+export { UNKNOWN_SCOPES } from "./TestUserScopesDialog";
 
 function copyText(value: string): Promise<void> {
   if (!navigator.clipboard?.writeText) {
@@ -46,13 +50,13 @@ function copyText(value: string): Promise<void> {
 
 /**
  * One account: its username, its masked password with the two controls, the
- * role it holds, and whether it is the cold-start account.
+ * roles it holds and what those roles add up to.
  *
  * The reveal state is per row and lives here, so opening one password does not
  * open the rest — the dialog can hold a dozen accounts and only the one asked
  * for is ever on screen.
  */
-function TestUserRow({
+export function TestUserRow({
   login,
   revealPassword,
 }: {
@@ -171,21 +175,20 @@ function TestUserRow({
       </ListingTable.Cell>
 
       <ListingTable.Cell>
-        <Typography variant="body2">{login.role}</Typography>
+        <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
+          {login.roles.map((role) => (
+            <Typography key={role} variant="body2">
+              {role}
+            </Typography>
+          ))}
+        </Stack>
       </ListingTable.Cell>
 
       <ListingTable.Cell>
-        {login.coldStart ? (
-          <Tooltip title="Served when a caller asks for credentials without naming a role">
-            <span>
-              <StatusChip label="Cold start" tone="info" appearance="soft" />
-            </span>
-          </Tooltip>
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            —
-          </Typography>
-        )}
+        {/* A count and a way in, not the list: stacked inline the scopes made
+            a six-scope row ~350px tall. Empty is "the directory could not be
+            asked", not "grants nothing", and gets no button. */}
+        <TestUserScopesCell username={login.username} scopes={login.scopes} />
       </ListingTable.Cell>
     </ListingTable.Row>
   );
@@ -211,13 +214,14 @@ export function TestUsersDialog({
   revealPassword: (username: string) => Promise<string>;
 }) {
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
       <DialogTitle sx={{ pr: 6 }}>
         Test users
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           Disposable accounts the platform created for this project&apos;s
           roles, so agents can sign in to the running app and check what each
-          role can do. They are not real people.
+          role can do. The scopes are what each login&apos;s access token
+          carries. They are not real people.
         </Typography>
         <IconButton
           aria-label="Close"
@@ -234,8 +238,8 @@ export function TestUsersDialog({
               <ListingTable.Row>
                 <ListingTable.Cell>Username</ListingTable.Cell>
                 <ListingTable.Cell sx={{ width: 260 }}>Password</ListingTable.Cell>
-                <ListingTable.Cell sx={{ width: 180 }}>Role</ListingTable.Cell>
-                <ListingTable.Cell sx={{ width: 130 }}>Cold start</ListingTable.Cell>
+                <ListingTable.Cell sx={{ width: 180 }}>Roles</ListingTable.Cell>
+                <ListingTable.Cell>Scopes</ListingTable.Cell>
               </ListingTable.Row>
             </ListingTable.Head>
             <ListingTable.Body>
