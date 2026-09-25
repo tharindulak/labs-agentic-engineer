@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -184,3 +185,90 @@ func sreLlmKeyPreview(k string) (prefix, last4 string) {
 	return
 }
 
+// Set validates the key, persists it, and mirrors it via SecretRefWriter
+// when configured. org is the calling admin's org from the /config request
+// context — passed through only so SecretRefWriter.WriteSreLlm has a JWT
+// context to compute a vault path from; the row itself carries no org
+// column, and which admin happened to be active is otherwise inert (the
+// resulting path is what gets stored and later read back).
+//
+// The SecretRefWriter mirror call is deferred to a follow-up task (adds
+// SecretRefWriter.WriteSreLlm + the sre-llm repo it stamps through) — the
+// secretRefWriter field/WithSecretRefWriter setter exist already, but no
+// method to call on them for this config exists yet. Wiring the mirror in
+// here now would mean guessing that method's design.
+func (s *SreLlmConfigService) Set(ctx context.Context, org, provider, model, apiKey string) (*SreLlmConfig, error) {
+	key := strings.TrimSpace(apiKey)
+	if err := s.ValidateKey(ctx, provider, key); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(model) == "" {
+		return nil, &ValidationError{Code: "sre_llm_model_missing", Message: "model is required"}
+	}
+
+	now := time.Now().UTC()
+	prefix, last4 := sreLlmKeyPreview(key)
+	row := &PlatformSreLlmConfig{
+		Provider: provider, Model: model,
+		KeyPrefix: prefix, KeyLast4: last4,
+		Status: "active", ConnectedAt: now, LastValidatedAt: &now,
+	}
+
+	if err := s.store.Put(ctx, sreLlmPlatformOrgID, sreLlmSecretStoreKey, []byte(key)); err != nil {
+		return nil, fmt.Errorf("sre-llm set: store put: %w", err)
+	}
+	if err := s.repo.Upsert(ctx, row); err != nil {
+		return nil, fmt.Errorf("sre-llm set: upsert: %w", err)
+	}
+
+	slog.InfoContext(ctx, "sre_llm.set", "provider", provider, "model", model, "keyPrefix", prefix)
+	return projectionFromSreLlmRow(row), nil
+}
+
+// Get returns the current config, or nil when nothing has been set.
+func (s *SreLlmConfigService) Get(ctx context.Context) (*SreLlmConfig, error) {
+	row, err := s.repo.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, nil
+	}
+	return projectionFromSreLlmRow(row), nil
+}
+
+// Clear removes the config and its stored secret. Idempotent.
+func (s *SreLlmConfigService) Clear(ctx context.Context) error {
+	if err := s.repo.Delete(ctx); err != nil {
+		return fmt.Errorf("sre-llm clear: delete row: %w", err)
+	}
+	if err := s.store.Delete(ctx, sreLlmPlatformOrgID, sreLlmSecretStoreKey); err != nil {
+		slog.WarnContext(ctx, "sre-llm: store delete failed", "error", err)
+	}
+	slog.InfoContext(ctx, "sre_llm.cleared")
+	return nil
+}
+
+// SreLlmConfig is the service-level projection — deliberately its own type
+// (not orgconfig.SreLlmProjection) so this package doesn't import orgconfig
+// (orgconfig is the leaf that imports FROM domain packages' wire shapes are
+// mapped INTO it, same direction as AnthropicProjection/llmProjectionFrom).
+type SreLlmConfig struct {
+	Provider        string
+	Model           string
+	KeyPrefix       string
+	KeyLast4        string
+	Status          string
+	ConnectedAt     time.Time
+	LastValidatedAt *time.Time
+	ValidationError *string
+}
+
+func projectionFromSreLlmRow(r *PlatformSreLlmConfig) *SreLlmConfig {
+	return &SreLlmConfig{
+		Provider: r.Provider, Model: r.Model,
+		KeyPrefix: r.KeyPrefix, KeyLast4: r.KeyLast4,
+		Status: r.Status, ConnectedAt: r.ConnectedAt,
+		LastValidatedAt: r.LastValidatedAt, ValidationError: r.ValidationError,
+	}
+}
