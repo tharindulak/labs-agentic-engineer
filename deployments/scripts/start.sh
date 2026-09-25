@@ -274,6 +274,10 @@ if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
     bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \
         echo "⚠️  SRE Anthropic ExternalSecret reconcile did not complete cleanly — set the org Anthropic key in the AE Console and rerun start.sh."
 fi
+if [ -f "$SCRIPT_DIR/reconcile-sre-llm-config.sh" ]; then
+    bash "$SCRIPT_DIR/reconcile-sre-llm-config.sh" || \
+        echo "⚠️  SRE agent LLM config reconcile did not complete cleanly — set the SRE agent LLM config in the AE Console and rerun start.sh."
+fi
 
 # 7c. Verify the cluster half of the handoff — the RCA agent deployment.
 #     Best-effort: a rebuilt cluster loses the locally-imported RCA image and

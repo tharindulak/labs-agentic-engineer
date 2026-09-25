@@ -101,4 +101,10 @@ if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
         echo "  ⚠️  could not reconcile SRE Anthropic ExternalSecret"
 fi
 
+if [ -f "$SCRIPT_DIR/reconcile-sre-llm-config.sh" ]; then
+    echo "🤖 Ensuring SRE agent LLM config matches the AE Console setting..."
+    bash "$SCRIPT_DIR/reconcile-sre-llm-config.sh" || \
+        echo "  ⚠️  could not reconcile SRE agent LLM config"
+fi
+
 exit 0

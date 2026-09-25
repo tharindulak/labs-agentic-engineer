@@ -84,5 +84,7 @@ assert_file_not_contains "$SETUP_SCRIPT" "services/aep-mcp-server/skills/issue-f
 
 assert_file_contains "$REPO_DIR/deployments/scripts/start.sh" "reconcile-sre-anthropic-externalsecret.sh"
 assert_file_contains "$REPO_DIR/deployments/scripts/repair-secrets.sh" "reconcile-sre-anthropic-externalsecret.sh"
+assert_file_contains "$REPO_DIR/deployments/scripts/start.sh" "reconcile-sre-llm-config.sh"
+assert_file_contains "$REPO_DIR/deployments/scripts/repair-secrets.sh" "reconcile-sre-llm-config.sh"
 
 echo "✅ setup-observability SRE extension assertions passed"
