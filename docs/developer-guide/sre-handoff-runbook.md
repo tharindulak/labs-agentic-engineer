@@ -42,6 +42,21 @@ organization credential flow; AE stores the value in its org secret store and
 mirrors the secret-ref metadata for runtime projection. The SRE agent must not
 have a separate hand-entered Anthropic key.
 
+That constraint is about *Anthropic-key reuse* specifically — it stops an
+operator from hand-entering a second, unmanaged Anthropic key that could
+drift from the org's real one. The SRE agent's LLM provider and key CAN be
+set independently through Settings > Credentials > SRE agent in the AE
+Console, which supports both Anthropic and OpenAI. When configured, that
+setting is what the reconcile flow below projects instead of the default
+Anthropic key; when it is not configured, the default Anthropic-key reuse
+described above is unchanged.
+
+On a real cluster, `aectl sre install`'s `--sre-llm-provider`/
+`--sre-llm-model`/`--sre-llm-api-key` flags are the supported way to pick
+the SRE agent's provider and key — the console setting is not read live by
+`aectl` (it has no direct database access the way the local-dev scripts
+do); re-run `aectl sre install` with those flags to apply a change.
+
 The SRE hotfix image consumes the key from a file:
 
 ```text
@@ -99,7 +114,9 @@ The script:
 2. uses the hotfix SRE image by default;
 3. wires alert suppression (`ALERT_SUPPRESSION_WINDOW=1h`);
 4. mounts the AE-owned remediation extension into the SRE pod;
-5. wires `RCA_LLM_API_KEY_FILE` to the optional Anthropic secret file; and
+5. wires `RCA_LLM_API_KEY_FILE` to the optional Anthropic secret file;
+5a. reconciles a second, independent key/model from the AE Console's SRE
+    agent LLM setting when one has been configured (`reconcile-sre-llm-config.sh`); and
 6. keeps the MCP bearer token in runtime configuration, not in the image.
 
 Fast local assertions:
@@ -227,6 +244,15 @@ If SRE receives the RCA request but immediately fails with
 ```bash
 kubectl -n openchoreo-observability-plane get secret rca-agent-anthropic-secret
 bash deployments/scripts/reconcile-sre-anthropic-externalsecret.sh
+```
+
+If the SRE agent was configured to use OpenAI (or a dedicated Anthropic
+key) from the Console and it still isn't picking it up, check the second
+secret and re-run its reconcile:
+
+```bash
+kubectl -n openchoreo-observability-plane get secret sre-llm-secret
+bash deployments/scripts/reconcile-sre-llm-config.sh
 ```
 
 The fixed setup path runs that reconcile automatically when local AE is available.
