@@ -135,9 +135,6 @@ constraint every time. Everything under the headings comes from the RCA report.
 The report you receive is complete, including two things that are never
 material to the code change you are filing:
 
-- **`observability_recommendations`.** Advice for making FUTURE analyses
-  easier ("add a metric", "raise the log level") — never this incident's fix.
-  Leave it out of the issue body entirely.
 - **The `change` patch on an already-`revised` action.** You may say THAT
   configuration already handled part of the incident (see "Mention each
   `revised` action" above); never quote or describe the ReleaseBinding patch
