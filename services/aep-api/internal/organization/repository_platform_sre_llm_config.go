@@ -65,18 +65,33 @@ func (r *platformSreLlmRepository) Get(ctx context.Context) (*PlatformSreLlmConf
 
 func (r *platformSreLlmRepository) Upsert(ctx context.Context, row *PlatformSreLlmConfig) error {
 	row.ID = 1
+	// Full replace on conflict, not a metadata-only patch: unlike
+	// OrgAnthropicCredential's Upsert (same (org, role) slot, so a conflict is
+	// always a key rotation and connected_at is deliberately preserved), this
+	// singleton's Upsert can also be called across a PROVIDER SWITCH
+	// (anthropic -> openai), which is a fresh connection, not a rotation of
+	// the old one. So connected_at is reset to EXCLUDED's value, and the
+	// secret_ref_* triplet is nulled out on every upsert — if a secrets
+	// provider is configured, the caller writes the real ref back via a
+	// follow-up UpdateColumns, same as the Anthropic flow, so nulling here
+	// costs nothing when the writer is enabled and closes the correctness gap
+	// when it's disabled.
 	return r.db.WithContext(ctx).Exec(`
 		INSERT INTO platform_sre_llm_config
 		    (id, provider, model, key_prefix, key_last4, status, connected_at, last_validated_at, validation_error)
 		VALUES (1, ?, ?, ?, ?, ?, ?, ?, NULL)
 		ON CONFLICT (id) DO UPDATE
-		  SET provider           = EXCLUDED.provider,
-		      model              = EXCLUDED.model,
-		      key_prefix         = EXCLUDED.key_prefix,
-		      key_last4          = EXCLUDED.key_last4,
-		      status             = EXCLUDED.status,
-		      last_validated_at  = EXCLUDED.last_validated_at,
-		      validation_error   = NULL`,
+		  SET provider            = EXCLUDED.provider,
+		      model               = EXCLUDED.model,
+		      key_prefix          = EXCLUDED.key_prefix,
+		      key_last4           = EXCLUDED.key_last4,
+		      status              = EXCLUDED.status,
+		      connected_at        = EXCLUDED.connected_at,
+		      last_validated_at   = EXCLUDED.last_validated_at,
+		      validation_error    = NULL,
+		      secret_ref_name     = NULL,
+		      secret_ref_kv_path  = NULL,
+		      secret_ref_property = NULL`,
 		row.Provider, row.Model, row.KeyPrefix, row.KeyLast4, row.Status, row.ConnectedAt, row.LastValidatedAt,
 	).Error
 }

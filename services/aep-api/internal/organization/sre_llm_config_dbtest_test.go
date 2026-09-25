@@ -62,10 +62,11 @@ func TestPlatformSreLlmRepository_UpsertIsSingleton(t *testing.T) {
 		t.Fatalf("first upsert: %v", err)
 	}
 
+	later := now.Add(time.Hour)
 	second := &organization.PlatformSreLlmConfig{
 		Provider: "openai", Model: "gpt-4o-mini",
 		KeyPrefix: "sk-test-abcde", KeyLast4: "9999",
-		Status: "active", ConnectedAt: now, LastValidatedAt: &now,
+		Status: "active", ConnectedAt: later, LastValidatedAt: &now,
 	}
 	if err := repo.Upsert(ctx, second); err != nil {
 		t.Fatalf("second upsert: %v", err)
@@ -77,6 +78,13 @@ func TestPlatformSreLlmRepository_UpsertIsSingleton(t *testing.T) {
 	}
 	if got == nil || got.Provider != "openai" || got.Model != "gpt-4o-mini" {
 		t.Fatalf("upsert must replace the single row, got %+v", got)
+	}
+	// A provider switch is a fresh connection, not a rotation of the old
+	// one: connected_at must move to the SECOND upsert's value, not stay
+	// pinned to the first (unlike OrgAnthropicCredential's same-slot
+	// rotation, which deliberately preserves the original).
+	if !got.ConnectedAt.Equal(later) {
+		t.Fatalf("connected_at must reflect the second upsert, want %v got %v", later, got.ConnectedAt)
 	}
 
 	var count int64
@@ -125,5 +133,49 @@ func TestPlatformSreLlmRepository_UpdateColumnsAndDelete(t *testing.T) {
 	// Idempotent.
 	if err := repo.Delete(ctx); err != nil {
 		t.Fatalf("second delete must be a no-op, got %v", err)
+	}
+}
+
+func TestPlatformSreLlmRepository_UpsertClearsStaleSecretRef(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := organization.NewPlatformSreLlmRepository(db)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	if err := repo.Upsert(ctx, &organization.PlatformSreLlmConfig{
+		Provider: "anthropic", Model: "claude-sonnet-5",
+		KeyPrefix: "sk-ant-api03-Ab", KeyLast4: "1234",
+		Status: "active", ConnectedAt: now, LastValidatedAt: &now,
+	}); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+
+	ref := "sre-llm"
+	if err := repo.UpdateColumns(ctx, map[string]any{"secret_ref_name": ref}); err != nil {
+		t.Fatalf("update columns: %v", err)
+	}
+	got, err := repo.Get(ctx)
+	if err != nil || got.SecretRefName == nil || *got.SecretRefName != ref {
+		t.Fatalf("secret_ref_name not stamped before the second upsert: %+v err %v", got, err)
+	}
+
+	// Simulate a provider switch (anthropic -> openai): the second Upsert
+	// must clear the stale secret ref from the FIRST connection, not carry
+	// it forward onto the new one.
+	if err := repo.Upsert(ctx, &organization.PlatformSreLlmConfig{
+		Provider: "openai", Model: "gpt-4o-mini",
+		KeyPrefix: "sk-test-abcde", KeyLast4: "9999",
+		Status: "active", ConnectedAt: now, LastValidatedAt: &now,
+	}); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+
+	got, err = repo.Get(ctx)
+	if err != nil {
+		t.Fatalf("get after second upsert: %v", err)
+	}
+	if got.SecretRefName != nil {
+		t.Fatalf("secret_ref_name must be cleared by the second upsert, got %+v", *got.SecretRefName)
 	}
 }
