@@ -55,7 +55,24 @@ if docker ps --format '{{.Names}}' | grep -qx "$DB_CONTAINER"; then
 fi
 
 if [ -z "$row" ]; then
-    echo "ℹ️  No SRE agent LLM config set in the AE Console yet — leaving the default Anthropic wiring in place."
+    # No row (never configured, or disconnected via the Console). Revert the
+    # delivery layer back to the default Anthropic wiring and clean up any
+    # ExternalSecret this script created earlier. Idempotent: harmless no-op
+    # when nothing was ever patched/created.
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" patch deployment "${RCA_DEPLOYMENT}" --type=strategic -p '
+spec:
+  template:
+    spec:
+      containers:
+        - name: '"${RCA_DEPLOYMENT}"'
+          env:
+            - name: RCA_LLM_API_KEY_FILE
+              value: /etc/rca-agent/anthropic/RCA_LLM_API_KEY
+' >/dev/null 2>&1 || true
+
+    kubectl --context "$CLUSTER_CONTEXT" -n "$NS" delete externalsecret "$SECRET_NAME" --ignore-not-found >/dev/null
+
+    echo "ℹ️  No SRE agent LLM config set in the AE Console — reverted to the default Anthropic wiring."
     exit 0
 fi
 
