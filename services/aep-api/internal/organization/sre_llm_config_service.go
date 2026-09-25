@@ -18,7 +18,7 @@
 // service. Unlike AnthropicCredentialService this holds exactly ONE row
 // (platform_sre_llm_config, id=1) with no org/role dimension: the SRE agent
 // is a single shared pod, not dispatched per-org. See
-// docs/superpowers/specs/2026-09-23-sre-agent-llm-key-design.md.
+// services/aep-api/design/sre-llm-platform-config.md.
 package organization
 
 import (
@@ -190,13 +190,16 @@ func sreLlmKeyPreview(k string) (prefix, last4 string) {
 // context — passed through only so SecretRefWriter.WriteSreLlm has a JWT
 // context to compute a vault path from; the row itself carries no org
 // column, and which admin happened to be active is otherwise inert (the
-// resulting path is what gets stored and later read back).
+// resulting path is what gets stored and later read back). actor identifies
+// who made the change, for the audit log line only — this is a shared,
+// platform-wide resource, so unlike an org-scoped credential there is no
+// per-org authorization decision resting on it.
 //
 // The SecretRefWriter mirror is best-effort, same posture as
 // AnthropicCredentialService.Connect's own mirror call: org_secrets stays
 // authoritative when SM-API is unavailable, so a mirror failure is logged
 // and swallowed rather than failing the Set call.
-func (s *SreLlmConfigService) Set(ctx context.Context, org, provider, model, apiKey string) (*SreLlmConfig, error) {
+func (s *SreLlmConfigService) Set(ctx context.Context, org, actor, provider, model, apiKey string) (*SreLlmConfig, error) {
 	key := strings.TrimSpace(apiKey)
 	if err := s.ValidateKey(ctx, provider, key); err != nil {
 		return nil, err
@@ -231,7 +234,7 @@ func (s *SreLlmConfigService) Set(ctx context.Context, org, provider, model, api
 		}
 	}
 
-	slog.InfoContext(ctx, "sre_llm.set", "provider", provider, "model", model, "keyPrefix", prefix)
+	slog.InfoContext(ctx, "sre_llm.set", "org", org, "actor", actor, "provider", provider, "model", model, "keyPrefix", prefix)
 	return projectionFromSreLlmRow(row), nil
 }
 
@@ -247,15 +250,17 @@ func (s *SreLlmConfigService) Get(ctx context.Context) (*SreLlmConfig, error) {
 	return projectionFromSreLlmRow(row), nil
 }
 
-// Clear removes the config and its stored secret. Idempotent.
-func (s *SreLlmConfigService) Clear(ctx context.Context) error {
+// Clear removes the config and its stored secret. Idempotent. org and actor
+// identify who acted on this shared, platform-wide resource, for the audit
+// log line only — same posture as Set's org/actor parameters.
+func (s *SreLlmConfigService) Clear(ctx context.Context, org, actor string) error {
 	if err := s.repo.Delete(ctx); err != nil {
 		return fmt.Errorf("sre-llm clear: delete row: %w", err)
 	}
 	if err := s.store.Delete(ctx, sreLlmPlatformOrgID, sreLlmSecretStoreKey); err != nil {
 		slog.WarnContext(ctx, "sre-llm: store delete failed", "error", err)
 	}
-	slog.InfoContext(ctx, "sre_llm.cleared")
+	slog.InfoContext(ctx, "sre_llm.cleared", "org", org, "actor", actor)
 	return nil
 }
 

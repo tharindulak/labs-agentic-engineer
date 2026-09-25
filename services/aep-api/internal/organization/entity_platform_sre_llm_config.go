@@ -27,7 +27,7 @@ import "time"
 // Secret bytes live in the same CredentialStore (Postgres + AES-256-GCM)
 // every other credential in this package uses, keyed by the fixed sentinel
 // org id "platform" (distinct from the reserved "_platform") since this
-// config has no real org. See docs/superpowers/specs/2026-09-23-sre-agent-llm-key-design.md.
+// config has no real org. See services/aep-api/design/sre-llm-platform-config.md.
 type PlatformSreLlmConfig struct {
 	ID              int        `gorm:"column:id;primaryKey;autoIncrement:false" json:"-"`
 	Provider        string     `gorm:"column:provider;type:text;not null" json:"provider"`
