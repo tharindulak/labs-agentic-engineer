@@ -192,11 +192,10 @@ func sreLlmKeyPreview(k string) (prefix, last4 string) {
 // column, and which admin happened to be active is otherwise inert (the
 // resulting path is what gets stored and later read back).
 //
-// The SecretRefWriter mirror call is deferred to a follow-up task (adds
-// SecretRefWriter.WriteSreLlm + the sre-llm repo it stamps through) — the
-// secretRefWriter field/WithSecretRefWriter setter exist already, but no
-// method to call on them for this config exists yet. Wiring the mirror in
-// here now would mean guessing that method's design.
+// The SecretRefWriter mirror is best-effort, same posture as
+// AnthropicCredentialService.Connect's own mirror call: org_secrets stays
+// authoritative when SM-API is unavailable, so a mirror failure is logged
+// and swallowed rather than failing the Set call.
 func (s *SreLlmConfigService) Set(ctx context.Context, org, provider, model, apiKey string) (*SreLlmConfig, error) {
 	key := strings.TrimSpace(apiKey)
 	if err := s.ValidateKey(ctx, provider, key); err != nil {
@@ -219,6 +218,17 @@ func (s *SreLlmConfigService) Set(ctx context.Context, org, provider, model, api
 	}
 	if err := s.repo.Upsert(ctx, row); err != nil {
 		return nil, fmt.Errorf("sre-llm set: upsert: %w", err)
+	}
+
+	// Best-effort SM-API mirror. Same posture as
+	// AnthropicCredentialService.Connect's mirror call: org_secrets stays
+	// authoritative when SM-API is unavailable; the row's SM-API triplet
+	// stays NULL until the next successful Set.
+	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
+		if _, err := s.secretRefWriter.WriteSreLlm(ctx, org, key); err != nil {
+			slog.WarnContext(ctx, "sre-llm: SM-API mirror failed (legacy store still authoritative)",
+				"org", org, "error", err)
+		}
 	}
 
 	slog.InfoContext(ctx, "sre_llm.set", "provider", provider, "model", model, "keyPrefix", prefix)

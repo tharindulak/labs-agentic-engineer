@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
@@ -121,6 +122,65 @@ func TestSreLlmSet_RejectedKeyLeavesNoTrace_DB(t *testing.T) {
 	if _, err := store.Get(ctx, "platform", "sre-llm/api-key"); !errors.Is(err, secrets.ErrSecretNotFound) {
 		t.Fatalf("store after rejected set: want ErrSecretNotFound, got %v", err)
 	}
+}
+
+// TestSreLlmSet_SecretRefWriterWiring_DB pins the Task-5 expanded-scope
+// wiring: Set calls SecretRefWriter.WriteSreLlm (best-effort mirror) after
+// the row is upserted when a writer is attached and enabled, and is a
+// harmless no-op — Set still succeeds — when no writer is attached at all
+// (the common case today, since Task 6 wires the composition root).
+func TestSreLlmSet_SecretRefWriterWiring_DB(t *testing.T) {
+	t.Parallel()
+
+	t.Run("attached and enabled: WriteSreLlm is called after upsert and stamps the triplet", func(t *testing.T) {
+		t.Parallel()
+		db := dbtest.New(t)
+		store, err := secrets.NewDBStore(db, []byte(sreLlmDBAESKey))
+		if err != nil {
+			t.Fatalf("real DBStore: %v", err)
+		}
+		repo := organization.NewPlatformSreLlmRepository(db)
+		fake := &fakeSMClient{createRef: "sre-llm-secrets"}
+		writer := organization.NewSecretRefWriter(fake, nil, nil, nil).WithPlatformSreLlm(repo)
+
+		anthropicBase, _ := organization.AnthropicFakeAPIExported(t, http.StatusOK)
+		svc := organization.NewSreLlmConfigService(repo, store).
+			WithAnthropicAPIBase(anthropicBase).
+			WithSecretRefWriter(writer)
+
+		ctx := claimsCtx("ou-acme-uuid")
+		if _, err := svc.Set(ctx, "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
+			t.Fatalf("set: %v", err)
+		}
+
+		if len(fake.createCalls) != 1 {
+			t.Fatalf("want exactly 1 CreateSecret call (the sre-llm mirror), got %d", len(fake.createCalls))
+		}
+		call := fake.createCalls[0]
+		wantLoc := secretmanagersvc.SecretLocation{OrgName: "ou-acme-uuid", ControlPlaneNamespace: "acme", EntityName: "sre-llm", SecretKey: secretmanagersvc.SecretKeyAPIKey}
+		if call.loc != wantLoc {
+			t.Fatalf("SecretLocation = %+v; want %+v", call.loc, wantLoc)
+		}
+
+		row, err := repo.Get(ctx)
+		if err != nil || row == nil {
+			t.Fatalf("reload: %+v err %v", row, err)
+		}
+		if row.SecretRefName == nil || *row.SecretRefName != "sre-llm-secrets" {
+			t.Fatalf("secret_ref_name not stamped: %+v", row)
+		}
+		if row.SecretRefKVPath == nil || row.SecretRefProperty == nil {
+			t.Fatalf("secret_ref_kv_path/property not stamped: %+v", row)
+		}
+	})
+
+	t.Run("no writer attached: Set still succeeds", func(t *testing.T) {
+		t.Parallel()
+		svc, _ := sreLlmDBService(t, http.StatusOK, 0)
+		if _, err := svc.Set(context.Background(), "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
+			t.Fatalf("set without a secretRefWriter must still succeed: %v", err)
+		}
+	})
 }
 
 func TestSreLlmGet_AbsentReturnsNilNotError_DB(t *testing.T) {
