@@ -102,7 +102,11 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 	return nil
 }
 
-func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName string) error {
+func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName string, sreLlmConfigured bool) error {
+	keyFilePath := "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"
+	if sreLlmConfigured {
+		keyFilePath = "/etc/rca-agent/sre-llm/RCA_LLM_API_KEY"
+	}
 	patch := `{
 		"spec": {"template": {"spec": {
 			"volumes": [
@@ -124,17 +128,26 @@ func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, 
 						"optional": true,
 						"defaultMode": 256
 					}
+				},
+				{
+					"name": "sre-llm-key",
+					"secret": {
+						"secretName": "sre-llm-secret",
+						"optional": true,
+						"defaultMode": 256
+					}
 				}
 			],
 			"containers": [{
 				"name": "` + deployName + `",
 				"volumeMounts": [
 					{"name": "sre-agent-extensions", "mountPath": "/etc/openchoreo/sre-agent", "readOnly": true},
-					{"name": "anthropic-key", "mountPath": "/etc/rca-agent/anthropic", "readOnly": true}
+					{"name": "anthropic-key", "mountPath": "/etc/rca-agent/anthropic", "readOnly": true},
+					{"name": "sre-llm-key", "mountPath": "/etc/rca-agent/sre-llm", "readOnly": true}
 				],
 				"env": [
 					{"name": "EXTENSIONS_DIR", "value": "/etc/openchoreo/sre-agent"},
-					{"name": "RCA_LLM_API_KEY_FILE", "value": "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"},
+					{"name": "RCA_LLM_API_KEY_FILE", "value": "` + keyFilePath + `"},
 					{"name": "AEP_MCP_URL", "value": "http://aep-mcp-server.` + sreNamespace + `.svc.cluster.local:3400/mcp"},
 					{"name": "AEP_MCP_TOKEN", "valueFrom": {"secretKeyRef": {"name": "aep-mcp-token", "key": "AEP_MCP_TOKEN", "optional": true}}}
 				]

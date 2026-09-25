@@ -89,7 +89,7 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(deploy)
 
-	if err := mountSREAgentRuntime(ctx, client, "obs", "ai-rca-agent"); err != nil {
+	if err := mountSREAgentRuntime(ctx, client, "obs", "ai-rca-agent", false); err != nil {
 		t.Fatalf("mount runtime: %v", err)
 	}
 
@@ -98,8 +98,8 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 		t.Fatalf("get deployment: %v", err)
 	}
 	volumes := got.Spec.Template.Spec.Volumes
-	if len(volumes) != 2 {
-		t.Fatalf("volumes len = %d, want 2", len(volumes))
+	if len(volumes) != 3 {
+		t.Fatalf("volumes len = %d, want 3", len(volumes))
 	}
 	if volumes[0].Name != "sre-agent-extensions" || volumes[0].ConfigMap == nil {
 		t.Fatalf("missing extension configmap volume: %#v", volumes[0])
@@ -118,6 +118,9 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 	if volumes[1].Name != "anthropic-key" || volumes[1].Secret == nil || volumes[1].Secret.SecretName != "rca-agent-anthropic-secret" {
 		t.Fatalf("missing anthropic secret volume: %#v", volumes[1])
 	}
+	if volumes[2].Name != "sre-llm-key" || volumes[2].Secret == nil || volumes[2].Secret.SecretName != "sre-llm-secret" {
+		t.Fatalf("missing sre-llm secret volume: %#v", volumes[2])
+	}
 
 	c := got.Spec.Template.Spec.Containers[0]
 	assertEnv := func(name, value string) {
@@ -132,7 +135,45 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 	assertEnv("EXTENSIONS_DIR", "/etc/openchoreo/sre-agent")
 	assertEnv("RCA_LLM_API_KEY_FILE", "/etc/rca-agent/anthropic/RCA_LLM_API_KEY")
 	assertEnv("AEP_MCP_URL", "http://aep-mcp-server.wso2-aep.svc.cluster.local:3400/mcp")
-	if len(c.VolumeMounts) != 2 {
-		t.Fatalf("volumeMounts len = %d, want 2", len(c.VolumeMounts))
+	if len(c.VolumeMounts) != 3 {
+		t.Fatalf("volumeMounts len = %d, want 3", len(c.VolumeMounts))
 	}
+}
+
+func TestMountSREAgentRuntimeUsesSreLlmKeyFileWhenConfigured(t *testing.T) {
+	ctx := context.Background()
+	oldNamespace := sreNamespace
+	sreNamespace = "wso2-aep"
+	defer func() { sreNamespace = oldNamespace }()
+
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "sre-agent", Namespace: "obs"},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "sre-agent"}},
+				},
+			},
+		},
+	}
+	client := fake.NewSimpleClientset(deploy)
+
+	if err := mountSREAgentRuntime(ctx, client, "obs", "sre-agent", true); err != nil {
+		t.Fatalf("mount runtime: %v", err)
+	}
+
+	got, err := client.AppsV1().Deployments("obs").Get(ctx, "sre-agent", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	c := got.Spec.Template.Spec.Containers[0]
+	for _, env := range c.Env {
+		if env.Name == "RCA_LLM_API_KEY_FILE" {
+			if env.Value != "/etc/rca-agent/sre-llm/RCA_LLM_API_KEY" {
+				t.Fatalf("RCA_LLM_API_KEY_FILE = %q, want sre-llm key path", env.Value)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing RCA_LLM_API_KEY_FILE env in %#v", c.Env)
 }
