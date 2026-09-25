@@ -384,10 +384,10 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
 		}
 		if p.SreLLM.Null {
-			if err := s.sreLlmSvc.Clear(ctx); err != nil {
+			if err := s.sreLlmSvc.Clear(ctx, org, actor); err != nil {
 				return nil, sectionErrorFrom("sreLlm", err)
 			}
-		} else if _, err := s.sreLlmSvc.Set(ctx, org, p.SreLLM.Value.Provider, p.SreLLM.Value.Model, p.SreLLM.Value.APIKey); err != nil {
+		} else if _, err := s.sreLlmSvc.Set(ctx, org, actor, p.SreLLM.Value.Provider, p.SreLLM.Value.Model, p.SreLLM.Value.APIKey); err != nil {
 			return nil, sectionErrorFrom("sreLlm", err)
 		}
 		sections = append(sections, "sreLlm")

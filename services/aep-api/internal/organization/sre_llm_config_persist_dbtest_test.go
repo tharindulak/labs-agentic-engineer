@@ -65,7 +65,7 @@ func TestSreLlmSet_HappyPath_DB(t *testing.T) {
 	svc, store := sreLlmDBService(t, http.StatusOK, 0)
 	ctx := context.Background()
 
-	proj, err := svc.Set(ctx, "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey)
+	proj, err := svc.Set(ctx, "acme", "dev@acme.example", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey)
 	if err != nil {
 		t.Fatalf("set: %v", err)
 	}
@@ -89,10 +89,10 @@ func TestSreLlmSet_SwitchProviderReplacesSingleton_DB(t *testing.T) {
 	svc, store := sreLlmDBService(t, http.StatusOK, http.StatusOK)
 	ctx := context.Background()
 
-	if _, err := svc.Set(ctx, "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
+	if _, err := svc.Set(ctx, "acme", "dev@acme.example", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
 		t.Fatalf("first set: %v", err)
 	}
-	proj, err := svc.Set(ctx, "acme", "openai", "gpt-4o-mini", sreLlmDBOpenAIKey)
+	proj, err := svc.Set(ctx, "acme", "dev@acme.example", "openai", "gpt-4o-mini", sreLlmDBOpenAIKey)
 	if err != nil {
 		t.Fatalf("second set: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestSreLlmSet_RejectedKeyLeavesNoTrace_DB(t *testing.T) {
 	svc, store := sreLlmDBService(t, http.StatusUnauthorized, 0)
 	ctx := context.Background()
 
-	_, err := svc.Set(ctx, "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey)
+	_, err := svc.Set(ctx, "acme", "dev@acme.example", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey)
 	var ve *organization.ValidationError
 	if !errors.As(err, &ve) || ve.Code != "sre_llm_key_invalid" {
 		t.Fatalf("want ValidationError{sre_llm_key_invalid}, got %v", err)
@@ -149,7 +149,7 @@ func TestSreLlmSet_SecretRefWriterWiring_DB(t *testing.T) {
 			WithSecretRefWriter(writer)
 
 		ctx := claimsCtx("ou-acme-uuid")
-		if _, err := svc.Set(ctx, "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
+		if _, err := svc.Set(ctx, "acme", "dev@acme.example", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
 			t.Fatalf("set: %v", err)
 		}
 
@@ -177,7 +177,7 @@ func TestSreLlmSet_SecretRefWriterWiring_DB(t *testing.T) {
 	t.Run("no writer attached: Set still succeeds", func(t *testing.T) {
 		t.Parallel()
 		svc, _ := sreLlmDBService(t, http.StatusOK, 0)
-		if _, err := svc.Set(context.Background(), "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
+		if _, err := svc.Set(context.Background(), "acme", "dev@acme.example", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
 			t.Fatalf("set without a secretRefWriter must still succeed: %v", err)
 		}
 	})
@@ -196,11 +196,11 @@ func TestSreLlmClear_RemovesRowAndBytes_Idempotent_DB(t *testing.T) {
 	t.Parallel()
 	svc, store := sreLlmDBService(t, http.StatusOK, 0)
 	ctx := context.Background()
-	if _, err := svc.Set(ctx, "acme", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
+	if _, err := svc.Set(ctx, "acme", "dev@acme.example", "anthropic", "claude-sonnet-5", sreLlmDBAnthropicKey); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
-	if err := svc.Clear(ctx); err != nil {
+	if err := svc.Clear(ctx, "acme", "dev@acme.example"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
 	proj, err := svc.Get(ctx)
@@ -210,7 +210,7 @@ func TestSreLlmClear_RemovesRowAndBytes_Idempotent_DB(t *testing.T) {
 	if _, err := store.Get(ctx, "platform", "sre-llm/api-key"); !errors.Is(err, secrets.ErrSecretNotFound) {
 		t.Fatalf("store after clear: want ErrSecretNotFound, got %v", err)
 	}
-	if err := svc.Clear(ctx); err != nil {
+	if err := svc.Clear(ctx, "acme", "dev@acme.example"); err != nil {
 		t.Fatalf("second clear must be idempotent, got %v", err)
 	}
 }
