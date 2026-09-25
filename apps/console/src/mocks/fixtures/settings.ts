@@ -21,6 +21,7 @@ import type { components } from "../../generated/aep-api";
 type CodingAgentProjection = components["schemas"]["CodingAgentProjection"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 type LLMProjection = components["schemas"]["LLMProjection"];
+type SreLlmProjection = components["schemas"]["SreLlmProjection"];
 type SkillDetailBody = components["schemas"]["SkillDetailBody"];
 type SkillUpdate = components["schemas"]["SkillUpdate"];
 type ApiError = components["schemas"]["Error"];
@@ -92,6 +93,17 @@ export const llmConnectedFixture: LLMProjection = {
   keyLast4: "wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   lastValidatedAt: "2026-07-01T09:00:00Z",
+};
+
+// Platform-wide and independent of `llmConnectedFixture` — the SRE agent's
+// key/provider/model is its own setting, not an override on the org key.
+export const sreLlmConnectedFixture: SreLlmProjection = {
+  provider: "openai",
+  model: "gpt-4o-mini",
+  keyPrefix: "sk-test-abcd",
+  keyLast4: "wxyz",
+  status: "active",
+  connectedAt: "2026-08-06T09:41:00Z",
 };
 
 // Every org has an effective runtime and model, so this section is never

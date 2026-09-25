@@ -49,6 +49,7 @@ type ConfigPatch = components["schemas"]["ConfigPatch"];
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 type LLMProjection = components["schemas"]["LLMProjection"];
+type SreLlmProjection = components["schemas"]["SreLlmProjection"];
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
 type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 type SkillUpdate = components["schemas"]["SkillUpdate"];
@@ -73,6 +74,9 @@ let llm: LLMProjection | null = null;
 // null = the coding agent reuses `llm`'s key. Not a mode flag — the absence of
 // a key IS "reuse", exactly as on the server (ADR-0016).
 let codingLlm: LLMProjection | null = null;
+// Platform-wide and independent of `llm`/`codingLlm` — not an override on
+// either, so it is never cascaded when the org key is cleared.
+let sreLlm: SreLlmProjection | null = null;
 // Always present, unlike the credentials: an org has an effective runtime and
 // model from the moment it exists. Reset (codingAgent:null) restores this very
 // value INCLUDING the null stamps — "reset to defaults" and "never touched"
@@ -200,6 +204,7 @@ function configProjection(): ConfigProjection {
     llm,
     codingLlm,
     codingAgent,
+    sreLlm,
     idp: {
       kind: "platform",
       issuer: "https://idp.aep.local",
@@ -291,6 +296,21 @@ export const settingsHandlers = [
           keyLast4: body.codingLlm.apiKey.slice(-4),
           connectedAt: new Date().toISOString(),
           lastValidatedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    if (body.sreLlm !== undefined) {
+      if (body.sreLlm === null) {
+        sreLlm = null;
+      } else {
+        sreLlm = {
+          provider: body.sreLlm.provider,
+          model: body.sreLlm.model,
+          keyPrefix: body.sreLlm.apiKey.slice(0, 13),
+          keyLast4: body.sreLlm.apiKey.slice(-4),
+          status: "active",
+          connectedAt: new Date().toISOString(),
         };
       }
     }

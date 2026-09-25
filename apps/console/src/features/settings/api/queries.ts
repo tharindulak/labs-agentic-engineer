@@ -26,6 +26,7 @@ type ConfigProjection = components["schemas"]["ConfigProjection"];
 type CodingAgentPatch = NonNullable<
   components["schemas"]["ConfigPatch"]["codingAgent"]
 >;
+type SreLlmPatch = NonNullable<components["schemas"]["ConfigPatch"]["sreLlm"]>;
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
 type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 
@@ -156,6 +157,48 @@ export function useDisconnectAnthropic() {
       });
       if (error) {
         throw new Error(errorMessage(error, "Failed to disconnect the Anthropic key"));
+      }
+      return data;
+    },
+    onSuccess: (data: ConfigProjection) => {
+      queryClient.setQueryData(configKeys.all, data);
+    },
+  });
+}
+
+// The SRE agent's LLM config is a platform-wide setting distinct from both
+// the org's Anthropic key and the coding agent's key/override: it always
+// carries provider + model + key together (unlike the coding-agent override,
+// which reuses the org key's kind), so a save always restates all three.
+export function useSetSreLlm() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: SreLlmPatch) => {
+      const { data, error } = await client.PATCH("/config", {
+        body: { sreLlm: patch },
+      });
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to save the SRE agent LLM config"));
+      }
+      return data;
+    },
+    onSuccess: (data: ConfigProjection) => {
+      queryClient.setQueryData(configKeys.all, data);
+    },
+  });
+}
+
+// sreLlm:null clears the config; the SRE agent falls back to the platform's
+// default Anthropic wiring until it is reconfigured.
+export function useClearSreLlm() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data, error } = await client.PATCH("/config", {
+        body: { sreLlm: null },
+      });
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to remove the SRE agent LLM config"));
       }
       return data;
     },

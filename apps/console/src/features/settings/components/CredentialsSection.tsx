@@ -21,6 +21,7 @@ import { useConfig } from "../api/queries";
 import { AnthropicCredentialCard } from "./AnthropicCredentialCard";
 import { CodingAgentCard } from "./CodingAgentCard";
 import { GitHubCredentialCard } from "./GitHubCredentialCard";
+import { SreAgentLlmCard } from "./SreAgentLlmCard";
 
 export function CredentialsSection() {
   const { data, isLoading, isError, error } = useConfig();
@@ -49,6 +50,9 @@ export function CredentialsSection() {
         codingLlm={data.codingLlm}
         llmConnected={data.llm !== null}
       />
+      {/* Platform-wide, and independent of the org key above — the SRE agent
+          supports either provider, unlike the coding agent's override. */}
+      <SreAgentLlmCard sreLlm={data.sreLlm} />
     </Box>
   );
 }
