@@ -10,7 +10,7 @@
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied. See the License for the
+// KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
 
@@ -24,9 +24,14 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// keepUnverifiedIssuesOpen runs after GitHub has applied a merged PR's closing
-// keywords, for both agent and human merges. Disarming before reopening keeps
-// the issue out of the normal working set throughout the transition.
+// keepUnverifiedIssuesOpen runs on a merged PR's pull_request.closed delivery,
+// for both agent and human merges. Disarming before reopening keeps the issue
+// out of the normal working set throughout the transition.
+//
+// It assumes GitHub's closing-keyword closure is already visible when this
+// runs. GitHub does not order webhook deliveries, so a closure that lands
+// after these writes would leave the issue closed as completed instead of
+// open as an unverified fix; handling that ordering is not done here.
 func (e *Events) keepUnverifiedIssuesOpen(ctx context.Context, orgID, projectID string, prNumber int, resolves []int) error {
 	if e.p.Issues == nil || e.p.Writer == nil {
 		return nil

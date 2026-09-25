@@ -86,9 +86,10 @@
 #                   (default: http://host.k3d.internal:9090). NOT AE_API_URL
 #                   (that is the MCP server on :3401).
 #   AEP_MCP_TOKEN   local bearer configured on aep-mcp-server as
-#                   AEP_MCP_DEFAULT_BEARER. The SRE extension does not send it
-#                   as an HTTP header because the extension loader rejects
-#                   credentials over plaintext local URLs.
+#                   AEP_MCP_DEFAULT_BEARER (random per install, generated into
+#                   deployments/.env by setup-aep.sh). The SRE extension does
+#                   not send it as an HTTP header because the extension loader
+#                   rejects credentials over plaintext local URLs.
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -480,7 +481,6 @@ echo "✅ logs-opensearch ready (incl. logs-adapter)"
 #     AE_API_URL               aep-mcp-server base URL (host.k3d.internal:3401)
 #     AE_PUBLISH_REPORTS       publish RCA reports to aep-api (console Alerts)
 #     AEP_API_URL              aep-api REST base (host.k3d.internal:9090)
-#     AEP_MCP_URL              full MCP URL used by remediation/mcp.json
 #     AEP_MCP_URL              full MCP URL used by remediation/mcp.json.
 #                              Auth is supplied by aep-mcp-server's local
 #                              AEP_MCP_DEFAULT_BEARER fallback, not this
@@ -570,7 +570,13 @@ echo "✅ auto-trigger + handoff wiring applied"
 # reaches RCA and fails at analysis time. The reconcile below makes the key the
 # user saved through the AE Console (or local seed-dev's call into the same
 # config API) available as rca-agent-anthropic-secret before the final readiness
-# step.
+# step. With AE_HANDOFF off the volume stays optional, so a missing secret
+# cannot keep the SRE pod from starting.
+if [ "$AE_HANDOFF" = "true" ]; then
+    ANTHROPIC_SECRET_OPTIONAL=false
+else
+    ANTHROPIC_SECRET_OPTIONAL=true
+fi
 echo ""
 echo "3️⃣c Dynamic Anthropic key (volume wiring; the ExternalSecret is owned by the RCA agent's own manifest)"
 # Patched onto the Deployment (not chart values) for the same "survives a
@@ -584,6 +590,7 @@ spec:
         - name: anthropic-key
           secret:
             secretName: rca-agent-anthropic-secret
+            optional: '"${ANTHROPIC_SECRET_OPTIONAL}"'
             defaultMode: 0400
       containers:
         - name: '"${RCA_DEPLOYMENT}"'
@@ -597,7 +604,7 @@ spec:
 '
 echo "✅ ${RCA_DEPLOYMENT} volume/env wired for the dynamic Anthropic key"
 echo "   Local start/repair projects AE's org Anthropic key into rca-agent-anthropic-secret."
-echo "   With AE_HANDOFF=true the secret is required before the SRE pod can become Ready."
+echo "   Secret volume optional=${ANTHROPIC_SECRET_OPTIONAL} (required only when AE_HANDOFF=true)."
 if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
     echo "🤖 Reconciling SRE Anthropic ExternalSecret if local AE metadata is available..."
     bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \

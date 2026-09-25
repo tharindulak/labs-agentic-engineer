@@ -19,6 +19,7 @@ package eventcore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -293,11 +294,15 @@ func (e *Events) OnPullRequestClosed(ctx context.Context, _, _ string, payload [
 		return err
 	}
 	mergeSHA := p.PullRequest.MergeCommitSHA
+	// The unverified-fix cleanup is an issue-side follow-up to the merge, not a
+	// precondition of it: its failure must not hold back the cycle close, the
+	// supervisor signal or the rebuild. It is still reported (joined below) so
+	// the delivery is retried; re-running this handler is safe (see Idempotency
+	// in doc.go), and the cleanup skips an issue it already left unverified.
+	var cleanupErr error
 	if unverifiedMerge(p.PullRequest.Body) {
-		if err := e.keepUnverifiedIssuesOpen(ctx, owner.orgID, owner.projectID, p.PullRequest.Number,
-			parseResolvesRefs(p.PullRequest.Body)); err != nil {
-			return err
-		}
+		cleanupErr = e.keepUnverifiedIssuesOpen(ctx, owner.orgID, owner.projectID, p.PullRequest.Number,
+			parseResolvesRefs(p.PullRequest.Body))
 	}
 	// Only the agent's own pull request closes the cycle. A human's merge moves
 	// main (so it still rebuilds), but it is not the cycle's outcome.
@@ -309,7 +314,8 @@ func (e *Events) OnPullRequestClosed(ctx context.Context, _, _ string, payload [
 		Branch:   p.PullRequest.Head.Ref,
 		MergeSHA: mergeSHA,
 	})
-	return e.fanOutBuilds(ctx, owner.orgID, owner.projectID, owner.run, p.PullRequest.Number, mergeSHA)
+	return errors.Join(cleanupErr,
+		e.fanOutBuilds(ctx, owner.orgID, owner.projectID, owner.run, p.PullRequest.Number, mergeSHA))
 }
 
 // prOwner is a pull request's run, plus whether the pull request is the run's

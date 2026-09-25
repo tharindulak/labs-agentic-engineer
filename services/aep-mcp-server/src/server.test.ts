@@ -27,6 +27,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
 import { createAepMcpServer } from "./server.js";
 
 interface RegisteredTool {
@@ -104,19 +107,27 @@ test("a call omitting actionStatuses is rejected before the handler forwards any
     seen.push(req);
     return { number: 1, url: "u", nodeId: "n" };
   });
+  // Through a connected client rather than the raw handler: the point under
+  // test is that the SCHEMA rejects the call, which only the SDK's own
+  // tools/call path exercises.
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "server-test", version: "0.0.0" });
+  await s.connect(serverTransport);
+  await client.connect(clientTransport);
 
-  await assert.rejects(() =>
-    s.server.request(
-      {
-        method: "tools/call",
-        params: { name: "create_issue", arguments: { project: "p", title: "t", body: "b" } },
-      },
-      // Minimal shape: exercised through the SDK's own schema validation path
-      // rather than calling the raw handler directly, since the point under
-      // test is that the SCHEMA rejects the call, not that the handler would
-      // also misbehave if invoked with a malformed payload.
-      { method: "tools/call" } as never,
-    ),
-  );
-  assert.deepEqual(seen, []);
+  try {
+    const result = await client.callTool({
+      name: "create_issue",
+      arguments: { project: "p", title: "t", body: "b" },
+    });
+
+    assert.equal(result.isError, true);
+    const [content] = result.content as { type: string; text: string }[];
+    assert.match(content?.text ?? "", /Input validation error/);
+    assert.match(content?.text ?? "", /actionStatuses/);
+    assert.deepEqual(seen, []);
+  } finally {
+    await client.close();
+    await s.close();
+  }
 });

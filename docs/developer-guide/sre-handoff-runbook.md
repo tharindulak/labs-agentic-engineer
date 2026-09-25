@@ -48,9 +48,11 @@ The SRE hotfix image consumes the key from a file:
 RCA_LLM_API_KEY_FILE=/etc/rca-agent/anthropic/RCA_LLM_API_KEY
 ```
 
-Local setup and `aectl sre install` both mount an optional Kubernetes secret at
-`/etc/rca-agent/anthropic`. The key value must not be placed in the image,
-checked into config, or logged.
+Local setup and `aectl sre install` both mount the `rca-agent-anthropic-secret`
+Kubernetes secret at `/etc/rca-agent/anthropic`. Local setup makes that volume
+required when `AE_HANDOFF=true` and optional otherwise; `aectl sre install`
+waits for the secret to sync before it wires the handoff. The key value must
+not be placed in the image, checked into config, or logged.
 
 For local Docker Compose + k3d development, `scripts/start.sh` runs credential
 convergence before it checks or restarts `sre-agent`. That convergence installs
@@ -142,13 +144,21 @@ go run . sre install
 ```
 
 The command reconciles the observability namespace, ExternalSecrets, charts,
-SRE extension ConfigMap, and SRE deployment mounts. It uses the same extension
-layout as local setup and patches the SRE deployment with:
+SRE extension ConfigMap, and SRE deployment mounts. It reads the extension
+assets from an AE repository checkout: the one containing the working
+directory, or the one passed as `--assets-root <checkout>`. It resolves them
+before changing the cluster. It uses the same extension layout as local setup
+and patches the SRE deployment with:
 
 - `EXTENSIONS_DIR=/etc/openchoreo/sre-agent`
 - `RCA_LLM_API_KEY_FILE=/etc/rca-agent/anthropic/RCA_LLM_API_KEY`
 - `AEP_MCP_URL=http://aep-mcp-server.<aep-namespace>.svc.cluster.local:3400/mcp`
-- optional `AEP_MCP_TOKEN` from the `aep-mcp-token` secret
+
+The SRE pod gets no MCP credential. Authentication comes from the platform
+chart: install it with `sreHandoff.enabled=true` (after seeding
+`aep/aep-mcp-token` in OpenBao) so `aep-mcp-server` applies the shared handoff
+bearer and only the observability namespace can reach it. See
+`sre-handoff-security.md`.
 
 Focused check:
 
@@ -190,20 +200,35 @@ dispatch.
 
 ### `ae_create_issue` was called, but no GitHub issue appeared
 
-Finding from the local cluster on 2026-09-19: the SRE remediation agent did
-call `ae_create_issue`, but `aep-mcp-server` forwarded its local MCP fallback
-token to the public `aep-api` issue endpoint. The public endpoint expects a
-Thunder user JWT, so `aep-api` rejected the downstream request with:
+History: on the local cluster on 2026-09-19 the SRE remediation agent called
+`ae_create_issue`, but `aep-api` had no way to accept the forwarded MCP bearer
+on the issue routes, so it rejected the request as a malformed Thunder JWT.
+That gap is closed: `aep-api` now verifies the forwarded bearer with the scoped
+SRE handoff verifier described in
+[sre-handoff-security.md](sre-handoff-security.md). It accepts the bearer only
+on `GET`/`POST /api/v1/projects/{projectName}/issues`, binds the configured org
+and the server-owned incident context, and leaves every other route on Thunder
+JWT verification.
 
-```text
-JWT validation failed: token is malformed
-```
+If the same symptom appears now, check in this order:
 
-Permanent fix direction: keep the SRE-to-MCP bearer separate from the trusted
-MCP-to-AEP issue transport. The public `/api/v1` issue API must remain user-JWT
-only; the SRE handoff should use a narrow internal, token-gated route that binds
-the server-owned org and incident context before calling the existing issue
-service.
+1. `aep-api` logs `JWT validation failed: token is malformed` for the issue
+   route. The handoff verifier is disabled or the bearer does not match, so the
+   request fell through to Thunder JWT verification. Confirm `aep-api` has both
+   `SRE_HANDOFF_TOKEN` and `SRE_HANDOFF_ORG` set (the verifier is off when
+   either is empty; on Kubernetes, `sreHandoff.enabled` is `false` by default),
+   and that `SRE_HANDOFF_TOKEN` holds the same value as `aep-mcp-server`'s
+   `AEP_MCP_TOKEN`. Compare the values without printing them.
+2. The create returns `400` with `trusted incident identity and component are
+   required`. The request authenticated as a normal user JWT instead of the
+   handoff bearer, or the SRE agent sent no component name.
+3. The create returns `409`. The component's incident identity matches only
+   closed issues whose closure reason cannot recur (for example `duplicate`).
+   AE files nothing until a human reopens the matching issue or closes it as
+   `completed` or `not_planned`.
+4. The create returns `200` with `deduped` or `suppressed`. This is expected:
+   an open issue already tracks the incident, or a human closed it as
+   `not_planned`. See [Issue outcomes](#issue-outcomes).
 
 ### Alert rule is ready, but SRE never runs
 

@@ -61,3 +61,23 @@ export function loadAepApiBaseUrl(): string {
   }
   return url.replace(/\/+$/, "");
 }
+
+/**
+ * Parses AEP_MCP_DEFAULT_BEARER, the server-side fallback bearer for callers
+ * that cannot send an Authorization header (the OC SRE extension loader will
+ * not send credentials to a plaintext URL). Unset, blank, or a bare scheme
+ * with no credential (what `Bearer ${EMPTY}` renders to) disables the
+ * fallback, so no request is forwarded with an empty credential. Anything
+ * else must be `Bearer <token>`; a malformed value throws at startup rather
+ * than failing every handoff call at aep-api.
+ */
+export function parseDefaultBearer(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || /^bearer$/i.test(trimmed)) return undefined;
+  if (!/^Bearer\s+\S+$/i.test(trimmed)) {
+    throw new Error(
+      "AEP_MCP_DEFAULT_BEARER must be `Bearer <token>` (or unset to disable the fallback).",
+    );
+  }
+  return trimmed;
+}

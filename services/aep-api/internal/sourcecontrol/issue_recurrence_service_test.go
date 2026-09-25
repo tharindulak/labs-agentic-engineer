@@ -10,7 +10,7 @@
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied. See the License for the
+// KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
 
@@ -142,13 +142,40 @@ func TestRecurrenceEligibility(t *testing.T) {
 				if err != nil || !result.Suppressed {
 					t.Fatalf("terminal result=%+v err=%v", result, err)
 				}
-			} else if err == nil {
-				t.Fatalf("ineligible closure accepted: %+v", result)
+			} else if !errors.Is(err, ErrIncidentRecurrenceIneligible) {
+				t.Fatalf("ineligible closure: result=%+v err=%v", result, err)
 			}
 			if host.issues[0].State != "closed" || host.issues[0].Body != "" || host.createCount != 1 {
 				t.Fatalf("ineligible issue changed: %+v", host.issues)
 			}
 		})
+	}
+}
+
+// An ineligible closed duplicate (legacy, or closed by a human as a duplicate)
+// must not hide a completed match that can recur.
+func TestRecurrenceSkipsIneligibleClosedMatchForEligibleOne(t *testing.T) {
+	host := &recurrenceHost{fakeGitHub: &fakeGitHub{}}
+	svc := NewIssueService(fakeRepoRepo{}, host, fakeResolver{})
+	ctx := WithIncidentContext(context.Background(), "alert-123")
+	req := CreateIssueRequest{Title: "timeout", Body: "evidence", ComponentName: "checkout"}
+	if _, err := svc.CreateIssue(ctx, "org", "proj", req); err != nil {
+		t.Fatal(err)
+	}
+	completed := host.issues[0]
+	completed.Number, completed.State, completed.StateReason, completed.ClosedAt = 2, "closed", "completed", "2026-09-18T08:00:00Z"
+	host.issues[0].State, host.issues[0].StateReason, host.issues[0].ClosedAt = "closed", "duplicate", "2026-09-18T07:00:00Z"
+	host.issues = append(host.issues, completed)
+
+	result, err := svc.CreateIssue(ctx, "org", "proj", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Reopened || result.Number != 2 || result.RecurrenceCount != 1 {
+		t.Fatalf("the completed match must recur: %+v", result)
+	}
+	if host.issues[0].State != "closed" || host.issues[0].Body != "" || host.createCount != 1 {
+		t.Fatalf("ineligible issue changed or a new issue was filed: %+v creates=%d", host.issues, host.createCount)
 	}
 }
 

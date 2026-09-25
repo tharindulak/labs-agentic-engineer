@@ -36,8 +36,21 @@ type sreExtensionAssets struct {
 	RootHint string
 }
 
-func loadSreExtensionAssets() (sreExtensionAssets, error) {
-	root, err := findRepoRootForSREAssets()
+// Asset paths relative to an AE repository checkout. The skill is read from
+// aep-mcp-server's tree (its canonical source) so the MCP tools and the SRE
+// agent's instructions cannot drift apart.
+const (
+	sreAssetMCPJSON   = "deployments/sre-agent-extensions/remediation/mcp.json"
+	sreAssetContext   = "deployments/sre-agent-extensions/remediation/CONTEXT.md"
+	sreAssetSkillMD   = "services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md"
+	sreAssetsRootFlag = "--assets-root"
+)
+
+// loadSreExtensionAssets reads the remediation extension from explicitRoot
+// when it is set (the --assets-root flag), otherwise from the AE checkout
+// found by walking up from the working directory.
+func loadSreExtensionAssets(explicitRoot string) (sreExtensionAssets, error) {
+	root, err := resolveSREAssetsRoot(explicitRoot)
 	if err != nil {
 		return sreExtensionAssets{}, err
 	}
@@ -48,38 +61,54 @@ func loadSreExtensionAssets() (sreExtensionAssets, error) {
 		}
 		return string(b), nil
 	}
-	mcpJSON, err := read("deployments/sre-agent-extensions/remediation/mcp.json")
+	mcpJSON, err := read(sreAssetMCPJSON)
 	if err != nil {
 		return sreExtensionAssets{}, fmt.Errorf("read remediation mcp.json: %w", err)
 	}
-	contextMD, err := read("deployments/sre-agent-extensions/remediation/CONTEXT.md")
+	contextMD, err := read(sreAssetContext)
 	if err != nil {
 		return sreExtensionAssets{}, fmt.Errorf("read remediation CONTEXT.md: %w", err)
 	}
-	skillMD, err := read("services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md")
+	skillMD, err := read(sreAssetSkillMD)
 	if err != nil {
 		return sreExtensionAssets{}, fmt.Errorf("read coding-agent-handoff skill: %w", err)
 	}
 	return sreExtensionAssets{MCPJSON: mcpJSON, Context: contextMD, SkillMD: skillMD, RootHint: root}, nil
 }
 
-func findRepoRootForSREAssets() (string, error) {
+func resolveSREAssetsRoot(explicitRoot string) (string, error) {
+	if explicitRoot != "" {
+		if !hasSREAssets(explicitRoot) {
+			return "", fmt.Errorf("%s %q does not contain %s, %s and %s", sreAssetsRootFlag, explicitRoot, sreAssetMCPJSON, sreAssetContext, sreAssetSkillMD)
+		}
+		return explicitRoot, nil
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	for dir := wd; ; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, "deployments/sre-agent-extensions/remediation/mcp.json")); err == nil {
-			if _, err := os.Stat(filepath.Join(dir, "services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md")); err == nil {
-				return dir, nil
-			}
+	return findRepoRootForSREAssets(wd)
+}
+
+func findRepoRootForSREAssets(start string) (string, error) {
+	for dir := start; ; dir = filepath.Dir(dir) {
+		if hasSREAssets(dir) {
+			return dir, nil
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
+		if filepath.Dir(dir) == dir {
 			break
 		}
 	}
-	return "", fmt.Errorf("could not locate AE repository root containing SRE extension assets from %s", wd)
+	return "", fmt.Errorf("could not locate an AE repository checkout containing the SRE extension assets from %s; run from inside a checkout or pass %s <checkout>", start, sreAssetsRootFlag)
+}
+
+func hasSREAssets(dir string) bool {
+	for _, rel := range []string{sreAssetMCPJSON, sreAssetContext, sreAssetSkillMD} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, ns string, assets sreExtensionAssets) error {
@@ -102,6 +131,12 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 	return nil
 }
 
+// mountSREAgentRuntime patches the SRE deployment with the extension mount,
+// the Anthropic key file, and the MCP URL. It carries no MCP credential: the
+// extension loader will not send an Authorization header to the plaintext
+// in-cluster URL, so aep-mcp-server applies the handoff bearer itself (the
+// platform chart's sreHandoff block). The AEP_MCP_TOKEN delete directive
+// removes the unused credential that earlier aectl versions injected.
 func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName string) error {
 	patch := `{
 		"spec": {"template": {"spec": {
@@ -136,7 +171,7 @@ func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, 
 					{"name": "EXTENSIONS_DIR", "value": "/etc/openchoreo/sre-agent"},
 					{"name": "RCA_LLM_API_KEY_FILE", "value": "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"},
 					{"name": "AEP_MCP_URL", "value": "http://aep-mcp-server.` + sreNamespace + `.svc.cluster.local:3400/mcp"},
-					{"name": "AEP_MCP_TOKEN", "valueFrom": {"secretKeyRef": {"name": "aep-mcp-token", "key": "AEP_MCP_TOKEN", "optional": true}}}
+					{"name": "AEP_MCP_TOKEN", "$patch": "delete"}
 				]
 			}]
 		}}}

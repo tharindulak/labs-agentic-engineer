@@ -19,14 +19,18 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQueries } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
-import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
-import { issueKeys } from "../api/keys";
-import type { IssueInfo, IssueAttentionReason } from "../api/queries";
+import { useSession } from "../../../auth/SessionContext";
+import { BELL_POLL_MS } from "../../alerts/api/queries";
+import { projectIssuesQueryOptions, type IssueInfo, type IssueAttentionReason } from "../api/queries";
 
 type RcaAgentReport = components["schemas"]["RcaAgentReport"];
 
-const ATTENTION_SEEN_KEY = "aep:issues:attentionSeen";
+// Seen state is per signed-in account: a shared browser must not hand one
+// user's seen items to the next. Email is the only stable identifier the
+// session carries (see agent-chat/currentUser.ts).
+function seenStorageKey(accountId: string): string {
+  return `aep:issues:attentionSeen:${accountId}`;
+}
 
 export type AttentionItem = {
   id: string;
@@ -36,17 +40,17 @@ export type AttentionItem = {
   reason: IssueAttentionReason;
 };
 
-function readSeen(): string[] {
+function readSeen(storageKey: string): string[] {
   try {
-    return JSON.parse(localStorage.getItem(ATTENTION_SEEN_KEY) ?? "[]") as string[];
+    return JSON.parse(localStorage.getItem(storageKey) ?? "[]") as string[];
   } catch {
     return [];
   }
 }
 
-function writeSeen(ids: string[]) {
+function writeSeen(storageKey: string, ids: string[]) {
   try {
-    localStorage.setItem(ATTENTION_SEEN_KEY, JSON.stringify(ids));
+    localStorage.setItem(storageKey, JSON.stringify(ids));
   } catch {
     // Storage unavailable — unread state just won't persist across reloads.
   }
@@ -83,25 +87,27 @@ export function countUnreadAttention(items: AttentionItem[], seenIds: string[]):
 }
 
 export function useAttentionUnread(reports: RcaAgentReport[]) {
-  const [seenIds, setSeenIds] = useState<string[]>(readSeen);
+  const storageKey = seenStorageKey(useSession().user.email);
+  const [seen, setSeen] = useState(() => ({ storageKey, ids: readSeen(storageKey) }));
+  // Account changed under a mounted bell: reload that account's seen state
+  // rather than carrying the previous account's in-memory set over. React
+  // discards this render and re-runs it with the new state before committing.
+  if (seen.storageKey !== storageKey) {
+    setSeen({ storageKey, ids: readSeen(storageKey) });
+  }
+  const seenIds = seen.ids;
+
   const projectNames = useMemo(
-    () => [...new Set(reports.map((report) => report.project).filter(Boolean))],
+    () => [...new Set(reports.map((report) => report.project).filter((name): name is string => Boolean(name)))],
     [reports],
   );
 
+  // Polled on the bell's cadence: an issue's attention state changes without
+  // a new alert report, so the alert poll alone would leave the badge stale.
   const queries = useQueries({
     queries: projectNames.map((projectName) => ({
-      queryKey: issueKeys.list(projectName, undefined),
-      queryFn: async () => {
-        const { data, error } = await client.GET("/projects/{projectName}/issues", {
-          params: { path: { projectName } },
-        });
-        if (error) {
-          throw new Error(apiErrorMessage(error, "Failed to load issues"));
-        }
-        return (data ?? []) as IssueInfo[];
-      },
-      staleTime: 30_000,
+      ...projectIssuesQueryOptions(projectName),
+      refetchInterval: BELL_POLL_MS,
     })),
   });
 
@@ -113,14 +119,27 @@ export function useAttentionUnread(reports: RcaAgentReport[]) {
     return byProject;
   }, [projectNames, queries]);
 
+  // A project whose issue list never loaded has unknown attention, not none.
+  // A failed background refetch keeps its last-known data and is not listed.
+  const failedProjects = useMemo(
+    () => projectNames.filter((_, index) => queries[index]?.isError && queries[index]?.data === undefined),
+    [projectNames, queries],
+  );
+
+  const retryFailed = useCallback(() => {
+    queries.forEach((query) => {
+      if (query.isError) void query.refetch();
+    });
+  }, [queries]);
+
   const items = useMemo(() => collectAttentionItems(reports, issuesByProject), [reports, issuesByProject]);
   const unreadCount = useMemo(() => countUnreadAttention(items, seenIds), [items, seenIds]);
 
   const markAllSeen = useCallback(() => {
     const next = [...new Set([...seenIds, ...items.map((item) => item.id)])];
-    setSeenIds(next);
-    writeSeen(next);
-  }, [items, seenIds]);
+    setSeen({ storageKey, ids: next });
+    writeSeen(storageKey, next);
+  }, [items, seenIds, storageKey]);
 
-  return { items, unreadCount, markAllSeen };
+  return { items, unreadCount, markAllSeen, failedProjects, retryFailed };
 }

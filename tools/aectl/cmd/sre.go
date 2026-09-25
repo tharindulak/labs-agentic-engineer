@@ -65,6 +65,7 @@ var (
 	sreAEPublishReport bool
 	sreObserverHost    string
 	sreRcaHost         string
+	sreAssetsRoot      string
 )
 
 var sreCmd = &cobra.Command{
@@ -105,6 +106,7 @@ func init() {
 	f.BoolVar(&sreAEPublishReport, "ae-publish-reports", true, "Publish RCA reports to aep-api (console Alerts)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
+	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions, services/aep-mcp-server/skills); default: search upward from the working directory")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 }
@@ -166,6 +168,15 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--adapter-image must be repo:tag, got %q", sreAdapterImage)
 	}
 
+	// Resolve the handoff extension before touching the cluster, so a missing
+	// checkout fails fast instead of leaving a half-installed plane.
+	var assets sreExtensionAssets
+	if sreAEHandoff {
+		if assets, err = loadSreExtensionAssets(sreAssetsRoot); err != nil {
+			return err
+		}
+	}
+
 	// 1. Detect + warn.
 	if _, err := client.AppsV1().Deployments(sreObsNamespace).Get(ctx, "observer", metav1.GetOptions{}); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -224,10 +235,6 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	_ = rolloutRestart(ctx, client, sreObsNamespace, "observer")
 	if sreAEHandoff {
 		ui.Step("Wiring the remediation agent's SRE-agent extensions (mcp.json/CONTEXT.md/skill)")
-		assets, err := loadSreExtensionAssets()
-		if err != nil {
-			return err
-		}
 		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets); err != nil {
 			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
 		}

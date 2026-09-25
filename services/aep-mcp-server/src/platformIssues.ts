@@ -19,11 +19,17 @@
 /**
  * Marks AE's OWN planned work in a related-issue search result.
  *
- * The `aep` label is the arming switch (aep-api's `delivery.LabelAgentWork`), so
- * an issue carrying it was written by the platform to describe what to BUILD. It
- * is a record of the spec — and that is exactly what makes it dangerous to hand
- * an agent unannotated, because it reads as evidence that the behaviour it
+ * Planned work is an issue carrying both the `aep` arming switch (aep-api's
+ * `delivery.LabelAgentWork`) and the `development` kind (`delivery.KindDevelopment`):
+ * what the planner minted from the spec to describe what to BUILD. It is a
+ * record of the spec — and that is exactly what makes it dangerous to hand an
+ * agent unannotated, because it reads as evidence that the behaviour it
  * describes is intended and therefore fine.
+ *
+ * `aep` alone is NOT that signal. It only says a loop may work the issue: build
+ * and deploy failures, validation repairs, merge conflicts and adopted incidents
+ * all carry it too, and an adopted incident is a defect report — the opposite
+ * of a spec. The kind is what says which one an issue is.
  *
  * That misreading is not hypothetical. An RCA whose remediation asked to "remove
  * the artificial delay in service2" was declined wholesale, because the search
@@ -43,6 +49,15 @@
  */
 export const PLATFORM_WORK_LABEL = "aep";
 
+/**
+ * The kind of planned work. Kept in step with `delivery.KindDevelopment`, and
+ * the kinds that outrank it with aep-api's `kindPrecedence`: a hand-stamped
+ * second kind wins over `development` there, so it must here too, or a defect
+ * someone also tagged `development` would be read as a spec.
+ */
+export const PLATFORM_PLAN_KIND = "development";
+const KINDS_OUTRANKING_PLAN = ["provision", "validation", "conflict", "bug"];
+
 /** What a `PlatformRecord` issue is, and what it is not, said in the record. */
 export const PLATFORM_ISSUE_NOTE =
   "PLATFORM IMPLEMENTATION RECORD — this issue is AE's own plan for what to BUILD. " +
@@ -50,12 +65,15 @@ export const PLATFORM_ISSUE_NOTE =
   "is never grounds for ruling out a code change: behaviour can be deliberate and " +
   "still be worth hardening.";
 
-function isPlatformWork(labels: unknown): boolean {
+function isPlatformPlan(labels: unknown): boolean {
+  if (!Array.isArray(labels)) return false;
+  const names = new Set(
+    labels.filter((label): label is string => typeof label === "string").map((label) => label.trim().toLowerCase()),
+  );
   return (
-    Array.isArray(labels) &&
-    labels.some(
-      (label) => typeof label === "string" && label.trim().toLowerCase() === PLATFORM_WORK_LABEL,
-    )
+    names.has(PLATFORM_WORK_LABEL) &&
+    names.has(PLATFORM_PLAN_KIND) &&
+    !KINDS_OUTRANKING_PLAN.some((kind) => names.has(kind))
   );
 }
 
@@ -73,7 +91,7 @@ export function annotatePlatformIssues<T>(issues: readonly T[]): T[] {
   return issues.map((issue) => {
     if (issue === null || typeof issue !== "object") return issue;
     const record = issue as Record<string, unknown>;
-    if (!isPlatformWork(record["Labels"] ?? record["labels"])) return issue;
+    if (!isPlatformPlan(record["Labels"] ?? record["labels"])) return issue;
     return { ...record, PlatformRecord: true, ReadAs: PLATFORM_ISSUE_NOTE } as T;
   });
 }

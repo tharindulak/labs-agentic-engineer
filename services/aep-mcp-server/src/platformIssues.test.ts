@@ -30,10 +30,11 @@ import { test } from "node:test";
 import {
   annotatePlatformIssues,
   PLATFORM_ISSUE_NOTE,
+  PLATFORM_PLAN_KIND,
   PLATFORM_WORK_LABEL,
 } from "./platformIssues.js";
 
-const platformIssue = { Number: 4, Title: "Implement service2 slow backend", Labels: ["aep"] };
+const platformIssue = { Number: 4, Title: "Implement service2 slow backend", Labels: ["aep", "development"] };
 const bugIssue = { Number: 9, Title: "service1 times out", Labels: ["bug", "incident"] };
 
 test("AE's own planned work is marked as the spec record it is", () => {
@@ -63,8 +64,8 @@ test("the caller's records are never rewritten underneath it", () => {
 
 test("label matching ignores case and padding", () => {
   const issues = annotatePlatformIssues([
-    { Number: 1, Labels: [" AEP "] },
-    { Number: 2, Labels: ["Aep"] },
+    { Number: 1, Labels: [" AEP ", "development"] },
+    { Number: 2, Labels: ["Aep", " Development "] },
   ]) as Record<string, unknown>[];
 
   assert.ok(issues.every((i) => i["PlatformRecord"] === true));
@@ -72,7 +73,40 @@ test("label matching ignores case and padding", () => {
 
 test("a label that merely contains the word is not the arming label", () => {
   const [annotated] = annotatePlatformIssues([
-    { Number: 1, Labels: ["aep-docs", "needs-aep"] },
+    { Number: 1, Labels: ["aep-docs", "needs-aep", "development"] },
+  ]) as Record<string, unknown>[];
+
+  assert.equal(annotated?.["PlatformRecord"], undefined);
+});
+
+test("armed work that is not planned work is not marked as a plan", () => {
+  // `aep` is only the arming switch: an adopted incident, a red build and a
+  // merge conflict all carry it, and each is a defect or an obstruction, never
+  // a spec. Marking one as a plan would tell the model the defect is intended.
+  const issues = annotatePlatformIssues([
+    { Number: 1, Title: "service1 times out", Labels: ["aep", "bug", "incident"] },
+    { Number: 2, Title: "adopted by a human", Labels: ["aep"] },
+    { Number: 3, Labels: ["aep", "bug", "src/build"] },
+    { Number: 4, Labels: ["aep", "conflict"] },
+    { Number: 5, Labels: ["aep", "validation"] },
+  ]) as Record<string, unknown>[];
+
+  assert.ok(issues.every((i) => i["PlatformRecord"] === undefined));
+});
+
+test("planned work nobody armed is not marked", () => {
+  const [annotated] = annotatePlatformIssues([
+    { Number: 1, Labels: [PLATFORM_PLAN_KIND] },
+  ]) as Record<string, unknown>[];
+
+  assert.equal(annotated?.["PlatformRecord"], undefined);
+});
+
+test("a second kind outranks development, as it does in aep-api", () => {
+  // aep-api resolves a hand-stamped multi-kind issue worst-consequence-first,
+  // with development last: a defect someone also tagged `development` is a bug.
+  const [annotated] = annotatePlatformIssues([
+    { Number: 1, Labels: ["aep", "development", "bug"] },
   ]) as Record<string, unknown>[];
 
   assert.equal(annotated?.["PlatformRecord"], undefined);
@@ -80,8 +114,8 @@ test("a label that merely contains the word is not the arming label", () => {
 
 test("aep-api's casing and a lowercase shape are both understood", () => {
   const issues = annotatePlatformIssues([
-    { Number: 1, Labels: [PLATFORM_WORK_LABEL] },
-    { Number: 2, labels: [PLATFORM_WORK_LABEL] },
+    { Number: 1, Labels: [PLATFORM_WORK_LABEL, PLATFORM_PLAN_KIND] },
+    { Number: 2, labels: [PLATFORM_WORK_LABEL, PLATFORM_PLAN_KIND] },
   ]) as Record<string, unknown>[];
 
   assert.ok(issues.every((i) => i["PlatformRecord"] === true));

@@ -73,6 +73,8 @@ assert_file_contains "$SETUP_SCRIPT" "AEP_MCP_URL=\"http://\${AEP_MCP_URL}\""
 assert_file_contains "$SETUP_SCRIPT" "gsub(/\\$\\{AEP_MCP_URL\\}/, url)"
 assert_file_contains "$SETUP_SCRIPT" "AEP_MCP_TOKEN"
 assert_file_contains "$SETUP_SCRIPT" "AEP_MCP_DEFAULT_BEARER"
+# The Anthropic secret volume is required only with the handoff on.
+assert_file_contains "$SETUP_SCRIPT" 'optional: '"'"'"${ANTHROPIC_SECRET_OPTIONAL}"'
 assert_file_contains "$SETUP_SCRIPT" "Ensure observability workloads are running"
 assert_file_contains "$SETUP_SCRIPT" "park-observability.sh\" up"
 assert_file_contains "$SETUP_SCRIPT" "reconcile-sre-anthropic-externalsecret.sh"
@@ -80,6 +82,18 @@ assert_file_contains "$FULL_SETUP_SCRIPT" "PARK_OBSERVABILITY_AFTER_SETUP"
 assert_file_contains "$FULL_SETUP_SCRIPT" "ENABLE_AGENT_MANAGER=0"
 assert_file_contains "$FULL_SETUP_SCRIPT" "alert → RCA → coding-agent"
 assert_file_not_contains "$SETUP_SCRIPT" "services/aep-mcp-server/skills/issue-fix"
+
+# The handoff bearer has no repository-known default: setup-aep.sh generates a
+# random AEP_MCP_TOKEN, and an unset/empty value disables the fallback on both
+# aep-api and aep-mcp-server.
+COMPOSE_FILE="$REPO_DIR/deployments/docker-compose.yml"
+SETUP_AEP_SCRIPT="$REPO_DIR/deployments/scripts/setup-aep.sh"
+assert_file_not_contains "$COMPOSE_FILE" "local-dev-sre-handoff-secret"
+assert_file_contains "$COMPOSE_FILE" 'SRE_HANDOFF_TOKEN: "${AEP_MCP_TOKEN:-}"'
+assert_file_contains "$COMPOSE_FILE" 'AEP_MCP_DEFAULT_BEARER: "${AEP_MCP_TOKEN:+Bearer ${AEP_MCP_TOKEN}}"'
+assert_file_contains "$SETUP_AEP_SCRIPT" 'AEP_MCP_TOKEN=${AEP_MCP_TOKEN_VAL}'
+# An explicit ENABLE_AGENT_MANAGER wins over the saved .env value.
+assert_file_contains "$SETUP_AEP_SCRIPT" 'ENABLE_AGENT_MANAGER_VAL="${ENABLE_AGENT_MANAGER:-$(existing_val ENABLE_AGENT_MANAGER)}"'
 
 assert_file_contains "$REPO_DIR/deployments/scripts/start.sh" "reconcile-sre-anthropic-externalsecret.sh"
 assert_file_contains "$REPO_DIR/deployments/scripts/repair-secrets.sh" "reconcile-sre-anthropic-externalsecret.sh"

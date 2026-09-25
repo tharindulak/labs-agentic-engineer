@@ -10,7 +10,7 @@
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied. See the License for the
+// KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
 
@@ -79,5 +79,23 @@ func TestSREHandlerRejectsMissingTrustedIdentity(t *testing.T) {
 	apiError, ok := err.(*apierr.Error)
 	if !ok || apiError.Status != 400 {
 		t.Fatalf("invalid incident should be 400, got %v", err)
+	}
+}
+
+// closedDuplicateHost answers the incident lookup with one closed match whose
+// closure reason (a human's "duplicate") is not eligible to recur.
+type closedDuplicateHost struct{ host }
+
+func (*closedDuplicateHost) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
+	return []sourcecontrol.IssueInfo{{Number: 7, State: "closed", StateReason: "duplicate", Labels: []string{"bug", "incident"}}}, nil
+}
+
+func TestSREHandlerReportsIneligibleClosedIncidentAsConflict(t *testing.T) {
+	h := issues.New(sourcecontrol.NewIssueService(repo{}, &closedDuplicateHost{}, resolver{}))
+	ctx := sourcecontrol.WithIncidentContext(tenant.WithBoundOrg(context.Background(), "acme"), "alert-1")
+	_, err := h.CreateIssue(ctx, gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}})
+	apiError, ok := err.(*apierr.Error)
+	if !ok || apiError.Status != 409 {
+		t.Fatalf("an ineligible closed incident should be 409, got %v", err)
 	}
 }

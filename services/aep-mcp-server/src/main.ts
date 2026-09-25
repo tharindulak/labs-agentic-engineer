@@ -20,9 +20,13 @@
  * The composition root: a stateless Streamable HTTP MCP server. Each POST
  * /mcp request gets its OWN McpServer + transport pair, built with the
  * caller's bearer token captured from the Authorization header — see
- * server.ts. Local development may provide AEP_MCP_DEFAULT_BEARER for callers
- * that cannot send headers to a plaintext loopback URL (the OC SRE extension
- * loader refuses that combination). Stateless mode (sessionIdGenerator:
+ * server.ts. AEP_MCP_DEFAULT_BEARER is an opt-in fallback for callers that
+ * cannot send headers to a plaintext URL (the OC SRE extension loader refuses
+ * that combination). Unset by default: every caller must then bring its own
+ * Authorization header. When set, any caller that reaches this port acts with
+ * that bearer, so deployments set it only where the port is limited to the
+ * trusted handoff caller (the Helm chart pairs it with a NetworkPolicy; see
+ * docs/developer-guide/sre-handoff-security.md). Stateless mode (sessionIdGenerator:
  * undefined) is required here: a shared/session-scoped server would let one
  * caller's bearer leak into another's tool calls.
  *
@@ -33,12 +37,12 @@ import express from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import { intEnv, loadAepApiBaseUrl } from "./env.js";
+import { intEnv, loadAepApiBaseUrl, parseDefaultBearer } from "./env.js";
 import { createAepMcpServer } from "./server.js";
 
 const port = intEnv(process.env.PORT, 3400);
 const aepApiBaseUrl = loadAepApiBaseUrl();
-const defaultBearer = process.env.AEP_MCP_DEFAULT_BEARER?.trim();
+const defaultBearer = parseDefaultBearer(process.env.AEP_MCP_DEFAULT_BEARER);
 
 const app = express();
 app.use(express.json());
@@ -93,6 +97,7 @@ app.post("/mcp", async (req, res) => {
 
 app.listen(port, () => {
   process.stdout.write(
-    `@aep/aep-mcp-server listening on :${port} (aep-api: ${aepApiBaseUrl})\n`,
+    `@aep/aep-mcp-server listening on :${port} (aep-api: ${aepApiBaseUrl}, ` +
+      `default bearer fallback: ${defaultBearer ? "enabled" : "disabled"})\n`,
   );
 });

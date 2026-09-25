@@ -110,40 +110,54 @@ export function AlertsNotificationPanel() {
       ) : reports.length === 0 && attention.items.length === 0 ? (
         <NotificationPanel.EmptyState />
       ) : (
-        <NotificationPanel.List>
-          {attention.items.map((item) => (
-            <NotificationPanel.Item
-              key={item.id}
-              id={item.id}
-              type={item.reason === "escalated" ? "error" : "warning"}
-              read
-            >
-              <NotificationPanel.ItemTitle>
-                {attentionLabel(item.reason)}: #{item.issueNumber} {item.title}
-              </NotificationPanel.ItemTitle>
-              <NotificationPanel.ItemMessage>
-                {item.projectName} · {attentionDescription(item.reason)}
-              </NotificationPanel.ItemMessage>
-              <NotificationPanel.ItemAction onClick={() => openIssues(item.projectName)}>
-                Review
-              </NotificationPanel.ItemAction>
-            </NotificationPanel.Item>
-          ))}
-          {reports.map((report) => (
-            <NotificationPanel.Item key={report.id} id={report.id!} type="info" read>
-              <NotificationPanel.ItemTitle>{report.title}</NotificationPanel.ItemTitle>
-              <NotificationPanel.ItemMessage>
-                {report.project} · {classificationLabel(report.classification)}
-              </NotificationPanel.ItemMessage>
-              <NotificationPanel.ItemTimestamp>
-                {report.createdAt ? formatRelativeTime(new Date(report.createdAt)) : ""}
-              </NotificationPanel.ItemTimestamp>
-              <NotificationPanel.ItemAction onClick={() => openAlert(report.id!)}>
-                View
-              </NotificationPanel.ItemAction>
-            </NotificationPanel.Item>
-          ))}
-        </NotificationPanel.List>
+        <>
+          {attention.failedProjects.length > 0 && (
+            // An issue list that failed to load hides that project's
+            // attention items; say so instead of implying there are none.
+            <Box sx={{ px: 3, py: 1.5, display: "flex", alignItems: "center", gap: 1.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+                Failed to load issue attention for {attention.failedProjects.join(", ")}
+              </Typography>
+              <Button size="small" onClick={attention.retryFailed}>
+                Retry
+              </Button>
+            </Box>
+          )}
+          <NotificationPanel.List>
+            {attention.items.map((item) => (
+              <NotificationPanel.Item
+                key={item.id}
+                id={item.id}
+                type={item.reason === "escalated" ? "error" : "warning"}
+                read
+              >
+                <NotificationPanel.ItemTitle>
+                  {attentionLabel(item.reason)}: #{item.issueNumber} {item.title}
+                </NotificationPanel.ItemTitle>
+                <NotificationPanel.ItemMessage>
+                  {item.projectName} · {attentionDescription(item.reason)}
+                </NotificationPanel.ItemMessage>
+                <NotificationPanel.ItemAction onClick={() => openIssues(item.projectName)}>
+                  Review
+                </NotificationPanel.ItemAction>
+              </NotificationPanel.Item>
+            ))}
+            {reports.map((report) => (
+              <NotificationPanel.Item key={report.id} id={report.id!} type="info" read>
+                <NotificationPanel.ItemTitle>{report.title}</NotificationPanel.ItemTitle>
+                <NotificationPanel.ItemMessage>
+                  {report.project} · {classificationLabel(report.classification)}
+                </NotificationPanel.ItemMessage>
+                <NotificationPanel.ItemTimestamp>
+                  {report.createdAt ? formatRelativeTime(new Date(report.createdAt)) : ""}
+                </NotificationPanel.ItemTimestamp>
+                <NotificationPanel.ItemAction onClick={() => openAlert(report.id!)}>
+                  View
+                </NotificationPanel.ItemAction>
+              </NotificationPanel.Item>
+            ))}
+          </NotificationPanel.List>
+        </>
       )}
     </NotificationPanel>
   );

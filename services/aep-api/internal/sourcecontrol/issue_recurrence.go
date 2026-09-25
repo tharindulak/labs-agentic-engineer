@@ -10,7 +10,7 @@
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied. See the License for the
+// KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
 
@@ -76,7 +76,7 @@ func AttentionReasonFor(issue IssueInfo) string {
 // safety survives a process restart without another persistence authority.
 func (s *issueService) RecordRecurrence(ctx context.Context, orgID, projectID string, issue IssueInfo, req CreateIssueRequest) (int64, error) {
 	if !canRecur(issue) {
-		return 0, fmt.Errorf("only completed SRE issues can recur")
+		return 0, ErrIncidentRecurrenceIneligible
 	}
 	if issue.ClosedAt == "" {
 		return 0, fmt.Errorf("incident closure identity is missing")

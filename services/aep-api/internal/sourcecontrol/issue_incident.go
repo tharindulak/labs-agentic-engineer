@@ -10,7 +10,7 @@
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied. See the License for the
+// KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
 
@@ -90,12 +90,18 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 			return &IssueResult{Number: issue.Number, URL: issue.URL, Suppressed: true, Classification: classification}, nil
 		}
 	}
+	// Any completed match recurs, even alongside ineligible closed duplicates.
+	// Closed matches that are all ineligible fail closed: filing a fresh issue
+	// would fork the incident's identity, and reopening one would override a
+	// human's closure reason.
+	closedIneligible := false
 	for _, issue := range existing {
 		if !strings.EqualFold(issue.State, "closed") {
 			continue
 		}
 		if !canRecur(issue) {
-			return nil, fmt.Errorf("only completed SRE issues can recur")
+			closedIneligible = true
+			continue
 		}
 		count, err := s.incident.Recurrence.RecordRecurrence(ctx, orgID, projectID, issue, req)
 		if err != nil {
@@ -107,6 +113,9 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 		result := &IssueResult{Number: issue.Number, URL: issue.URL, Reopened: true, RecurrenceCount: count, Classification: classification}
 		s.adoptIncident(ctx, orgID, projectID, result)
 		return result, nil
+	}
+	if closedIneligible {
+		return nil, ErrIncidentRecurrenceIneligible
 	}
 	// Identity and ownership labels are required: GitHub silently drops absent
 	// labels, which would make the next create miss this incident entirely.

@@ -18,6 +18,8 @@ package cmd
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,7 +30,7 @@ import (
 )
 
 func TestLoadSREExtensionAssetsFromRepo(t *testing.T) {
-	assets, err := loadSreExtensionAssets()
+	assets, err := loadSreExtensionAssets("")
 	if err != nil {
 		t.Fatalf("load assets: %v", err)
 	}
@@ -46,6 +48,68 @@ func TestLoadSREExtensionAssetsFromRepo(t *testing.T) {
 	}
 	if !strings.Contains(assets.SkillMD, "ae_create_issue") {
 		t.Fatalf("SKILL.md does not name ae_create_issue")
+	}
+}
+
+// writeSREAssets lays out a minimal AE checkout under root.
+func writeSREAssets(t *testing.T, root string) {
+	t.Helper()
+	for rel, body := range map[string]string{
+		sreAssetMCPJSON: "mcp",
+		sreAssetContext: "context",
+		sreAssetSkillMD: "skill",
+	} {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestLoadSREExtensionAssetsFromExplicitRoot(t *testing.T) {
+	root := t.TempDir()
+	writeSREAssets(t, root)
+
+	assets, err := loadSreExtensionAssets(root)
+	if err != nil {
+		t.Fatalf("load assets: %v", err)
+	}
+	if assets.MCPJSON != "mcp" || assets.Context != "context" || assets.SkillMD != "skill" || assets.RootHint != root {
+		t.Fatalf("unexpected assets: %#v", assets)
+	}
+}
+
+func TestLoadSREExtensionAssetsRejectsExplicitRootWithoutAssets(t *testing.T) {
+	_, err := loadSreExtensionAssets(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), sreAssetsRootFlag) {
+		t.Fatalf("err = %v, want an error naming %s", err, sreAssetsRootFlag)
+	}
+}
+
+func TestFindRepoRootForSREAssetsWalksUp(t *testing.T) {
+	root := t.TempDir()
+	writeSREAssets(t, root)
+	nested := filepath.Join(root, "tools", "aectl", "cmd")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := findRepoRootForSREAssets(nested)
+	if err != nil {
+		t.Fatalf("find root: %v", err)
+	}
+	if got != root {
+		t.Fatalf("root = %q, want %q", got, root)
+	}
+}
+
+func TestFindRepoRootForSREAssetsOutsideCheckoutNamesFlag(t *testing.T) {
+	_, err := findRepoRootForSREAssets(t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), sreAssetsRootFlag) {
+		t.Fatalf("err = %v, want an error naming %s", err, sreAssetsRootFlag)
 	}
 }
 
@@ -82,7 +146,18 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 		Spec: appsv1.DeploymentSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{Name: "ai-rca-agent"}},
+					// An install from an earlier aectl carries an unused
+					// AEP_MCP_TOKEN secret ref; the patch must remove it.
+					Containers: []corev1.Container{{
+						Name: "ai-rca-agent",
+						Env: []corev1.EnvVar{{
+							Name: "AEP_MCP_TOKEN",
+							ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{Name: "aep-mcp-token"},
+								Key:                  "AEP_MCP_TOKEN",
+							}},
+						}},
+					}},
 				},
 			},
 		},
@@ -132,6 +207,11 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 	assertEnv("EXTENSIONS_DIR", "/etc/openchoreo/sre-agent")
 	assertEnv("RCA_LLM_API_KEY_FILE", "/etc/rca-agent/anthropic/RCA_LLM_API_KEY")
 	assertEnv("AEP_MCP_URL", "http://aep-mcp-server.wso2-aep.svc.cluster.local:3400/mcp")
+	for _, env := range c.Env {
+		if env.Name == "AEP_MCP_TOKEN" {
+			t.Fatalf("SRE pod must not carry the MCP credential; found %#v", env)
+		}
+	}
 	if len(c.VolumeMounts) != 2 {
 		t.Fatalf("volumeMounts len = %d, want 2", len(c.VolumeMounts))
 	}

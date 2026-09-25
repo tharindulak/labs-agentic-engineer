@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
@@ -33,8 +33,10 @@ export type IssueInfo = WireIssueInfo & {
   attentionReason?: IssueAttentionReason;
 };
 
-export function useProjectIssues(projectName: string, labels?: string) {
-  return useQuery({
+// Shared by the Issues page and the notification bell's attention items
+// (useAttentionUnread), so both read the same cache entry the same way.
+export function projectIssuesQueryOptions(projectName: string, labels?: string) {
+  return queryOptions({
     queryKey: issueKeys.list(projectName, labels),
     queryFn: async () => {
       const { data, error } = await client.GET("/projects/{projectName}/issues", {
@@ -50,4 +52,8 @@ export function useProjectIssues(projectName: string, labels?: string) {
     },
     staleTime: 30_000,
   });
+}
+
+export function useProjectIssues(projectName: string, labels?: string) {
+  return useQuery(projectIssuesQueryOptions(projectName, labels));
 }

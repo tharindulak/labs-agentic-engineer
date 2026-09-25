@@ -55,6 +55,9 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 		if errors.Is(err, sourcecontrol.ErrIncidentContextRequired) {
 			return nil, apierr.BadRequest(err.Error())
 		}
+		if errors.Is(err, sourcecontrol.ErrIncidentRecurrenceIneligible) {
+			return nil, apierr.Conflict(err.Error())
+		}
 		if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 			return nil, apierr.NotFound("project repo not found")
 		}

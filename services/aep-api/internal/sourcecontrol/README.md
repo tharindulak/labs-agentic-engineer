@@ -51,12 +51,15 @@ and installation lifecycle.*
   identity with `WithIncidentContext`. Creation combines it with tenant/project and normalized component,
   ignoring the client dedupe key. `ops.ClassifyActions` determines classification; config-only ledger
   issues have a separate identity namespace and cannot be adopted. The server stamps `bug` and
-  `sre-agent` and removes caller delivery-routing and identity labels. Missing trusted context or
-  component is rejected before writing. Legacy non-SRE requests retain their existing dedupe behavior.
+  `incident` (the legacy `sre-agent` label is still recognized as an incident label) and removes
+  caller delivery-routing and identity labels. Missing trusted context or component is rejected
+  before writing. Legacy non-SRE requests retain their existing dedupe behavior.
 - **SRE identity checks fail closed.** An open match returns `deduped` without another adoption; a
-  `not_planned` SRE closure returns `suppressed`. Only a completed SRE closure can recur; ordinary
-  issues and unknown closure reasons cannot reopen through this path. New and reopened adoptable work
-  returns `adopted` only after delivery accepts it;
+  `not_planned` SRE closure returns `suppressed`. Only a completed SRE closure can recur, and it does
+  even when ineligible closed duplicates share its identity; ordinary issues and unknown closure
+  reasons cannot reopen through this path. When every closed match is ineligible, creation returns
+  `ErrIncidentRecurrenceIneligible` (409) and files nothing until a human reopens or re-closes the
+  match. New and reopened adoptable work returns `adopted` only after delivery accepts it;
   missing delivery wiring or refusal preserves the issue and returns `adoptionError`. Creates serialize
   per repository within one process. Lookup and label-creation failures prevent filing an untracked
   incident; multiple replicas still require a durable uniqueness mechanism.

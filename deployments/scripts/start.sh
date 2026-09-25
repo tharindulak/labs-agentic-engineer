@@ -246,6 +246,14 @@ else
     echo "⚠️  aep-mcp-server not responding on :3401 — the RCA→coding-agent handoff"
     echo "    will fail its ae_* tool calls. Check: docker logs aep-mcp-server"
 fi
+# The SRE extension sends no Authorization header; it relies on the
+# AEP_MCP_TOKEN-derived fallback bearer (docker-compose.yml). A .env written
+# before setup-aep.sh generated that token leaves the handoff unauthenticated.
+if ! grep -qE '^AEP_MCP_TOKEN=.+' "$DEPLOY_DIR/.env" 2>/dev/null && [ -z "${AEP_MCP_TOKEN:-}" ]; then
+    echo "⚠️  AEP_MCP_TOKEN is not set in deployments/.env — SRE handoff calls will get 401."
+    echo "    Re-run scripts/setup-aep.sh, or add a random value, e.g.:"
+    echo "    echo \"AEP_MCP_TOKEN=\$(openssl rand -hex 32)\" >> deployments/.env && docker compose up -d aep-api aep-mcp-server"
+fi
 
 # 7c. Converge AE-managed credentials before checking/restarting SRE.
 #     The SRE agent reads Anthropic from a Kubernetes Secret projected from the

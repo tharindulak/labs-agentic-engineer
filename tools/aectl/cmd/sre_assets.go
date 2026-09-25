@@ -76,22 +76,6 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: aep-mcp-token
-  namespace: {{.ObsNamespace}}
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: openbao
-    kind: SecretStore
-  target:
-    name: aep-mcp-token
-  data:
-    - secretKey: AEP_MCP_TOKEN
-      remoteRef: { key: aep/aep-mcp-token, property: value }
----
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
   name: opensearch-admin-credentials
   namespace: {{.ObsNamespace}}
 spec:
