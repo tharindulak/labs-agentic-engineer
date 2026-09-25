@@ -603,6 +603,11 @@ if [ -f "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" ]; then
     bash "$SCRIPT_DIR/reconcile-sre-anthropic-externalsecret.sh" || \
         echo "   ⚠️  could not reconcile SRE Anthropic ExternalSecret now; start.sh will retry."
 fi
+if [ -f "$SCRIPT_DIR/reconcile-sre-llm-config.sh" ]; then
+    echo "🤖 Reconciling SRE agent LLM config from the AE Console setting, if one exists..."
+    bash "$SCRIPT_DIR/reconcile-sre-llm-config.sh" || \
+        echo "   ⚠️  could not reconcile SRE agent LLM config now; start.sh will retry."
+fi
 
 # ── 3d. AEP-owned SRE remediation extension — deploy-time mount ───────────
 # The OC SRE agent loads remediation extensions from EXTENSIONS_DIR. AE owns
