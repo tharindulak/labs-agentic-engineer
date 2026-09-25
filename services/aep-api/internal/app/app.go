@@ -157,6 +157,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgCredRepo := organization.NewOrgCredentialRepository(db, in.ColumnCipher)
 	orgAnthropicRepo := organization.NewOrgAnthropicRepository(db)
 	orgCodingAgentRepo := organization.NewOrgCodingAgentRepository(db)
+	sreLlmRepo := organization.NewPlatformSreLlmRepository(db)
 	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
 	activityRepo := projects.NewActivityEventRepository(db)
@@ -241,6 +242,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
 	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo)
+	secretRefWriter.WithPlatformSreLlm(sreLlmRepo)
 
 	// Credentials + git-service services and controllers. The credential store,
 	// the App-token minter (post OpenBao key-load / dev seed / bot-identity load),
@@ -298,6 +300,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// coding dispatch copies it onto the run it launches.
 	codingAgentSettings := organization.NewCodingAgentService(orgCodingAgentRepo)
 
+	// The SRE agent's platform-wide LLM config (provider/model/key) — one
+	// instance, no per-org dispatch: the SRE agent is a single shared pod,
+	// not launched per run the way the coding agent is.
+	sreLlmConfigService := organization.NewSreLlmConfigService(sreLlmRepo, credStore)
+
 	// Task JWT manager — RS256. The public key is published on
 	// /auth/external/jwks.json. Used to mint BFF MCP tokens
 	// (IssueServiceToken) for the design agent and playground. Runner
@@ -323,6 +330,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// the Enabled() check.
 	credService.WithSecretRefWriter(secretRefWriter)
 	anthropicCredService.WithSecretRefWriter(secretRefWriter)
+	sreLlmConfigService.WithSecretRefWriter(secretRefWriter)
 	validatorProbes := organization.NewValidatorProbes(credService, gitHost, credResolver, minter)
 	credValidator := secrets.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)
 
@@ -906,7 +914,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
 		cfg.BFFPublicURL,
 		cfg.GitHubAppClientID,
-	).WithCodingAgent(codingAgentSettings)
+	).WithCodingAgent(codingAgentSettings).WithSreLlm(sreLlmConfigService)
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).
