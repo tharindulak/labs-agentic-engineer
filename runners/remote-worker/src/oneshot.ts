@@ -33,7 +33,7 @@
 
 import { randomUUID } from "node:crypto";
 import { provisionWorkspace } from "./lib/workspace.js";
-import { onDemandSkills, startCodingRun, type McpAuthOpts } from "./lib/runner.js";
+import { implementationSkills, onDemandSkills, startCodingRun, type McpAuthOpts } from "./lib/runner.js";
 import { openTaskLog } from "./lib/logger.js";
 import { isUUID, isSlug } from "./lib/uuid.js";
 import type { DispatchRequest } from "./lib/types.js";
@@ -41,7 +41,7 @@ import { emit, primeScrubber } from "./lib/progress/emitter.js";
 import { PROVISIONING, WORKSPACE_READY } from "./lib/progress/lifecycle.js";
 import { installLogRedaction } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
-import { listMirroredSkills, readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
+import { readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { ClientCredentialsTokenProvider } from "./lib/oauth.js";
 import {
   fetchValidationContext,
@@ -223,20 +223,20 @@ async function main(): Promise<number> {
   // A validation run (AEP_TASK_KIND) applies no DESIGN skills at all — it is
   // black-box verification and builds nothing — so `pinnedBodies` stays empty
   // for it. Its workflow arrives another way: alwaysOnSkills() names
-  // `acceptance-run` and requireWorkflowBodies() injects the whole SKILL.md into
+  // `validation-task` and requireWorkflowBodies() injects the whole SKILL.md into
   // the system prompt, in context from the first token rather than invocable.
   //
   // The ALLOWLIST is not empty though, and that distinction cost a release.
   // Pinning nothing is not the same as allowing nothing: `skills:` gates the
   // Skill tool, so an empty array made the `agent-browser` load that
-  // `acceptance-run` instructs impossible, and the agent read the mirror's files
+  // `validation-task` instructs impossible, and the agent read the mirror's files
   // by hand instead. onDemandSkills() names what the phase may load.
   let availableSkillNames: string[] = [];
   let pinnedBodies = "";
   let pinnedSkillNames: string[] = [];
   if (req.taskKind === "validation") {
     console.log(
-      "[oneshot] validation run — no design skills apply; acceptance-run is injected as this run's workflow",
+      "[oneshot] validation run — no design skills apply; validation-task is injected as this run's workflow",
     );
     // PREFLIGHT: where the deployed system is, fetched by the platform before the
     // agent starts. Fatal on purpose — an agent that cannot learn its targets has
@@ -344,11 +344,10 @@ async function main(): Promise<number> {
         `[oneshot] ⚠️  ${dangling.length} pinned skill(s) missing from .claude/skills/ — proceeding without them: ${dangling.join(", ")}`,
       );
     }
-    // Every mirrored skill is allowed — the SDK's `skills:` is an allowlist, so
-    // anything omitted here cannot be invoked at all. The pinned subset also
-    // goes into the system prompt, which is the only thing that actually
-    // preloads guidance.
-    availableSkillNames = await listMirroredSkills(layout.workspace);
+    // `skills:` is an allowlist, so anything omitted here cannot be invoked at
+    // all. The pinned subset also goes into the system prompt, which is the only
+    // thing that actually preloads guidance.
+    availableSkillNames = await implementationSkills(layout.workspace);
     pinnedBodies = await readSkillBodies(layout.workspace, present);
     pinnedSkillNames = present;
   }

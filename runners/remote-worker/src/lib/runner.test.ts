@@ -24,6 +24,7 @@ import path from "node:path";
 import {
   alwaysOnSkills,
   contractReferencePath,
+  implementationSkills,
   onDemandSkills,
   promptWithProjectRoot,
   systemPromptAppend,
@@ -43,16 +44,15 @@ import type { DispatchRequest } from "./types.js";
 // --- alwaysOnSkills: the run's own workflow is not the design's to choose ----
 
 // Every other skill a build reads is a `skillsPinned` entry someone put in a
-// design.json. This list is not: no design decides whether a coding run follows
-// the coding workflow, and a validation run's workflow REPLACES it rather than
-// adding to it.
-test("alwaysOnSkills: an implementation run is steered by aep, a validation run by both", () => {
+// design.json. This list is not: no design decides whether a run follows its
+// workflow, and each task kind has exactly one (ADR-0037).
+test("alwaysOnSkills: each task kind is steered by exactly one workflow", () => {
   assert.deepEqual(alwaysOnSkills("implementation"), ["aep"]);
-  assert.deepEqual(alwaysOnSkills("validation"), ["aep", "acceptance-run"]);
+  assert.deepEqual(alwaysOnSkills("validation"), ["validation-task"]);
 });
 
 // agent-browser carries the browser mechanics a validation run reaches for, and
-// `acceptance-run` names it by description. Paying for its body on every turn of
+// `validation-task` names it by description. Paying for its body on every turn of
 // every validation run is what NOT listing it here buys.
 test("alwaysOnSkills: agent-browser is left to on-demand loading", () => {
   assert.ok(!alwaysOnSkills("validation").includes("agent-browser"));
@@ -60,7 +60,7 @@ test("alwaysOnSkills: agent-browser is left to on-demand loading", () => {
 
 // The other half of that sentence. `skills:` is an allowlist, so a skill in
 // NEITHER list is not deferred — it is unreachable, and the Skill tool rejects
-// the load `acceptance-run` instructs. Absent from always-on AND present here is
+// the load `validation-task` instructs. Absent from always-on AND present here is
 // the pair that means "loadable, but not on every turn".
 test("onDemandSkills: a validation run may load agent-browser", () => {
   assert.deepEqual(onDemandSkills("validation"), ["agent-browser"]);
@@ -72,6 +72,21 @@ test("onDemandSkills: a validation run may load agent-browser", () => {
 // module can know. Naming anything here would be a second, competing source.
 test("onDemandSkills: an implementation run names nothing", () => {
   assert.deepEqual(onDemandSkills("implementation"), []);
+});
+
+// Both task kinds read the one project mirror, so a coding run must drop the
+// validation workflow from it and keep everything else.
+test("implementationSkills: the whole mirror but the validation workflow", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "aep-mirror-"));
+  try {
+    for (const name of ["aep", "go", "validation-task", "agent-browser"]) {
+      fs.mkdirSync(path.join(workspace, ".claude", "skills", name), { recursive: true });
+      fs.writeFileSync(path.join(workspace, ".claude", "skills", name, "SKILL.md"), `# ${name}\n`);
+    }
+    assert.deepEqual(await implementationSkills(workspace), ["aep", "agent-browser", "go"]);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 // --- requireWorkflowBodies: a run with no procedure must not start -----------
@@ -106,11 +121,12 @@ test("requireWorkflowBodies: a mirror with no aep skill is fatal", () => {
   });
 });
 
-test("requireWorkflowBodies: a validation run missing only acceptance-run is still fatal", () => {
+test("requireWorkflowBodies: a validation run missing validation-task is fatal, aep or not", () => {
   withMirror({ aep: "---\nname: aep\n---\n\nThe run\n" }, (workspace) => {
     assert.throws(
-      () => requireWorkflowBodies(workspace, ["aep", "acceptance-run"]),
-      (err: unknown) => err instanceof MissingWorkflowSkillError && err.missing.length === 1,
+      () => requireWorkflowBodies(workspace, alwaysOnSkills("validation")),
+      (err: unknown) =>
+        err instanceof MissingWorkflowSkillError && err.missing.length === 1 && err.missing[0] === "validation-task",
     );
   });
 });
@@ -121,14 +137,14 @@ test("requireWorkflowBodies: present skills come back fenced and labelled as loa
   withMirror(
     {
       aep: "---\nname: aep\n---\n\nCODEWORD-RUN\n",
-      "acceptance-run": "---\nname: acceptance-run\n---\n\nCODEWORD-VALIDATION\n",
+      "validation-task": "---\nname: validation-task\n---\n\nCODEWORD-VALIDATION\n",
     },
     (workspace) => {
-      const out = requireWorkflowBodies(workspace, ["aep", "acceptance-run"]);
+      const out = requireWorkflowBodies(workspace, ["aep", "validation-task"]);
       assert.match(out, /CODEWORD-RUN/);
       assert.match(out, /CODEWORD-VALIDATION/);
       assert.match(out, /<skill name="aep">/);
-      assert.match(out, /<skill name="acceptance-run">/);
+      assert.match(out, /<skill name="validation-task">/);
       // Without this the agent re-invokes the Skill tool for guidance it already
       // has and pays for the body twice.
       assert.match(out, /ALREADY in your context/);
@@ -234,12 +250,12 @@ const STAGED_SECRET = "staged-secret-value-123456";
 /**
  * A workspace whose mirror carries both workflow skills, and nothing else.
  *
- * Both, because `alwaysOnSkills` names `acceptance-run` for a validation run and
+ * Both, because `alwaysOnSkills` names `validation-task` for a validation run and
  * a mirror missing it is fatal by design — see requireWorkflowBodies.
  */
 function mirrorWorkspace(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aep-policy-"));
-  for (const name of ["aep", "acceptance-run"]) {
+  for (const name of ["aep", "validation-task"]) {
     const skill = path.join(dir, ".claude", "skills", name);
     fs.mkdirSync(skill, { recursive: true });
     fs.writeFileSync(path.join(skill, "SKILL.md"), `# ${name}\nWORKFLOW BODY\n`, "utf8");

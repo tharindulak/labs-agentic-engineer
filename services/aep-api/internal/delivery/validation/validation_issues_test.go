@@ -279,7 +279,7 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 		t.Errorf("dedupe key = %q; want the milestone-scoped %q", got.DedupeKey, "validation:proj:5")
 	}
 
-	// The body is PROSE: the consumer contract the acceptance-run skill reads,
+	// The body is PROSE: the task's inputs the validation-task skill reads,
 	// with no machine block, and NO deployed endpoints or credentials — the
 	// runner fetches endpoints from the secure validation-context endpoint, and
 	// a login is published on the roles gate ticket.
@@ -292,14 +292,15 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 		"specs/validation/acceptance/greeting.feature", // the file is NAMED
 		"tests/acceptance/report.json",                 // where the answer goes
 		"There is no test code to author",              // the load-bearing difference
-		// The false-pass guard has to be REACHABLE from the issue: it ships
-		// inside the skill, so the body names the one path that resolves in a
-		// pod. Without this line the guard exists and nothing ever runs it.
-		"acceptance-run/scripts/check-report.mjs",
-		"not backed by a command that could have said no",
 	} {
 		if !strings.Contains(got.Body, want) {
 			t.Errorf("body missing %q", want)
+		}
+	}
+	// The procedure is the skill's (ADR-0037).
+	for _, banned := range []string{"check-report", "Validates #", "summary comment"} {
+		if strings.Contains(got.Body, banned) {
+			t.Errorf("the body restates the skill's procedure (%q):\n%s", banned, got.Body)
 		}
 	}
 	// The scenario text is the specification, and the issue must not carry a

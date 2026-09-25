@@ -19,7 +19,7 @@
 // Checks an acceptance run's report against the feature files it claims to have
 // run.
 //
-//   node "$AEP_SKILLS_DIR/acceptance-run/scripts/check-report.mjs" <project-dir>
+//   node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" <project-dir>
 //
 // Exit 0 = the report is answerable for · 1 = usage/IO · 2 = a contract breach.
 //

@@ -319,7 +319,8 @@ into the runner pod at `/app/skills` for live skill edits (see
   measured, not assumed. A mirrored skill absent from the array is *rejected* by
   the Skill tool, so a CODING run lists the WHOLE mirror
   (`listMirroredSkills`) — the BFF already decided what this build may use, and
-  omitting the unpinned copies would leave them as inert files on disk. A
+  omitting the unpinned copies would leave them as inert files on disk — minus
+  one name: `implementationSkills` drops `validation-task` (ADR-0037). A
   VALIDATION run lists `onDemandSkills` instead: it builds nothing, so the stack
   skills in the mirror are not its to reach for, and one named skill is a
   narrower statement than the whole checkout. Passing `[]` there — which shipped
@@ -380,7 +381,7 @@ into the runner pod at `/app/skills` for live skill edits (see
   components — there is no single one to name.
 - **There are NO plugins, and the mirror is the only skill source.** The runner
   once loaded two — one it assembled from the library, one it materialised per
-  task — and both are gone. `aep`, `acceptance-run` and `agent-browser` are
+  task — and both are gone. `aep`, `validation-task` and `agent-browser` are
   library skills carrying `audience: [coding]`, so the BFF mirrors them into the
   project repo exactly like `go`, and a coding session reads one directory. What
   reaches a build is therefore decided in one place, by the BFF: `design`'s
@@ -389,12 +390,13 @@ into the runner pod at `/app/skills` for live skill edits (see
   a library. ADR:
   `remote-worker/design/decisions/ADR-0005-the-workflow-rides-the-project-mirror.md`.
 - **The always-on set is the runner's, not the design's.** `alwaysOnSkills`
-  (`lib/runner.ts`) names `aep` for every run and `acceptance-run` for a
-  validation task; `requireWorkflowBodies` reads those bodies out of the mirror
-  and appends them to the `claude_code` preset. Everything else a component needs
+  (`lib/runner.ts`) names exactly ONE workflow per task kind — `aep` for a coding
+  run, `validation-task` for a validation run — and `requireWorkflowBodies`
+  reads it out of the mirror and appends it to the `claude_code` preset. The two
+  are never layered (ADR-0037). Everything else a component needs
   is a `skillsPinned` entry someone put in a `design.json` — but no design decides
-  whether a coding run follows the coding workflow. `agent-browser` is
-  deliberately NOT always-on: `acceptance-run` names it, and mechanics a run may
+  whether a run follows its workflow. `agent-browser` is
+  deliberately NOT always-on: `validation-task` names it, and mechanics a run may
   not reach for should cost a load, not every turn. **That decision only works
   in pairs** — `onDemandSkills` (same file) must then ALLOW it, because `skills:`
   gates the Skill tool and a skill in neither list is unreachable rather than
@@ -431,7 +433,7 @@ into the runner pod at `/app/skills` for live skill edits (see
   entrypoint can start a procedure-less session.
 - **Anything a skill must invoke by absolute path reads `$AEP_SKILLS_DIR`**, now
   `<workspace>/.claude/skills`. The runner stamps it (`lib/runner.ts`) because it
-  is still the only layer that knows the value. `acceptance-run` runs the
+  is still the only layer that knows the value. `validation-task` runs the
   platform's report checker through it, and the component contract a lead hands
   to fan-out subagents (`contractReferencePath`) resolves the same way. A
   hardcoded path is wrong somewhere — it was, and it named `/app/plugin`.

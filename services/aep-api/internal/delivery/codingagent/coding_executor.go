@@ -549,7 +549,7 @@ func buildPrompt(milestoneNumber int, milestoneTitle string) string {
 const validationComponentSentinel = "aep-validation"
 
 // validationTaskKind is the runner's AEP_TASK_KIND for a validation cycle: it
-// is what makes the runner preload the `acceptance-run` skill instead of `aep`.
+// is what makes the runner preload the `validation-task` skill instead of `aep`.
 const validationTaskKind = "validation"
 
 // envValidationIssue names the validation issue to the pod. A validation run
@@ -608,24 +608,14 @@ type dispatchShape struct {
 	validationIssue int
 }
 
-// buildValidationPrompt is the validation-runner directive: it points at the
-// validation issue and defers the workflow to the acceptance-run skill (the
-// runner preloads it because AEP_TASK_KIND=validation).
+// buildValidationPrompt is the validation-runner directive, mirroring
+// buildPrompt: it names the issue, and the preloaded `validation-task` skill is
+// the procedure.
 //
 // It names NO milestone, and that is load-bearing: a validation cycle is
 // issue-anchored — one issue, one run — where a coding prompt's milestone
-// reference is an instruction to discover a whole working set. The skill still
-// needs the milestone for its branch identity (the platform keys a merged pull
-// request back to its run by an `aep/m<milestone#>-…` branch); it reads it off
-// the issue, which is filed under that milestone at mint time.
-//
-// The reference is `Validates #N` and NOT a GitHub closing keyword. The platform
-// owns the validation task's lifecycle — it reopens the task for the next attempt
-// and must close it even on an ending where no pull request merged at all — and a
-// closing keyword would put two owners on one issue. The reference still has to
-// be there: the auto-merge policy requires a pull request to name an armed issue
-// in the milestone, so a body referencing nothing is read as somebody else's work
-// and never merges. See eventcore/resolves.go.
-func buildValidationPrompt(issueURL string, issueNumber int) string {
-	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `acceptance-run` skill's workflow: read the validation context, drive every scenario in the acceptance criteria against the deployed system, commit the report, and open a PR whose body includes `Validates #%d` so the platform links it back. Use `Validates`, never a closing keyword such as `Closes` or `Fixes`: the platform closes this task itself.", issueURL, issueNumber)
+// reference is an instruction to discover a whole working set. The skill reads
+// the milestone off the issue for its branch identity.
+func buildValidationPrompt(issueURL string) string {
+	return fmt.Sprintf("This is a validation task. Work on this GitHub validation issue: %s\n\nFollow the `validation-task` skill loaded in your session — it defines the run, the report and the PR contract.", issueURL)
 }

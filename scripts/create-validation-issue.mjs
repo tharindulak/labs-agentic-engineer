@@ -123,9 +123,7 @@ function plural(n, noun) {
   return n === 1 ? `${n} ${noun}` : `${n} ${noun}s`;
 }
 
-// issueNumber is 0 at creation time; the body is re-rendered and edited once
-// the number exists — same two-step the implementation-task flow uses.
-function renderBody(doc, issueNumber) {
+function renderBody(doc) {
   const sum = summarize(doc);
   const lines = [];
 
@@ -148,12 +146,7 @@ function renderBody(doc, issueNumber) {
     "Per-component design docs: `specs/design/components/<name>/design.md` (OpenAPI contract, when present, alongside as `openapi.yaml`); system overview: `specs/design/design.md`.",
     "",
     "## Report",
-    "- Commit `tests/acceptance/report.json` — one entry per scenario in the feature files, including the ones you could not drive.",
-    '- Check it before opening the PR: `node "$AEP_SKILLS_DIR/acceptance-run/scripts/check-report.mjs" "$(git rev-parse --show-toplevel)"`. It exits 2 if a scenario has no entry, if a `passed` is not backed by a command that could have said no, or if a `failed` does not record what the page was doing when it failed.',
-    "- Post a summary comment on this issue when done.",
-    "",
-    "---",
-    `When you open the PR, include \`Validates #${issueNumber}\` in its body so the platform links the PR back to this task. \`Validates\` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close. One PR; the report only.`
+    "Commit `tests/acceptance/report.json` — one entry per scenario in the feature files, including the ones you could not drive."
   );
 
   return lines.join("\n");
@@ -165,7 +158,7 @@ function main() {
   validateCriteria(doc);
 
   if (dryRun) {
-    console.log(renderBody(doc, 0));
+    console.log(renderBody(doc));
     return;
   }
 
@@ -176,12 +169,8 @@ function main() {
   }
   const url = gh(
     ["issue", "create", "--repo", REPO, "--title", title, "--label", LABELS.join(","), "--body-file", "-"],
-    renderBody(doc, 0)
+    renderBody(doc)
   ).trim();
-  const issueNumber = Number(url.split("/").pop());
-
-  // Second pass: inject the real issue number into the Closes footer.
-  gh(["issue", "edit", String(issueNumber), "--repo", REPO, "--body-file", "-"], renderBody(doc, issueNumber));
 
   console.log(url);
 }

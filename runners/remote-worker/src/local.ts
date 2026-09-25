@@ -58,7 +58,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startCodingRun } from "./lib/runner.js";
+import { implementationSkills, startCodingRun } from "./lib/runner.js";
 import { openTaskLog } from "./lib/logger.js";
 import type { DispatchRequest } from "./lib/types.js";
 import type { WorkspaceLayout } from "./lib/workspace.js";
@@ -66,7 +66,7 @@ import { emit, primeScrubber } from "./lib/progress/emitter.js";
 import { PROVISIONING, WORKSPACE_READY } from "./lib/progress/lifecycle.js";
 import { installLogRedaction } from "./lib/progress/console_scrub.js";
 import { resolveTaskSkills } from "./lib/skills_resolver.js";
-import { listMirroredSkills, readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
+import { readSkillBodies, resolveSkillPresence } from "./lib/skills_presence.js";
 import { mirrorLocalSkillLibrary } from "./lib/local_skill_mirror.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -204,9 +204,9 @@ async function main(): Promise<number> {
     if (dangling.length > 0) {
       console.warn(`[local] ⚠️  pinned skill(s) missing from .claude/skills/ — proceeding without them: ${dangling.join(", ")}`);
     }
-    // The whole mirror is allowed (the SDK rejects anything unlisted); the
-    // pinned subset additionally rides in on the system prompt.
-    availableSkillNames = await listMirroredSkills(run.projectDir);
+    // The SDK rejects anything unlisted; the pinned subset additionally rides in
+    // on the system prompt.
+    availableSkillNames = await implementationSkills(run.projectDir);
     pinnedBodies = await readSkillBodies(run.projectDir, present);
     pinnedSkillNames = present;
   } catch (err) {

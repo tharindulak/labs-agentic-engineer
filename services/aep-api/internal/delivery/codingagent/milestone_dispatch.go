@@ -112,7 +112,7 @@ func (e *CodingExecutor) Dispatch(ctx context.Context, req delivery.MilestoneDis
 // milestoneDispatchShape picks the runner's prompt, skill and deadline for a
 // cycle kind.
 //
-// Validation is the only anchored kind: it swaps in the `acceptance-run` skill
+// Validation is the only anchored kind: it swaps in the `validation-task` skill
 // (via AEP_TASK_KIND) and points the agent at its single issue. Every other kind
 // — coding, fix, conflict — is the ordinary milestone loop, deliberately NOT
 // anchored: a fix or a conflict issue is ordinary work that joins the working
@@ -123,7 +123,7 @@ func milestoneDispatchShape(req delivery.MilestoneDispatch, repoURL string) (dis
 			return dispatchShape{}, fmt.Errorf("milestone dispatch: a validation cycle must name its issue")
 		}
 		return dispatchShape{
-			prompt:          buildValidationPrompt(issueURL(repoURL, req.IssueNumber), req.IssueNumber),
+			prompt:          buildValidationPrompt(issueURL(repoURL, req.IssueNumber)),
 			componentName:   validationComponentSentinel,
 			taskKind:        validationTaskKind,
 			deadline:        validationDeadlineSeconds,

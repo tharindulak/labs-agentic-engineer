@@ -32,7 +32,7 @@ test("skillsNotice: workflow, pins and the catalog by name", () => {
 
 test("skillsNotice: nothing pinned says so; a long catalog is a count", () => {
   const many = Array.from({ length: 30 }, (_, i) => `s${i}`);
-  assert.equal(skillsNotice(["aep", "acceptance-run"], [], many), "[skills] workflow: aep, acceptance-run · pinned: none · 30 available");
+  assert.equal(skillsNotice(["validation-task"], [], many), "[skills] workflow: validation-task · pinned: none · 30 available");
   assert.equal(skillsNotice(["aep"], [], []), "[skills] workflow: aep · pinned: none · 0 available");
 });
 

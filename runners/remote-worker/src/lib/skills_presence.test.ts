@@ -53,7 +53,7 @@ test("validation allowlist: the mirror's agent-browser becomes the allowlist", a
 // allowlist bug survive weeks of green runs.
 test("validation allowlist: a mirror without agent-browser warns and allows nothing", async () => {
   const ws = await tmpTree({
-    ".claude/skills/acceptance-run/SKILL.md": "---\nname: acceptance-run\n---\n\n# v\n",
+    ".claude/skills/validation-task/SKILL.md": "---\nname: validation-task\n---\n\n# v\n",
   });
   const lines: string[] = [];
   const { present, dangling } = await resolveSkillPresence(ws, onDemandSkills("validation"), (l) =>

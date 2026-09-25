@@ -39,8 +39,8 @@ An absent kind means `org`, which is a real decision, not a default to lean on:
   (`start`, `amend`, `settle`, `grilling`, `prd-contract`, `design`,
   `cell-design`, `architecture`, `security-design`, `openapi-conventions`,
   `wireframes`, `acceptance-criteria`, `task-planning`), the `console`
-  narration policy, the coding run's own workflow skills (`aep`,
-  `acceptance-run`, `mock-verification`) and the browser CLI they drive
+  narration policy, the runner's own workflow skills (`aep`,
+  `validation-task`, `mock-verification`) and the browser CLI they drive
   (`agent-browser`), and one reference skill both sides read:
   `authorization-model`, the platform's authorization invariants stated once
   (ADR-0030 to ADR-0033) so no design or stack skill restates them.
@@ -62,14 +62,19 @@ mirror, so a coding session cannot see it at all; `[coding]` makes `loadSkill`
 refuse it on the design side, and refuse it *distinguishably* from a missing name
 (ADR-0014) — the design agent has to be able to name a coding skill to pin it.
 
+`coding` means "the runner", and both task kinds read the one project mirror, so
+there is no value that says *validation only*. The one skill that needs it —
+`validation-task` — is dropped from an implementation run's allowlist by the
+runner instead (`implementationSkills`, `runners/AGENTS.md`).
+
 A component's `design.json` may pin a skill of any kind via `skillsPinned`, and a
 pin overrides both audience and availability: the pinned body is copied and
 appended to the coding run's system prompt. Everything else in the mirror is
 listed by description and loaded on demand, so a run's startup context does not
 grow with the number of components a project designed.
 
-Two names in this library cannot be disabled — `aep` and `acceptance-run`
-(`spec.RequiredSkills`). They carry the coding run's procedure, the mirror only
+Two names in this library cannot be disabled — `aep` and `validation-task`
+(`spec.RequiredSkills`). Each is one task kind's whole procedure, the mirror only
 copies enabled skills, and the runner refuses to start without them, so a toggle
 would take every build in the org down. `PATCH /skills/{name}` returns 409 and
 the console renders the switch as unavailable.
@@ -157,6 +162,12 @@ build reads.
 
 ## Who owns what
 
+- **Each run reads exactly one workflow skill.** `aep` is a coding run's,
+  `validation-task` a validation run's, and neither is layered on the other.
+  `validation-task` restates the few rails it shares with `aep` in the form a
+  validation run obeys; that is deliberate, not the duplication the rules below
+  forbid, because the rules differ. Nothing about validation belongs in `aep`
+  (ADR-0037).
 - **`aep` is the umbrella**, and it is split by reader. `SKILL.md` is the **run**
   (start the cycle → work the issues → finish) and only the lead ever reads it.
   The platform contract every component obeys — App Path, port, config + error
