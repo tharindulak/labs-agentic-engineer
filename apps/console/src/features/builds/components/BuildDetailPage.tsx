@@ -37,7 +37,7 @@ import {
   Copy,
   Ellipsis,
   GitHub,
-  RotateCcw,
+  RotateCw,
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import { createLink, Link } from "@tanstack/react-router";
@@ -585,7 +585,7 @@ function BuildActions({
           params={{ projectName }}
           onClick={close}
         >
-          <RotateCcw size={15} style={{ marginRight: 10 }} />
+          <RotateCw size={15} style={{ marginRight: 10 }} />
           Retry this build
         </LinkMenuItem>
         <Divider />

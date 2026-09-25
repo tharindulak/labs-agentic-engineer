@@ -40,7 +40,7 @@ type RunFailure = components["schemas"]["RunFailure"];
 /** Where the reader goes next. `to` is a TanStack route; `search` its params. */
 export interface FailureNext {
   label: string;
-  to: "/projects/$projectName/spec" | "/projects/$projectName/deployments" | "/projects/$projectName/validation";
+  to: "/projects/$projectName/spec" | "/projects/$projectName/deployments" | "/projects/$projectName/validations";
   search?: { file: string };
 }
 
@@ -232,7 +232,7 @@ function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"
       return {
         title: reason === "validation-failed" ? "Validation failed" : "Validation reported nothing",
         body: "The version deployed and its validation criteria were not met. The Validation page carries the report.",
-        next: { label: "View validations", to: "/projects/$projectName/validation" },
+        next: { label: "View validations", to: "/projects/$projectName/validations" },
       };
     default:
       return {

@@ -58,10 +58,13 @@ fetch_gh_raw() {
                 "https://api.github.com/repos/$owner/$repo/contents/$path?ref=$ref" -o "$dest"; then
                 return 0
             fi
-        else
-            if curl -fsSL "$url" -o "$dest"; then
-                return 0
-            fi
+            # The PAT is only here to dodge the anonymous throttle. When GitHub
+            # rejects it outright — expired, or a token minted for a different
+            # service — every attempt would 401 on a file that is public, so
+            # fall through to the anonymous URL instead of burning the retries.
+        fi
+        if curl -fsSL "$url" -o "$dest"; then
+            return 0
         fi
         echo "⚠️  fetch $url failed (attempt $attempt/5) — retrying in $((attempt * 15))s..."
         sleep $((attempt * 15))
@@ -963,4 +966,21 @@ thunder_binding_value() {
     kubectl get configmap -A --context "$CLUSTER_CONTEXT" \
         -l "aep.wso2.com/kind=thunder-binding,aep.wso2.com/org=$1,aep.wso2.com/env=$2" \
         -o "jsonpath={.items[0].data.$3}" 2>/dev/null || true
+}
+
+# wait_for_deployment_available <namespace> <deployment> <timeout> — wait for a
+# Deployment to exist AND become Available.
+#
+# `kubectl wait --for=condition=Available deployment/x` does not wait for x to
+# appear: against an absent object it fails immediately with NotFound. That is
+# fine for a Deployment the chart itself renders, and a race for one an
+# OPERATOR creates after the release is installed — helm returns as soon as its
+# own manifests are applied, which can be seconds before the operator reconciles
+# them into Deployments. `--for=create` closes that window.
+wait_for_deployment_available() {
+    local ns="$1" name="$2" timeout="${3:-300s}"
+    kubectl wait --for=create "deployment/${name}" \
+        -n "$ns" --context "$CLUSTER_CONTEXT" --timeout="$timeout"
+    kubectl wait --for=condition=Available "deployment/${name}" \
+        -n "$ns" --context "$CLUSTER_CONTEXT" --timeout="$timeout"
 }

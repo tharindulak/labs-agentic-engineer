@@ -75,8 +75,8 @@ apply_with_retry "${SCRIPT_DIR}/../manifests/docker-build-workflow.yaml" "docker
 echo "✅ ClusterWorkflow 'dockerfile-builder' installed"
 
 # Coding-agent runs as an OpenChoreo Job Component (not a ClusterWorkflow).
-# Build + import the runner image (ONE image, both task kinds: Debian + Go +
-# Playwright + baked chromium). It has no published counterpart on this branch,
+# Build + import the runner image (ONE image, both task kinds: Debian + Go + a
+# baked chromium). It has no published counterpart on this branch,
 # so it's built locally once per machine and imported into the node —
 # self-contained, no shared registry. Pre-importing also keeps the FIRST
 # dispatch from cold-pulling a multi-GB image, which has taken long enough to
@@ -546,6 +546,265 @@ spec:
 OCEOF
 echo "✅ ClusterComponentType 'deployment/web-application' created"
 
+# ClusterComponentType: aep-ai-agent — AI agent components (agent.afm.md)
+# An agent is service-shaped (a TypeScript HTTP service on port 9090), so this
+# is `deployment/service` cloned with a different name and two deliberate
+# deltas from it, kept as comments below: a larger memory default (a Node
+# process holding conversation state, not a stateless request handler) and no
+# `observability-alert-rule` trait (its auto-RCA is gated on
+# `ComponentType == service` in ResolveAutoRCAEnabled, so listing the trait
+# here would advertise a capability that never provisions).
+#
+# Model access (MODEL_ENDPOINT / MODEL_NAME / MODEL_API_KEY, referenced by
+# every agent.afm.md as `${env:MODEL_*}`) is NOT wired into this
+# ComponentType yet. The organisation's Anthropic key already reaches the RCA
+# agent this way (AnthropicCredentialService.pushExternalSecret, see
+# services/aep-api/internal/organization/anthropic_credential_service.go),
+# but that push targets ONE fixed, pre-known namespace configured once via
+# RCA_AGENT_ANTHROPIC_PUSH_NAMESPACE/SECRET_NAME. An ai-agent component's Pod
+# lands in a dp-* namespace created per (org, project, environment) — dynamic,
+# plural, and not a namespace aep-api resolves anywhere today (confirmed:
+# no code path in services/aep-api computes a dp-* namespace name; OC's own
+# controllers render trait/CCT resources into it from inside the cluster).
+# Delivering MODEL_* requires either a generalised version of that push
+# (aep-api learns to resolve a component's dp-* namespace and apply an
+# ExternalSecret + ConfigMap there, triggered at ai-agent component creation
+# and on org-key rotation) or an OC-side mechanism that can see the org's
+# vault path from within this template — neither exists today. See the task
+# report for the follow-up recommendation.
+#
+# NAME: the cluster-scoped copy is `aep-ai-agent`, not `ai-agent`. Cluster-scoped
+# names have one owner cluster-wide, and OpenChoreo's agent-sandbox module
+# (installed by setup-agent-manager.sh) ships its own `ai-agent`
+# ClusterComponentType — a `workloadType: proxy` sandbox type, incompatible with
+# this deployment-shaped one. Helm refuses to adopt an object it does not own, so
+# a shared name fails the sandbox install outright. Only this object moves: the
+# namespaced copy derived below keeps the name `ai-agent`, and that is the one
+# components reference (kind=ComponentType — see component_client.go's
+# buildCreateComponentBody), so nothing in aep-api changes.
+kubectl apply -f - <<'OCEOF'
+apiVersion: openchoreo.dev/v1alpha1
+kind: ClusterComponentType
+metadata:
+  name: aep-ai-agent
+spec:
+  workloadType: deployment
+  allowedWorkflows:
+    - kind: ClusterWorkflow
+      name: dockerfile-builder
+  # api-configuration lets a component opt into the WSO2 API Platform
+  # gateway path (RestApi + kgateway Backend pointing at the AP router).
+  # Its CRD is applied above via apply_with_retry (see the `service` CCT).
+  #
+  # DELTA from `service`: no `observability-alert-rule` here — see the
+  # comment above this block.
+  allowedTraits:
+    - kind: ClusterTrait
+      name: api-configuration
+  environmentConfigs:
+    openAPIV3Schema:
+      type: object
+      properties:
+        replicas:
+          type: integer
+          default: 1
+          minimum: 1
+        resources:
+          type: object
+          default: {}
+          properties:
+            requests:
+              type: object
+              default: {}
+              properties:
+                cpu:
+                  type: string
+                  default: "50m"
+                memory:
+                  type: string
+                  default: "128Mi"
+            limits:
+              type: object
+              default: {}
+              properties:
+                cpu:
+                  type: string
+                  default: "500m"
+                # DELTA from `service` (whose default is "768Mi", sized for a
+                # JVM/Ballerina service): an agent holds conversation state
+                # per request and calls out over HTTP, so it gets a larger
+                # default.
+                memory:
+                  type: string
+                  default: "1Gi"
+  # The Pod template + the four `forEach` ConfigMap/ExternalSecret resources
+  # below opt this CCT into OpenChoreo's `configurations.*` contract:
+  #   - container.env / container.files declared in the Workload, AND
+  #   - workloadOverrides.container.{env,files} declared in the ReleaseBinding
+  # both land in the pod via OC-computed envFrom + volumeMounts + volumes
+  # plus matching ConfigMap / ExternalSecret resources.
+  #
+  # Prior art: agent-manager's `agent-api` ComponentType
+  # (agent-manager/deployments/helm-charts/.../component-types/agent-api.yaml)
+  # uses the same pattern. OC docs:
+  # https://openchoreo.dev/docs/tutorials/deploy-with-configurations
+  #
+  # Skipping any of these helpers will silently drop the corresponding
+  # Workload / ReleaseBinding input — that is the failure mode Phase 1
+  # caught.
+  resources:
+    - id: deployment
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: "${metadata.componentName}"
+          namespace: "${metadata.namespace}"
+          labels: "${metadata.labels}"
+        spec:
+          replicas: "${environmentConfigs.replicas}"
+          selector:
+            matchLabels: "${metadata.podSelectors}"
+          template:
+            metadata:
+              labels: "${metadata.podSelectors}"
+            spec:
+              containers:
+                - name: main
+                  image: "${workload.container.image}"
+                  env: ${dependencies.toContainerEnvs()}
+                  envFrom: ${configurations.toContainerEnvFrom()}
+                  volumeMounts: ${configurations.toContainerVolumeMounts()}
+                  resources:
+                    requests:
+                      cpu: "${environmentConfigs.resources.requests.cpu}"
+                      memory: "${environmentConfigs.resources.requests.memory}"
+                    limits:
+                      cpu: "${environmentConfigs.resources.limits.cpu}"
+                      memory: "${environmentConfigs.resources.limits.memory}"
+              volumes: ${configurations.toVolumes()}
+
+    - id: env-config
+      forEach: ${configurations.toConfigEnvsByContainer()}
+      var: envConfig
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${envConfig.resourceName}
+          namespace: ${metadata.namespace}
+        data: |
+          ${envConfig.envs.transformMapEntry(index, env, {env.name: env.value})}
+
+    - id: file-config
+      forEach: ${configurations.toConfigFileList()}
+      var: config
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${config.resourceName}
+          namespace: ${metadata.namespace}
+        data:
+          ${config.name}: |
+            ${config.value}
+
+    - id: secret-env-external
+      forEach: ${configurations.toSecretEnvsByContainer()}
+      var: secretEnv
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: ${secretEnv.resourceName}
+          namespace: ${metadata.namespace}
+        spec:
+          refreshInterval: 15s
+          secretStoreRef:
+            name: ${dataplane.secretStore}
+            kind: ClusterSecretStore
+          target:
+            name: ${secretEnv.resourceName}
+            creationPolicy: Owner
+          data: |
+            ${secretEnv.envs.map(secret, {
+              "secretKey": secret.name,
+              "remoteRef": {
+                "key": secret.remoteRef.key,
+                "property": has(secret.remoteRef.property) ? secret.remoteRef.property : oc_omit()
+              }
+            })}
+
+    - id: secret-file-external
+      forEach: ${configurations.toSecretFileList()}
+      var: file
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: ${file.resourceName}
+          namespace: ${metadata.namespace}
+        spec:
+          refreshInterval: 15s
+          secretStoreRef:
+            name: ${dataplane.secretStore}
+            kind: ClusterSecretStore
+          target:
+            name: ${file.resourceName}
+            creationPolicy: Owner
+          data:
+            - secretKey: ${file.name}
+              remoteRef:
+                key: ${file.remoteRef.key}
+                property: |
+                  ${has(file.remoteRef.property) ? file.remoteRef.property : oc_omit()}
+
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: "${metadata.componentName}"
+          namespace: "${metadata.namespace}"
+        spec:
+          selector: "${metadata.podSelectors}"
+          ports: "${workload.toServicePorts()}"
+
+    - id: httproute-external
+      forEach: '${workload.endpoints.transformList(name, ep, ("external" in ep.visibility && ep.type in ["HTTP", "REST", "GraphQL", "Websocket"]) ? [name] : []).flatten()}'
+      var: endpoint
+      template:
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: ${oc_generate_name(metadata.componentName, endpoint)}
+          namespace: "${metadata.namespace}"
+          labels: '${oc_merge(metadata.labels, {"openchoreo.dev/endpoint-name": endpoint, "openchoreo.dev/endpoint-visibility": "external"})}'
+        spec:
+          parentRefs:
+            - name: "${gateway.ingress.external.name}"
+              namespace: "${gateway.ingress.external.namespace}"
+          hostnames: |
+            ${[gateway.ingress.external.?http, gateway.ingress.external.?https]
+              .filter(g, g.hasValue()).map(g, g.value().host).distinct()
+              .map(h, metadata.environmentName + "-" + metadata.componentNamespace + "." + h)}
+          rules:
+            - matches:
+                - path:
+                    type: PathPrefix
+                    value: /${metadata.componentName}-${endpoint}
+              filters:
+                - type: URLRewrite
+                  urlRewrite:
+                    path:
+                      type: ReplacePrefixMatch
+                      replacePrefixMatch: '${workload.endpoints[endpoint].?basePath.orValue("") != "" ? workload.endpoints[endpoint].?basePath.orValue("") : "/"}'
+              backendRefs:
+                - name: "${metadata.componentName}"
+                  port: "${workload.endpoints[endpoint].port}"
+OCEOF
+echo "✅ ClusterComponentType 'aep-ai-agent' created"
+
 # ── Sample platform-resource: postgres-cnpg ClusterResourceType (P5) ────────
 # The cluster PE installs the platform-resource catalog; app-factory's BFF only
 # DISCOVERS and REFERENCES these types (it never authors a ClusterResourceType).
@@ -610,22 +869,31 @@ echo "✅ ClusterResourceType 'thunder-app' + thunder-app data-plane RBAC create
 # kind=ComponentType reference resolved to `ComponentTypeNotFound` and user
 # components never deployed. Derive namespaced copies (in the org control-plane
 # ns `default`) from the cluster-scoped definitions above so the two can't
-# drift. Same NAME (`service`/`web-application`); only kind + namespace differ.
+# drift. Same NAME for `service`/`web-application`; the AI agent type is derived
+# from `aep-ai-agent` into the namespaced name `ai-agent` (see below). Otherwise
+# only kind + namespace differ.
 echo ""
 echo "🧩 Provisioning per-org namespaced ComponentTypes (local ProvisionOrgUnit stand-in)..."
-for _ct in service web-application; do
-    kubectl get clustercomponenttype "$_ct" -o json \
+# `<cluster-scoped source>:<namespaced name>`. The two names differ for the AI
+# agent type alone: its cluster-scoped copy is `aep-ai-agent` so OpenChoreo's
+# agent-sandbox module can own the cluster-scoped `ai-agent` (see the CCT block
+# above), while the namespaced copy keeps `ai-agent` — the name components
+# reference, and the one aep-api's ocEntrypoint() derives.
+for _pair in service:service web-application:web-application aep-ai-agent:ai-agent; do
+    _src="${_pair%%:*}"
+    _dst="${_pair##*:}"
+    kubectl get clustercomponenttype "$_src" -o json \
         | python3 -c 'import sys, json
 c = json.load(sys.stdin)
 print(json.dumps({
     "apiVersion": c["apiVersion"],
     "kind": "ComponentType",
-    "metadata": {"name": c["metadata"]["name"], "namespace": "default"},
+    "metadata": {"name": sys.argv[1], "namespace": "default"},
     "spec": c["spec"],
-}))' \
+}))' "$_dst" \
         | kubectl apply -f -
 done
-echo "✅ Namespaced ComponentTypes 'service' + 'web-application' created in ns 'default'"
+echo "✅ Namespaced ComponentTypes 'service' + 'web-application' + 'ai-agent' created in ns 'default'"
 
 # ClusterProjectType: default — required from OpenChoreo 1.2.0 onward.
 #
@@ -992,11 +1260,11 @@ LOCAL_DEV_ADMIN_GITHUB_PAT=${LOCAL_DEV_ADMIN_GITHUB_PAT_VAL}
 LOCAL_DEV_ADMIN_GITHUB_OWNER=${LOCAL_DEV_ADMIN_GITHUB_OWNER_VAL}
 ANTHROPIC_API_KEY=${ANTHROPIC_KEY}
 
-# Optional. Bills the CODING agent to its own Anthropic key, leaving everything
-# else on ANTHROPIC_API_KEY above (ADR-0016). Read by BOTH seed-dev.sh (which
-# connects it as the org's coding-agent key) and the playground (which hands it
-# to local coding runs) — leave it empty and the coding agent reuses the key
-# above, which is the default everywhere.
+# Optional. A Claude subscription token (`claude setup-token`, sk-ant-oat…) the
+# CODING agent bills instead of ANTHROPIC_API_KEY above (ADR-0036). Read by BOTH
+# seed-dev.sh (which connects it as the org's Claude subscription; any other
+# value is skipped) and the playground (which hands it to local coding runs) —
+# leave it empty and coding runs bill the key above, the default everywhere.
 AEP_CODING_ANTHROPIC_KEY=${CODING_ANTHROPIC_KEY_VAL}
 EOF
 

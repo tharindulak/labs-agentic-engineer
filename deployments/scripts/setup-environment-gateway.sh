@@ -450,6 +450,26 @@ kubectl wait --for=condition=Available "deployment/${RUNTIME_SVC}" \
 kubectl wait --for=condition=Programmed "restapi/${RELEASE}-otel-restapi" \
     -n "$NS" --context "$CLUSTER_CONTEXT" --timeout="$WAIT_TIMEOUT"
 
+# ── The OTLP binding record ─────────────────────────────────────────────────
+# AMP's trace-ingest route lives on THIS gateway, not on the AI gateway — the
+# `${RELEASE}-otel-restapi` waited on just above is what serves it. The two are
+# separate gateways in the same namespace, and an agent that posts spans to the
+# AI gateway gets a 404 that names nothing.
+#
+# Recorded as an annotation for the same reason the AI gateway and Thunder
+# bindings are: aep-api runs OUTSIDE the cluster, so the Environment's
+# annotations are the one projection of this address it can read. Deriving the
+# Service name in Go instead would hardcode a chart's naming — including the
+# doubled `gateway-gateway` below, which is real and exactly the kind of detail
+# a rename breaks silently.
+#
+# The value is the OTLP BASE, route included: an exporter appends /v1/traces to
+# it. Keeping the route here means aep-api never has to know it.
+OTEL_ENDPOINT="http://${RUNTIME_SVC}.${NS}:22893/otel"
+
+kubectl annotate environment "$ENV_NAME" -n "$ORG_NAME" --context "$CLUSTER_CONTEXT" --overwrite \
+    "aep.wso2.com/otel-endpoint=${OTEL_ENDPOINT}" >/dev/null
+
 # ── Publishing the assertion's verification half ────────────────────────────
 # Onto the Environment's ANNOTATIONS, which is the one projection of an
 # environment-level fact that aep-api can read: it runs outside the cluster and
@@ -493,6 +513,7 @@ echo "============================================"
 echo "  APIGateway:     ${GATEWAY_NAME} (namespace ${NS})"
 echo "  RestApi label:  gateway.api-platform.wso2.com/restapi-target=${GATEWAY_NAME}"
 echo "  Runtime:        ${RUNTIME_SVC}.${NS}:22893"
+echo "  OTLP endpoint:  ${OTEL_ENDPOINT}"
 echo "  Public vhost:   ${GATEWAY_VHOST}"
 echo "  ThunderKeyManager issuer: ${T2_ISSUER}"
 echo "  Assertion issuer: ${ASSERTION_ISSUER} (signing key ${NS}/${BJWT_SECRET})"

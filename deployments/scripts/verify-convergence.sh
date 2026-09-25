@@ -699,6 +699,45 @@ $app_origins
 EOF
 fi
 
+# ── 15. Every environment's AI gateway is bound and serving ─────────────────
+# Two halves of one record, and either alone is a lie: the annotations can name
+# a gateway that was deleted in AMP, and a gateway can be ACTIVE while no
+# environment points at it. An agent deploy reads the annotations and then calls
+# the gateway, so both are asserted together.
+echo ""
+echo "1️⃣5️⃣  Every environment's AI gateway is bound and serving"
+ai_gw_token="$(curl -s --max-time 10 -X POST "${PUBLIC_THUNDER_URL}/oauth2/token" \
+    -u "amp-api-client:amp-api-client-secret" \
+    -d grant_type=client_credentials \
+    --data-urlencode "scope=amp:gateway:read" \
+    --data-urlencode "resource=urn:wso2:amp" 2>/dev/null \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)"
+if [ -z "$ai_gw_token" ]; then
+    fail "could not mint a gateway-read token to check AI gateway bindings"
+else
+    ai_gw_list="$(curl -s --max-time 10 -H "Authorization: Bearer $ai_gw_token" \
+        "http://api.amp.localhost:8080/api/v1/orgs/default/gateways?limit=100" 2>/dev/null)"
+    for envname in $(kubectl get environments -n default --context "$CLUSTER_CONTEXT" \
+            -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+        gwid="$(kubectl get environment "$envname" -n default --context "$CLUSTER_CONTEXT" \
+            -o "jsonpath={.metadata.annotations.aep\.wso2\.com/aigateway-gateway}" 2>/dev/null)"
+        if [ -z "$gwid" ]; then
+            fail "default/${envname} has no AI gateway binding — run scripts/setup-environment-aigateway.sh default ${envname}"
+            continue
+        fi
+        status="$(printf '%s' "$ai_gw_list" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for g in d.get('gateways', []):
+    if g.get('uuid') == '${gwid}':
+        print(g.get('status', '')); break" 2>/dev/null)"
+        check "default/${envname} AI gateway ACTIVE" "${status:-<not in AMP>}" "ACTIVE"
+    done
+fi
+
 echo ""
 if [ "$FAILURES" -eq 0 ]; then
     echo "✅ All convergence invariants hold."

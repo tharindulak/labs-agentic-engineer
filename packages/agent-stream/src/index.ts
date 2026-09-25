@@ -154,6 +154,9 @@ export type { DesignDiagramProblem, DiagramBundleReader, CellNodes } from "./des
 export { checkComponentDependencies } from "./component-dependencies.js";
 export type { ComponentDependencyProblem } from "./component-dependencies.js";
 
+// --- The agent.afm.md structural write-gate (the ai-agent component kind) ---
+export { checkAgentAfm, splitAfm, type AfmProblem, type AgentAfmFrontMatter } from "./agent-afm-schema.js";
+
 // --- The dependency.json write-gate (one dependency, one definition) --------
 export {
   checkDependencyDesign,
@@ -220,6 +223,7 @@ export {
   securityDesignJsonSchema,
   planTaskJsonSchema,
   updateTaskJsonSchema,
+  agentAfmJsonSchema,
 } from "./json-schema.js";
 
 // --- The reference SSE reader ------------------------------------------------

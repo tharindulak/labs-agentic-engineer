@@ -83,6 +83,10 @@ services:
       # registry pull). Override to a published ghcr.io/wso2/aep/remote-worker
       # tag in cloud release bindings.
       AGENT_RUNNER_IMAGE: "${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
+      # The OpenCode variant of the same image (the Dockerfile's
+      # runner-opencode stage), used for orgs whose coding-agent runtime is
+      # OpenCode. Same local-tag rules as above; built beside aep-runner:dev.
+      AGENT_RUNNER_IMAGE_OPENCODE: "${AGENT_RUNNER_IMAGE_OPENCODE:-aep-runner-opencode:dev}"
       # Finished cycle Components are retained so their observer archive stays
       # queryable, then pruned oldest-first past this cap (code default 10).
       # Lowered locally only to make the prune observable in three cycles.
@@ -165,6 +169,11 @@ services:
       GITHUB_APP_SLUG: "${GITHUB_APP_SLUG:-aep-platform}"
       GITHUB_CLIENT_ID: "${GITHUB_CLIENT_ID:-}"
       BFF_PUBLIC_URL: "${BFF_PUBLIC_URL:-http://localhost:8090}"
+      # The platform tester's OAuth callback, registered on every project's
+      # sign-in resource so a client outside the project's components (the
+      # console's Try it, the validation agent) can complete a sign-in. The host
+      # need not serve anything for a browser under test to capture the code.
+      TRY_IT_CALLBACK_URL: "${TRY_IT_CALLBACK_URL:-http://tryit.aep.localhost:8095/callback}"
 
       # ── Inbound JWT verification (Thunder JWKS, audience prefix aep-*).
       JWKS_URL: "http://thunder.openchoreo.localhost:8080/oauth2/jwks"
@@ -198,6 +207,19 @@ services:
       # bootstrap document's literal. Export from that K8s secret (or .env)
       # before `compose up`, same as helm's secretKeyRef.
       THUNDER_SYSTEM_CLIENT_SECRET: "${THUNDER_SYSTEM_CLIENT_SECRET:-aep-system-client-secret}"
+      # The `resource` indicator every scope=system mint must carry.
+      #
+      # WITHOUT IT THE SCOPE IS SILENTLY DROPPED. ThunderID resolves a requested
+      # scope against a resource server, and the merged bootstrap sets the
+      # server-wide default to Agent Manager's — which defines no `system`
+      # scope. The mint then returns 200 with a token whose aud is
+      # `urn:wso2:amp` and which carries no scope at all, and Thunder's admin
+      # API answers 401 on every call afterwards. That reads like a bad
+      # credential and is not one: the same client id and secret work the moment
+      # this is sent. Every script here already defaults it the same way
+      # (verify-convergence.sh, seed-test-users.sh); the compose service was the
+      # one caller that did not.
+      THUNDER_SYSTEM_RESOURCE_IDENTIFIER: "${THUNDER_SYSTEM_RESOURCE_IDENTIFIER:-http://thunder.openchoreo.localhost:8080/mcp}"
       PLATFORM_IDP_ISSUER: "http://thunder.openchoreo.localhost:8080"
       # In-cluster JWKS of the platform IdP, handed to the apps AEP deploys.
       # The default spells scripts/env.sh's THUNDER_INTERNAL_JWKS_URL — that
@@ -305,6 +327,25 @@ services:
       - "api.openchoreo.localhost:host-gateway"
       - "thunder.openchoreo.localhost:host-gateway"
       - "observer.openchoreo.localhost:host-gateway"
+      # The DATA-plane gateway, where deployed components serve. The Test tab's
+      # invoke relay calls a component at its own EndpointURL, and that URL is
+      # minted for the BROWSER (`<env>-<org>.openchoreoapis.localhost:19080`).
+      # A `.localhost` name resolves to 127.0.0.1 INSIDE this container, where
+      # nothing listens on 19080 — the k3d serverlb publishes it on the docker
+      # HOST — so every relayed call failed with connection refused while the
+      # same URL worked fine from the browser. Only local dev needs this: in a
+      # real deployment the gateway host resolves through DNS.
+      # One entry per <environment>-<org>; add another if you run more.
+      #
+      # `default-default` is this stack's environment: setup-aep.sh creates the
+      # environment `default` in the org `default`, so components serve at
+      # default-default.openchoreoapis.localhost. The `development-` entry below
+      # is kept for a stack whose environment still carries the older name — an
+      # unmapped host here is not an error anywhere, it just makes every Test-tab
+      # invoke fail with "failed to invoke component" while the same URL works
+      # from the browser.
+      - "default-default.openchoreoapis.localhost:host-gateway"
+      - "development-default.openchoreoapis.localhost:host-gateway"
       # The ENVIRONMENT identity providers (T2), one per (org, env), reached at
       # their PUBLIC issuer — <env>-idp.amp.localhost:8080 — because this
       # container runs outside the cluster and the binding's in-cluster admin
@@ -318,6 +359,12 @@ services:
       # deploys into the same one. Provision an environment beyond it and its
       # entry belongs here too.
       - "default-idp.amp.localhost:host-gateway"
+      # Agent Manager's control API, for the same reason and by the same rule.
+      # The AI gateway binding record names amp-api by its PUBLIC url, which is
+      # what a cluster-resident aep-api resolves through CoreDNS; from this
+      # container it resolves to 127.0.0.1 and reaches nothing, so it is mapped
+      # to the docker host and out to the k3d serverlb like its neighbours.
+      - "api.amp.localhost:host-gateway"
 
   # ---------------------------------------------------------------------------
   # agents — file-mutation agents service (services/agents). Serves the
@@ -453,6 +500,24 @@ services:
       VITE_THUNDER_URL: "${PUBLIC_THUNDER_URL}"
       VITE_THUNDER_CLIENT_ID: "${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
       VITE_THUNDER_SCOPES: "${VITE_THUNDER_SCOPES:-openid profile email}"
+      VITE_TRY_IT_URL: "${VITE_TRY_IT_URL:-http://tryit.aep.localhost:8095}"
+    networks:
+      - aep
+
+  # ---------------------------------------------------------------------------
+  # tryit — the platform's test app (apps/tryit/AGENTS.md). Its origin is the
+  # one aep-api's TRY_IT_CALLBACK_URL names; the two move together.
+  # ---------------------------------------------------------------------------
+  tryit:
+    build:
+      context: ..
+      dockerfile: apps/tryit/Dockerfile
+    container_name: aep-tryit
+    ports:
+      - "8095:3000"
+    environment:
+      # Where a token may be sent: the environments' public gateway vhosts.
+      TRY_IT_GATEWAY_HOSTS: "${TRY_IT_GATEWAY_HOSTS:-openchoreoapis.localhost}"
     networks:
       - aep
 

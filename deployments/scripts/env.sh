@@ -43,6 +43,17 @@ GATEWAY_OPERATOR_VERSION="0.11.0"
 GATEWAY_CHART_VERSION="1.2.2"
 GATEWAY_IMAGE_VERSION="1.2.1"
 
+# ── WSO2 AMP AI gateway (the LLM proxy) ──────────────────────────────────────
+# The gateway an AMP-governed agent's model traffic flows through, and the one
+# place a PII guardrail can be enforced on it. Published on its OWN version line
+# — 0.14.x, independent of AMP_VERSION below — so it gets its own pin rather
+# than riding the Agent Manager one.
+#
+# The chart deploys a gateway runtime through the SAME gateway-operator as the
+# API Platform gateways above, so it inherits GATEWAY_ENCRYPTION_SECRET_NAME and
+# must be installed into the per-environment namespace that holds it.
+AI_GATEWAY_CHART_VERSION="${AI_GATEWAY_CHART_VERSION:-0.14.0-rc1}"
+
 # ── Agent Manager ────────────────────────────────────────────────────────────
 # setup.sh installs the Agent Management Platform alongside AEP on this same
 # cluster, from WSO2's published OCI charts, as part of the base profile. The

@@ -164,5 +164,14 @@ echo ""
 echo "3️⃣  API Platform gateway"
 bash "$SCRIPT_DIR/setup-environment-gateway.sh" "$ORG_NAME" "$ENV_NAME"
 
+# ── 4. The AI gateway for that environment ──────────────────────────────────
+# The LLM proxy an AMP-governed agent's model traffic flows through, plus the
+# binding record aep-api resolves it by. Same lifecycle as the two above, for
+# the same reason (ADR-0029): an environment's identity, its API gateway and its
+# AI gateway are one thing to provision and one thing to withdraw.
 echo ""
-echo "✅ '${ENV_NAME}' environment ready — Thunder, binding record and API Platform gateway"
+echo "4️⃣  AI gateway"
+bash "$SCRIPT_DIR/setup-environment-aigateway.sh" "$ORG_NAME" "$ENV_NAME"
+
+echo ""
+echo "✅ '${ENV_NAME}' environment ready — Thunder, binding record, API Platform gateway and AI gateway"

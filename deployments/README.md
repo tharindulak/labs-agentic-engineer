@@ -138,6 +138,21 @@ Key wiring:
 
 - **One API Platform gateway per environment, not per cluster.** `api-platform-<org>-<env>` in namespace `<org>-<env>`, installed by `scripts/setup-environment-gateway.sh` — from `setup-aep.sh` for AEP's own environments and from `setup-agent-manager-env.sh` for Agent Manager's, one script either way, binding without upgrading when the release is already there. A gateway is where a managed API's authentication is terminated, so it must terminate against exactly one identity tier: its only Thunder keymanager is the T2 named in that environment's binding record (`scripts/setup-environment-thunder.sh`). A platform-IdP token and a sibling environment's token are both 401 there, which `scripts/verify-api-platform.sh` asserts. The runtime is reached in-cluster at `api-platform-<org>-<env>-gw-gateway-gateway-runtime.<org>-<env>:22893` and publicly on the kgateway vhost `<env>-<org>.gateway.localhost:19080` (env first — the chart's derivation, and write-once in Agent Manager once registered). The `api-configuration` trait stamps `restapi-target: api-platform-<org>-<env>` on every RestApi and points its Backend at that runtime; `aep-api` derives the same host (`projects.APIGatewayHost`). All four must move together.
 
+- **One AI gateway per environment, alongside the API gateway.** Agent Manager
+  has two: the **API gateway** fronts an agent's own inbound API, the **AI
+  gateway** is the LLM proxy an agent calls outbound, and guardrails run on the
+  second. `scripts/setup-environment-aigateway.sh` registers it with `amp-api`,
+  installs `wso2-amp-ai-gateway-extension` into `<org>-<env>` with
+  `bootstrap.enabled=false`, and writes the binding onto the OpenChoreo
+  `Environment` as annotations — endpoint, internal endpoint, admin URL,
+  gateway id, secret path. **The binding record is the contract**, exactly as
+  it is for Thunder (`design/two-tier-thunder.md`): `aep-api` reads it to
+  decide whether an environment is governed at all, and an environment without
+  one deploys agents on the org's own Anthropic key, as before Agent Manager
+  existed. `scripts/verify-convergence.sh` check 15 asserts it is bound and
+  ACTIVE. What aep-api then does with it is
+  `services/aep-api/internal/delivery/agentgovernance/design/governed-model-access.md`.
+
 ## What was removed from the previous v1
 
 - `collab-server` — collaborative editing is deferred.

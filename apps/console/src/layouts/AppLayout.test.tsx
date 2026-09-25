@@ -144,6 +144,18 @@ describe("AppLayout — org sidebar", () => {
     expect(sidebarItem("Projects")).not.toHaveClass("Mui-selected");
   });
 
+  // The highlight is keyed on the URL's section segment matching the item's
+  // id, so the two have to move together — this is what would catch one of
+  // them renamed alone.
+  it("selects Validations on /projects/<name>/validations", () => {
+    mockPathname = `/projects/${PROJECT}/validations`;
+    mockParams = { projectName: PROJECT };
+    render();
+
+    expect(sidebarItem("Validations")).toHaveClass("Mui-selected");
+    expect(sidebarItem("Overview")).not.toHaveClass("Mui-selected");
+  });
+
   it("does not show Resources or Endpoints inside a project", () => {
     mockPathname = `/projects/${PROJECT}`;
     mockParams = { projectName: PROJECT };

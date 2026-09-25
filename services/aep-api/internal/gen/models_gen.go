@@ -16,6 +16,24 @@ const (
 	UserJWTScopes userJWTContextKey = "userJWT.Scopes"
 )
 
+// Defines values for AgentModel.
+const (
+	AgentModelClaudeHaiku45 AgentModel = "claude-haiku-4-5"
+	AgentModelClaudeSonnet5 AgentModel = "claude-sonnet-5"
+)
+
+// Valid indicates whether the value is a known member of the AgentModel enum.
+func (e AgentModel) Valid() bool {
+	switch e {
+	case AgentModelClaudeHaiku45:
+		return true
+	case AgentModelClaudeSonnet5:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentRuntime.
 const (
 	AgentRuntimeClaudeCode AgentRuntime = "claude-code"
@@ -217,66 +235,6 @@ const (
 func (e BuildSummaryWaitingReason) Valid() bool {
 	switch e {
 	case BuildSummaryWaitingReasonExternalValues:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for CodingAgentModel.
-const (
-	CodingAgentModelClaudeHaiku45 CodingAgentModel = "claude-haiku-4-5"
-	CodingAgentModelClaudeSonnet5 CodingAgentModel = "claude-sonnet-5"
-)
-
-// Valid indicates whether the value is a known member of the CodingAgentModel enum.
-func (e CodingAgentModel) Valid() bool {
-	switch e {
-	case CodingAgentModelClaudeHaiku45:
-		return true
-	case CodingAgentModelClaudeSonnet5:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for DeployStageValidation.
-const (
-	DeployStageValidationAwaitingFix  DeployStageValidation = "awaiting-fix"
-	DeployStageValidationCancelled    DeployStageValidation = "cancelled"
-	DeployStageValidationFailed       DeployStageValidation = "failed"
-	DeployStageValidationInconclusive DeployStageValidation = "inconclusive"
-	DeployStageValidationNone         DeployStageValidation = "none"
-	DeployStageValidationPartial      DeployStageValidation = "partial"
-	DeployStageValidationPassed       DeployStageValidation = "passed"
-	DeployStageValidationRunning      DeployStageValidation = "running"
-	DeployStageValidationSkipped      DeployStageValidation = "skipped"
-	DeployStageValidationUnreported   DeployStageValidation = "unreported"
-)
-
-// Valid indicates whether the value is a known member of the DeployStageValidation enum.
-func (e DeployStageValidation) Valid() bool {
-	switch e {
-	case DeployStageValidationAwaitingFix:
-		return true
-	case DeployStageValidationCancelled:
-		return true
-	case DeployStageValidationFailed:
-		return true
-	case DeployStageValidationInconclusive:
-		return true
-	case DeployStageValidationNone:
-		return true
-	case DeployStageValidationPartial:
-		return true
-	case DeployStageValidationPassed:
-		return true
-	case DeployStageValidationRunning:
-		return true
-	case DeployStageValidationSkipped:
-		return true
-	case DeployStageValidationUnreported:
 		return true
 	default:
 		return false
@@ -1071,28 +1029,28 @@ func (e RunProgressLineEmitter) Valid() bool {
 
 // Defines values for RunValidationVerdict.
 const (
-	Failed       RunValidationVerdict = "failed"
-	Inconclusive RunValidationVerdict = "inconclusive"
-	Partial      RunValidationVerdict = "partial"
-	Passed       RunValidationVerdict = "passed"
-	Skipped      RunValidationVerdict = "skipped"
-	Unreported   RunValidationVerdict = "unreported"
+	RunValidationVerdictFailed       RunValidationVerdict = "failed"
+	RunValidationVerdictInconclusive RunValidationVerdict = "inconclusive"
+	RunValidationVerdictPartial      RunValidationVerdict = "partial"
+	RunValidationVerdictPassed       RunValidationVerdict = "passed"
+	RunValidationVerdictSkipped      RunValidationVerdict = "skipped"
+	RunValidationVerdictUnreported   RunValidationVerdict = "unreported"
 )
 
 // Valid indicates whether the value is a known member of the RunValidationVerdict enum.
 func (e RunValidationVerdict) Valid() bool {
 	switch e {
-	case Failed:
+	case RunValidationVerdictFailed:
 		return true
-	case Inconclusive:
+	case RunValidationVerdictInconclusive:
 		return true
-	case Partial:
+	case RunValidationVerdictPartial:
 		return true
-	case Passed:
+	case RunValidationVerdictPassed:
 		return true
-	case Skipped:
+	case RunValidationVerdictSkipped:
 		return true
-	case Unreported:
+	case RunValidationVerdictUnreported:
 		return true
 	default:
 		return false
@@ -1267,6 +1225,48 @@ func (e TurnInputMultipartIntent) Valid() bool {
 	}
 }
 
+// Defines values for ValidationState.
+const (
+	ValidationStateAwaitingFix  ValidationState = "awaiting-fix"
+	ValidationStateCancelled    ValidationState = "cancelled"
+	ValidationStateFailed       ValidationState = "failed"
+	ValidationStateInconclusive ValidationState = "inconclusive"
+	ValidationStateNone         ValidationState = "none"
+	ValidationStatePartial      ValidationState = "partial"
+	ValidationStatePassed       ValidationState = "passed"
+	ValidationStateRunning      ValidationState = "running"
+	ValidationStateSkipped      ValidationState = "skipped"
+	ValidationStateUnreported   ValidationState = "unreported"
+)
+
+// Valid indicates whether the value is a known member of the ValidationState enum.
+func (e ValidationState) Valid() bool {
+	switch e {
+	case ValidationStateAwaitingFix:
+		return true
+	case ValidationStateCancelled:
+		return true
+	case ValidationStateFailed:
+		return true
+	case ValidationStateInconclusive:
+		return true
+	case ValidationStateNone:
+		return true
+	case ValidationStatePartial:
+		return true
+	case ValidationStatePassed:
+		return true
+	case ValidationStateRunning:
+		return true
+	case ValidationStateSkipped:
+		return true
+	case ValidationStateUnreported:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for WorkloadDependencyDTOKind.
 const (
 	WorkloadDependencyDTOKindOrgService WorkloadDependencyDTOKind = "org-service"
@@ -1330,6 +1330,15 @@ type AcceptAssumptionBody struct {
 	Note string `json:"note,omitempty"`
 }
 
+// AcceptanceCriteriaFile One acceptance criteria file as it stood at the snapshot's commit.
+type AcceptanceCriteriaFile struct {
+	// Content The file's Gherkin source, verbatim.
+	Content string `json:"content"`
+
+	// Path Repository path, e.g. specs/validation/acceptance/checkout.feature.
+	Path string `json:"path"`
+}
+
 // AccessRequest defines model for AccessRequest.
 type AccessRequest struct {
 	ConsumerComponentName string    `json:"consumerComponentName"`
@@ -1375,16 +1384,28 @@ type ActivityFeed struct {
 	NextBeforeID string `json:"nextBeforeId,omitempty"`
 }
 
+// AgentModel The model every agent of an organization bills to: the requirements, design and task-planning agents and the coding agent alike.
+//
+// Offered only once the platform can price it. The platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. Adding one is a rate row and a contract change together, never one without the other.
+type AgentModel string
+
 // AgentRuntime Which coding-agent runtime an organization's builds run on.
 //
 // The values are the same two RunEvent.runtime records, and deliberately so: what an org SELECTS and what a finished run REPORTS have to be the same vocabulary or a reader cannot line them up. The lifetimes differ — this is a setting that can change, that one is a fact about an attempt that cannot.
 //
-// `opencode` is in the enum because the design carries it and because a client should be able to render the choice; it is NOT selectable while the platform ships no adapter for it, and the API rejects it with a reason naming what is missing. Do not treat membership of this enum as availability.
+// Both runtimes run on the organization's Anthropic API key. Only `claude-code` can bill a Claude subscription instead, so choosing `opencode` deletes a stored subscription (ADR-0028, ADR-0036).
 type AgentRuntime string
 
 // AgentStatus How an agent, or a backgrounded task an agent owns, ended — as the runtime itself reported it. `running` is the only non-terminal value and exists so a consumer can repaint a row without waiting for the end; `completed` is a clean finish; `failed` is one the runtime called an error; `stopped` is a cancellation or a kill from outside, which is NOT a failure — the work did not go wrong, it was taken away, and a run a user stopped must not be shown as broken.
 // Carried by RunEvent's `agent_settled` and `task_settled`, which are the only places a status is authoritative. A settle event that never arrives means the platform never learned how the agent ended; it does not mean the agent is still running.
 type AgentStatus string
+
+// AgentsProjection How an organization's agents run: the one model every agent uses, the coding agent's runtime, and the Claude subscription coding bills to instead of the API key.
+//
+// ALWAYS present: every org has an effective model and runtime whether or not anyone has chosen them, so the section carries the platform's defaults until someone does. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
+//
+// The spec agents read the model at the start of every turn. A coding run copies the model and runtime when it is dispatched, so a run in flight keeps what it was launched with.
+type AgentsProjection = orgconfig.AgentsProjection
 
 // ApplyConflict One file whose baseSha no longer matches HEAD.
 type ApplyConflict struct {
@@ -1596,18 +1617,6 @@ type BuildSummaryWaitingReason string
 type ClientSecretOutputBody struct {
 	ClientSecret string `json:"clientSecret"`
 }
-
-// CodingAgentModel The model an organization's coding runs bill to.
-//
-// Narrower than the list any runtime can serve, and narrow for one reason: the platform stamps a run's cost from a per-model rate table, and that stamp is ALL-OR-NOTHING across a cycle's capture — one model with no rate blanks the cost of the whole cycle, not just its own share. So a model is offered here only once the platform can price it. Adding one is a rate row and a contract change together, never one without the other.
-type CodingAgentModel string
-
-// CodingAgentProjection The runtime and model an organization's coding runs use.
-//
-// ALWAYS present, unlike the credential sections: every org has an effective runtime and model whether or not anyone has ever opened the setting. `updatedAt`/`updatedBy` are null exactly when nobody has — which is what tells "the platform's defaults" apart from "somebody chose the same values".
-//
-// A change applies from the NEXT cycle. Dispatch copies these onto the run it starts, so a run already in flight keeps the runtime and model it was launched with; re-reading the setting mid-run would leave a feed whose model names disagree with the tokens they were billed for.
-type CodingAgentProjection = orgconfig.CodingAgentProjection
 
 // CollabSessionOutputBody defines model for CollabSessionOutputBody.
 type CollabSessionOutputBody struct {
@@ -1839,6 +1848,9 @@ type DependencyContractResponse struct {
 	Contract string `json:"contract"`
 }
 
+// DependencyOperationStatus One `x-aep.tools.openapi[].allow` entry's read-time computed resolution against the dependency it targets — status/reason are computed by spec.ComputeAgentToolStatus, never authored, never persisted.
+type DependencyOperationStatus = contracts.DependencyOperationStatus
+
 // DependencyStatus defines model for DependencyStatus.
 type DependencyStatus struct {
 	Outputs    []string                     `json:"outputs"`
@@ -1859,23 +1871,12 @@ type DeployStage struct {
 	} `json:"components"`
 	Status string `json:"status"`
 
-	// Validation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
-	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
-	// The report path and per-cycle detail live on the version's run story (list-build-runs).
-	Validation DeployStageValidation `json:"validation"`
+	// Validation Where the deployed version's validation stands, in the shared ValidationState vocabulary. The report path and the per-attempt detail behind it live on the version's run story (list-build-runs) and its validation history (get-validation).
+	Validation ValidationState `json:"validation"`
 
 	// Version Spec tag live in dev; "" if nothing deployed.
 	Version string `json:"version"`
 }
-
-// DeployStageValidation Validation state of the newest milestone run. This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
-// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
-// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
-// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
-// The report path and per-cycle detail live on the version's run story (list-build-runs).
-type DeployStageValidation string
 
 // Deployment defines model for Deployment.
 type Deployment struct {
@@ -2418,8 +2419,17 @@ type ProjectRolesView struct {
 	// Roles The WHOLE directory catalog, name-ordered — not just this project's roles. Roles are shared, so the panel shows which existing role a design reuses. Empty when directoryAvailable is false.
 	Roles []ProjectRoleState `json:"roles,omitempty"`
 
+	// SignIn Absent when the project declares no sign-in resource or its binding has not resolved yet.
+	SignIn *ProjectSignIn `json:"signIn,omitempty"`
+
 	// TestUsers The test accounts THIS project's design references, role-ordered.
 	TestUsers []ProjectTestUserState `json:"testUsers,omitempty"`
+}
+
+// ProjectSignIn How a client outside a project's own components signs in to it - the issuer to sign in AT and the public OAuth client to sign in AS. Both are public. Absent from a view when the project declares no sign-in resource or its binding has not resolved yet.
+type ProjectSignIn struct {
+	ClientID string `json:"clientId"`
+	Issuer   string `json:"issuer"`
 }
 
 // ProjectStatus Computed SDLC phase and artifact states.
@@ -3073,7 +3083,7 @@ type SkillDetailBody struct {
 	OrgID            string            `json:"orgId"`
 	References       map[string]string `json:"references"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `acceptance-run` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required  bool      `json:"required"`
 	SkillMd   string    `json:"skillMd"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -3089,7 +3099,7 @@ type SkillSummary struct {
 	Kind        string `json:"kind"`
 	Name        string `json:"name"`
 
-	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `aep-validation` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
+	// Required True when the coding runner reads this skill on every run and cannot start without it (`aep`, and `acceptance-run` for a validation task). The mirror only copies enabled skills, so disabling one of these would take the procedure away from every build in the org — `PATCH /skills/{name}` refuses it with 409. The console renders the availability toggle as unavailable rather than letting the call fail.
 	Required bool `json:"required"`
 }
 
@@ -3167,6 +3177,9 @@ type StartConnectOutputBody struct {
 type StatusMsg struct {
 	Status string `json:"status"`
 }
+
+// SubscriptionProjection A stored Claude subscription token, masked. It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
+type SubscriptionProjection = orgconfig.SubscriptionProjection
 
 // TagList defines model for TagList.
 type TagList struct {
@@ -3518,6 +3531,74 @@ type Usage struct {
 	// Model Model id the work ran on; "" on mixed-model aggregates.
 	Model        string `json:"model"`
 	OutputTokens int64  `json:"outputTokens"`
+}
+
+// ValidationDetail One version's validation history, already filtered to what asks the question.
+// `runs` holds only runs that ATTEMPTED validation — ones holding at least one VALIDATION cycle, which is the fact rather than the kind: a task run never holds one, and a run that did ask the criteria is listed whatever its kind says it was for. Each run's `cycles` holds only its VALIDATION cycles. Both filters are applied here rather than by the client: they are the platform's own rules, and the surface that re-derived them read a newer non-validating run as the version's answer and hid a real verdict. The views are the same MilestoneRunView and RunCycleView the run story serves, so one projection describes a cycle everywhere.
+type ValidationDetail struct {
+	// Deployed This version is the one currently deployed — the only version a revalidation can honestly judge.
+	// A revalidation drives whatever is serving RIGHT NOW: the runner's endpoint URLs are resolved from OpenChoreo at request time and its criteria come from the branch tip, neither pinned to the version the run is filed under. So asking an older version's criteria judges code that version never shipped, records the verdict on its milestone, and — with the default attempt budget — files one repair issue per failed scenario there too. revalidate-build refuses it; this flag is what lets the console stop offering it, rather than letting a reader discover the refusal by clicking.
+	Deployed bool `json:"deployed"`
+
+	// Live A run is in flight on this milestone. With `deployed` it makes the two conditions the console gates the validation trigger on; the remaining refusals (open work, no criteria) belong to revalidate-build, which owns them and says so in its error. It also decides whether an unvalidated version reads as "a verdict is coming" or "nothing will come unless you ask", which must not disagree with whether the trigger is offered.
+	Live            bool  `json:"live"`
+	MilestoneNumber int64 `json:"milestoneNumber"`
+
+	// Runs Newest run first, validating kinds only, each carrying its validation cycles in dispatch order.
+	Runs []MilestoneRunView `json:"runs"`
+
+	// State Where a version's validation stands — the one vocabulary every surface renders it with.
+	// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+	State ValidationState `json:"state"`
+	Tag   string          `json:"tag"`
+}
+
+// ValidationList The validation ledger — one entry per worked spec version, newest first.
+type ValidationList struct {
+	Validations []ValidationSummary `json:"validations"`
+}
+
+// ValidationSnapshot One attempt's report and the criteria it was judged against, read at a single commit.
+type ValidationSnapshot struct {
+	// Commit The commit both halves were read at — the cycle's merge SHA, or empty when the attempt is still running and the criteria came from HEAD.
+	Commit string `json:"commit"`
+
+	// Criteria Every specs/validation/acceptance/*.feature file at that commit. The report annotates these; they are the spine the view renders and the report is the overlay.
+	Criteria []AcceptanceCriteriaFile `json:"criteria"`
+
+	// Report The raw tests/acceptance/report.json at that commit, verbatim, for the client's own parser to read. Null while the attempt is still running: it has not committed one yet, and an absent report is not the same fact as an empty one.
+	Report *string `json:"report,omitempty"`
+}
+
+// ValidationState Where a version's validation stands — the one vocabulary every surface renders it with.
+// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+type ValidationState string
+
+// ValidationSummary One row of the validation ledger: a spec version and where its validation stands.
+// Every version that has been worked appears, including ones never validated — an absent row and a never-validated one are indistinguishable to a reader, and "never validated" is the most actionable state this page shows.
+type ValidationSummary struct {
+	// EndedAt When the LATEST validation attempt finished. Null while one is in flight, which is the case the column renders as an em-dash rather than a blank: a running attempt has no end and never will until it settles.
+	EndedAt *time.Time `json:"endedAt,omitempty"`
+
+	// MilestoneNumber The GitHub milestone this version's work lives in — the platform key the tag resolves to, and the handle get-validation is read by.
+	MilestoneNumber int64 `json:"milestoneNumber"`
+
+	// StartedAt When the LATEST validation attempt began — the CYCLE's clock, not the run's. Paired with endedAt it is the attempt's duration, which counts up while the attempt is open and is the only thing on this page that moves; a run's wall clock would fold in the coding, build and deploy time between attempts and say nothing about a hung one. Null when the version has never been validated.
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+
+	// State Where a version's validation stands — the one vocabulary every surface renders it with.
+	// This MIRRORS the run's verdict rather than folding it, so the chip says what the run concluded: a fold would have to discard `partial`, `inconclusive` and `unreported` at exactly the surface that needs them, and `completed` never said whether anything passed.
+	// Four LIFECYCLE values. none is PENDING, never settled: a verdict is expected and has not arrived, because a run is live or a dev run filed the version's validation task and nothing has started it yet. A client must not read it as "there is no verdict to wait for" — that is what skipped and inconclusive say. running is a validation CYCLE in flight, not merely a live run with no verdict yet. awaiting-fix is validation having failed with the run repairing it — the work in flight is a CODING cycle, which is why the state names the implementation rather than validation. cancelled is a person STOPPING the judging: a validation run settled cancelled before recording a verdict, so nothing will answer for this version unless somebody re-asks. The rest are the verdict verbatim. They are mutually exclusive in time, so nothing is hidden behind another.
+	// passed (every criterion was automated and passed), partial (some passed, none failed, some were never covered), failed (a criterion asserted and lost), inconclusive (no test results at all), unreported (no usable report at the validation cycle's merge commit), skipped (no validation criteria, and incident runs, which get no validation cycle).
+	// failed and unreported fail the run only once its validation attempts are spent: while attempts remain the run repairs and re-validates, and reads awaiting-fix in the meantime.
+	State ValidationState `json:"state"`
+	Tag   string          `json:"tag"`
 }
 
 // Warning defines model for Warning.

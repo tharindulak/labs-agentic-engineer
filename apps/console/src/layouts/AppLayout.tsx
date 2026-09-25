@@ -82,7 +82,7 @@ function activeItemFor(pathname: string, inProject: boolean): string {
     case "spec":
     case "builds":
     case "deployments":
-    case "validation":
+    case "validations":
     case "issues":
       return section;
     default:
@@ -345,10 +345,10 @@ export function AppLayout() {
                   <Sidebar.ItemLabel>Deployments</Sidebar.ItemLabel>
                 </Sidebar.Item>
                 <Sidebar.Item
-                  id="validation"
+                  id="validations"
                   link={
                     <Link
-                      to="/projects/$projectName/validation"
+                      to="/projects/$projectName/validations"
                       params={{ projectName }}
                     />
                   }
@@ -356,7 +356,7 @@ export function AppLayout() {
                   <Sidebar.ItemIcon>
                     <CircleCheck />
                   </Sidebar.ItemIcon>
-                  <Sidebar.ItemLabel>Validation</Sidebar.ItemLabel>
+                  <Sidebar.ItemLabel>Validations</Sidebar.ItemLabel>
                 </Sidebar.Item>
                 <Sidebar.Item
                   id="issues"

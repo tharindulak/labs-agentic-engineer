@@ -197,7 +197,7 @@ describe("failureCopy — runs with no record", () => {
 
   it("points a deploy failure at Deployments and a validation failure at Validation", () => {
     expect(failureCopy(run({ terminalReason: "deploy-budget" }))?.next?.to).toBe("/projects/$projectName/deployments");
-    expect(failureCopy(run({ terminalReason: "validation-failed" }))?.next?.to).toBe("/projects/$projectName/validation");
+    expect(failureCopy(run({ terminalReason: "validation-failed" }))?.next?.to).toBe("/projects/$projectName/validations");
   });
 
   it("renders an unknown reason rather than swallowing it", () => {
