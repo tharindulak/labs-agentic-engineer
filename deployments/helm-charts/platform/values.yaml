@@ -258,12 +258,22 @@ postgres:
 # Enabling also gives aep-mcp-server that credential as its fallback bearer
 # (AEP_MCP_DEFAULT_BEARER), because the SRE extension cannot send an
 # Authorization header over the plaintext in-cluster URL, and adds a
-# NetworkPolicy that only admits callerNamespace (the SRE agent's namespace,
-# aectl sre install --obs-namespace) to aep-mcp-server.
+# NetworkPolicy that only admits pods matching callerPodLabels in
+# callerNamespace (the SRE agent's namespace, aectl sre install
+# --obs-namespace) to aep-mcp-server.
+#
+# callerPodLabels defaults to the SRE agent Deployment's selector labels in the
+# openchoreo-observability-plane chart aectl installs (1.0.1-hotfix.1, where the
+# component is ai-rca-agent). Selector labels are immutable on a Deployment, so
+# every SRE pod carries them. Chart 1.2.0+ renamed the component to sre-agent;
+# set app.kubernetes.io/component accordingly for that chart.
 sreHandoff:
   enabled: false
   org: "default"
   callerNamespace: "openchoreo-observability-plane"
+  callerPodLabels:
+    app.kubernetes.io/name: openchoreo-observability-plane
+    app.kubernetes.io/component: ai-rca-agent
 
 temporal:
   enabled: true

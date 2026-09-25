@@ -92,6 +92,10 @@ assert_file_not_contains "$COMPOSE_FILE" "local-dev-sre-handoff-secret"
 assert_file_contains "$COMPOSE_FILE" 'SRE_HANDOFF_TOKEN: "${AEP_MCP_TOKEN:-}"'
 assert_file_contains "$COMPOSE_FILE" 'AEP_MCP_DEFAULT_BEARER: "${AEP_MCP_TOKEN:+Bearer ${AEP_MCP_TOKEN}}"'
 assert_file_contains "$SETUP_AEP_SCRIPT" 'AEP_MCP_TOKEN=${AEP_MCP_TOKEN_VAL}'
+# An explicit empty AEP_MCP_TOKEN= disables the shortcut and must survive a
+# re-run: the token is generated only when the key is absent from .env.
+assert_file_contains "$SETUP_AEP_SCRIPT" 'env_has_key AEP_MCP_TOKEN || AEP_MCP_TOKEN_VAL="$(gen_hex32)"'
+assert_file_not_contains "$SETUP_AEP_SCRIPT" '[ -z "$AEP_MCP_TOKEN_VAL" ] && AEP_MCP_TOKEN_VAL='
 # An explicit ENABLE_AGENT_MANAGER wins over the saved .env value.
 assert_file_contains "$SETUP_AEP_SCRIPT" 'ENABLE_AGENT_MANAGER_VAL="${ENABLE_AGENT_MANAGER:-$(existing_val ENABLE_AGENT_MANAGER)}"'
 

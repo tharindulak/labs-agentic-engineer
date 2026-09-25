@@ -40,3 +40,15 @@ test("a value without the Bearer scheme is rejected", () => {
   assert.throws(() => parseDefaultBearer("abc123"), /AEP_MCP_DEFAULT_BEARER/);
   assert.throws(() => parseDefaultBearer("Basic abc123"), /AEP_MCP_DEFAULT_BEARER/);
 });
+
+test("a bearer with control characters or non-token characters is rejected", () => {
+  assert.throws(() => parseDefaultBearer("Bearer\nabc123"), /AEP_MCP_DEFAULT_BEARER/);
+  assert.throws(() => parseDefaultBearer("Bearer abc\n123"), /AEP_MCP_DEFAULT_BEARER/);
+  assert.throws(() => parseDefaultBearer("Bearer\tabc123"), /AEP_MCP_DEFAULT_BEARER/);
+  assert.throws(() => parseDefaultBearer("Bearer abc\u0000123"), /AEP_MCP_DEFAULT_BEARER/);
+  assert.throws(() => parseDefaultBearer("Bearer abc 123"), /AEP_MCP_DEFAULT_BEARER/);
+});
+
+test("a bearer in the RFC 6750 b64token alphabet is accepted", () => {
+  assert.equal(parseDefaultBearer("Bearer aB0-._~+/=="), "Bearer aB0-._~+/==");
+});

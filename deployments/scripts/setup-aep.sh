@@ -1137,16 +1137,26 @@ existing_val() {
     grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2-
 }
 
+# Whether .env sets the key at all, even to an empty value. existing_val
+# prints nothing for both "absent" and "KEY=", so settings where an explicit
+# empty value means something need this to tell the two apart.
+env_has_key() {
+    [ -f "$ENV_FILE" ] && grep -qE "^$1=" "$ENV_FILE"
+}
+
 WEBHOOK_SECRET="$(existing_val GITHUB_WEBHOOK_SECRET)"
 [ -z "$WEBHOOK_SECRET" ] && WEBHOOK_SECRET="$(gen_hex32)"
 OAUTH_STATE_KEY="$(existing_val OAUTH_STATE_SIGNING_KEY)"
 [ -z "$OAUTH_STATE_KEY" ] && OAUTH_STATE_KEY="$(gen_hex32)"
 # Shared SRE-handoff bearer: aep-mcp-server's AEP_MCP_DEFAULT_BEARER and
 # aep-api's SRE_HANDOFF_TOKEN (docker-compose.yml). Random per install so no
-# repository-known credential ever authenticates the handoff routes.
+# repository-known credential ever authenticates the handoff routes. Generated
+# only when the key is absent: an explicit empty `AEP_MCP_TOKEN=` is the
+# operator disabling the handoff shortcut, and a re-run must not re-enable it.
 AEP_MCP_TOKEN_VAL="$(existing_val AEP_MCP_TOKEN)"
-[ -z "$AEP_MCP_TOKEN_VAL" ] && AEP_MCP_TOKEN_VAL="$(gen_hex32)"
+env_has_key AEP_MCP_TOKEN || AEP_MCP_TOKEN_VAL="$(gen_hex32)"
 echo "🔐 Using GITHUB_WEBHOOK_SECRET, OAUTH_STATE_SIGNING_KEY and AEP_MCP_TOKEN (preserved or generated)"
+[ -z "$AEP_MCP_TOKEN_VAL" ] && echo "   AEP_MCP_TOKEN is empty in .env: the SRE handoff shortcut stays disabled"
 
 # Generate the BFF Task JWT signing keypair if it doesn't already exist.
 # Idempotent — on re-runs the existing key is left untouched so existing
@@ -1246,8 +1256,9 @@ OAUTH_STATE_SIGNING_KEY=${OAUTH_STATE_KEY}
 
 # ── SRE-agent handoff bearer ───────────────────────────────────────────────
 # Shared by aep-mcp-server (AEP_MCP_DEFAULT_BEARER) and aep-api
-# (SRE_HANDOFF_TOKEN). Generated once and preserved. An empty value disables
-# the handoff shortcut; clearing it and re-running setup-aep.sh rotates it.
+# (SRE_HANDOFF_TOKEN). Generated once and preserved, including an empty value.
+# To disable the handoff shortcut, set it empty (AEP_MCP_TOKEN=). To rotate it,
+# delete this line and re-run setup-aep.sh, which generates a new value.
 # See docs/developer-guide/sre-handoff-security.md.
 AEP_MCP_TOKEN=${AEP_MCP_TOKEN_VAL}
 

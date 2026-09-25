@@ -75,6 +75,11 @@ and installation lifecycle.*
   escalates from attempt four (the original attempt plus three recurrence headings), whether armed
   or disarmed, without blocking further attempts. Completed and ordinary non-SRE issues have no
   attention reason. Human edits to the body ledger affect the recurrence history.
+- **The issue list is issues only, and bounded.** GitHub's issues endpoint also answers pull requests;
+  `githubhost.ListIssues` drops them and walks pages until a short one or `issueListMaxPages` (10, so
+  1000 items). The bell polls the unfiltered list per alerting project every minute, so the cap bounds
+  that poll's rate cost. Past it the oldest issues are missing from the list (logged); `GetIssue` still
+  reads any issue by number. Paging the API contract itself is the follow-up if repositories outgrow it.
 - **`Host` is provider-neutral.** GitHub specifics live in `githubhost`; nothing above it names GitHub
   — including whether an op rides REST or GraphQL.
 - **A milestone is addressed by NUMBER, never by title.** Titles are renamable, and the host enforces

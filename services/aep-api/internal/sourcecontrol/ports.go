@@ -81,6 +81,9 @@ type RepoAdmin interface {
 // Consumed by issueService.
 type IssueOps interface {
 	CreateIssue(ctx context.Context, owner, repo string, cred secrets.Credential, req CreateIssueRequest) (*IssueResult, error)
+	// ListIssues returns issues only, never pull requests, newest first. The
+	// adapter bounds its page walk, so a very large repository answers its
+	// newest issues and GetIssue reaches the rest.
 	ListIssues(ctx context.Context, owner, repo string, cred secrets.Credential, labels []string) ([]IssueInfo, error)
 	// GetIssue fetches a single issue by number via GET /issues/{number} — an
 	// O(1) lookup, unlike ListIssues which pages the whole repo. Returns

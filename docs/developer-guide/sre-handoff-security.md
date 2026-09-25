@@ -36,23 +36,28 @@ deduplication, recurrence, adoption, dispatch, and human-attention state.
 - Local dev wires it in `deployments/docker-compose.yml` from one
   `AEP_MCP_TOKEN` variable, which `setup-aep.sh` generates at random into
   `deployments/.env` and preserves across re-runs. There is no built-in
-  default: unset or empty disables the shortcut on both services. The
-  compose port (`3401`) is published so the k3d SRE pod can reach it through
-  `host.k3d.internal`, which also makes it reachable from the host's
-  network; keep the local stack on a trusted network, or clear
-  `AEP_MCP_TOKEN` when the handoff is not needed.
+  default: unset or empty disables the shortcut on both services. An
+  explicit empty `AEP_MCP_TOKEN=` survives re-runs, so a disabled shortcut
+  stays disabled; deleting the line and re-running `setup-aep.sh` generates
+  a new token (rotation). The compose port (`3401`) is published so the k3d
+  SRE pod can reach it through `host.k3d.internal`, which also makes it
+  reachable from the host's network; keep the local stack on a trusted
+  network, or set `AEP_MCP_TOKEN=` when the handoff is not needed.
 - A full k8s install wires it through `deployments/helm-charts/platform`:
   `values.yaml`'s `sreHandoff` block (`enabled`, default `false`; `org`;
-  `callerNamespace`), an `ExternalSecret` in
+  `callerNamespace`; `callerPodLabels`), an `ExternalSecret` in
   `templates/external-secrets/external-secrets.yaml` that reads the
   `aep/aep-mcp-token` OpenBao path into `aep-sre-handoff-secrets`, the
   `SRE_HANDOFF_TOKEN`/`SRE_HANDOFF_ORG` env vars in
   `templates/aep-api/deployment.yaml`, and `AEP_MCP_DEFAULT_BEARER` in
   `templates/aep-mcp-server/deployment.yaml` (one shared credential, not a
   second secret to keep in sync). `templates/aep-mcp-server/networkpolicy.yaml`
-  then admits only `callerNamespace` (the SRE agent's namespace) to
-  `aep-mcp-server`; this needs a CNI that enforces NetworkPolicy. Off by
-  default. Enabling it requires a random value at that OpenBao path, for
+  then admits only pods matching `callerPodLabels` in `callerNamespace` (the
+  SRE agent's pods and namespace) to `aep-mcp-server`; this needs a CNI that
+  enforces NetworkPolicy. The `callerPodLabels` default is the SRE agent
+  Deployment's selector labels in the observability-plane chart `aectl`
+  installs; a different chart version may need a different component label.
+  Off by default. Enabling it requires a random value at that OpenBao path, for
   example via `aectl platform secret import --path aep/aep-mcp-token`.
 
 ## Automation boundaries

@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+// testMCPURL is the in-cluster MCP endpoint aectl builds for a "wso2-aep"
+// AEP namespace.
+const testMCPURL = "http://aep-mcp-server.wso2-aep.svc.cluster.local:3400/mcp"
 
 func TestLoadSREExtensionAssetsFromRepo(t *testing.T) {
 	assets, err := loadSreExtensionAssets("")
@@ -118,11 +123,11 @@ func TestApplyExtensionsConfigMapIsIdempotent(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	assets := sreExtensionAssets{MCPJSON: "mcp", Context: "context", SkillMD: "skill"}
 
-	if err := applyExtensionsConfigMap(ctx, client, "obs", assets); err != nil {
+	if err := applyExtensionsConfigMap(ctx, client, "obs", assets, testMCPURL); err != nil {
 		t.Fatalf("apply first: %v", err)
 	}
 	assets.SkillMD = "skill-v2"
-	if err := applyExtensionsConfigMap(ctx, client, "obs", assets); err != nil {
+	if err := applyExtensionsConfigMap(ctx, client, "obs", assets, testMCPURL); err != nil {
 		t.Fatalf("apply second: %v", err)
 	}
 
@@ -135,11 +140,42 @@ func TestApplyExtensionsConfigMapIsIdempotent(t *testing.T) {
 	}
 }
 
+// The loader validates the MCP URL before env expansion, so the ConfigMap must
+// carry the concrete URL, not the ${AEP_MCP_URL} placeholder from the repo.
+func TestApplyExtensionsConfigMapRendersMCPURL(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	assets, err := loadSreExtensionAssets("")
+	if err != nil {
+		t.Fatalf("load assets: %v", err)
+	}
+
+	if err := applyExtensionsConfigMap(ctx, client, "obs", assets, testMCPURL); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	cm, err := client.CoreV1().ConfigMaps("obs").Get(ctx, "sre-agent-extensions", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get configmap: %v", err)
+	}
+	var rendered struct {
+		MCPServers map[string]struct {
+			URL string `json:"url"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal([]byte(cm.Data["mcp.json"]), &rendered); err != nil {
+		t.Fatalf("rendered mcp.json is not JSON: %v\n%s", err, cm.Data["mcp.json"])
+	}
+	if got := rendered.MCPServers["ae"].URL; got != testMCPURL {
+		t.Fatalf("mcp.json ae url = %q, want %q", got, testMCPURL)
+	}
+	if strings.Contains(cm.Data["mcp.json"], sreMCPURLPlaceholder) {
+		t.Fatalf("mcp.json still carries the placeholder: %s", cm.Data["mcp.json"])
+	}
+}
+
 func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 	ctx := context.Background()
-	oldNamespace := sreNamespace
-	sreNamespace = "wso2-aep"
-	defer func() { sreNamespace = oldNamespace }()
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "ai-rca-agent", Namespace: "obs"},
@@ -164,7 +200,7 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 	}
 	client := fake.NewSimpleClientset(deploy)
 
-	if err := mountSREAgentRuntime(ctx, client, "obs", "ai-rca-agent"); err != nil {
+	if err := mountSREAgentRuntime(ctx, client, "obs", "ai-rca-agent", testMCPURL); err != nil {
 		t.Fatalf("mount runtime: %v", err)
 	}
 
@@ -206,7 +242,7 @@ func TestMountSREAgentRuntimePatchesExtensionAndCredentialFile(t *testing.T) {
 	}
 	assertEnv("EXTENSIONS_DIR", "/etc/openchoreo/sre-agent")
 	assertEnv("RCA_LLM_API_KEY_FILE", "/etc/rca-agent/anthropic/RCA_LLM_API_KEY")
-	assertEnv("AEP_MCP_URL", "http://aep-mcp-server.wso2-aep.svc.cluster.local:3400/mcp")
+	assertEnv("AEP_MCP_URL", testMCPURL)
 	for _, env := range c.Env {
 		if env.Name == "AEP_MCP_TOKEN" {
 			t.Fatalf("SRE pod must not carry the MCP credential; found %#v", env)

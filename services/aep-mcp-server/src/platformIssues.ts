@@ -60,10 +60,9 @@ const KINDS_OUTRANKING_PLAN = ["provision", "validation", "conflict", "bug"];
 
 /** What a `PlatformRecord` issue is, and what it is not, said in the record. */
 export const PLATFORM_ISSUE_NOTE =
-  "PLATFORM IMPLEMENTATION RECORD — this issue is AE's own plan for what to BUILD. " +
-  "It tells you which behaviour must be PRESERVED. It is not a defect report and it " +
-  "is never grounds for ruling out a code change: behaviour can be deliberate and " +
-  "still be worth hardening.";
+  "PLATFORM IMPLEMENTATION RECORD — this issue records AE's original plan for what " +
+  "to BUILD. It is not a defect report and it is never grounds for ruling out a code " +
+  "change: behaviour can be deliberate and still be worth hardening.";
 
 function isPlatformPlan(labels: unknown): boolean {
   if (!Array.isArray(labels)) return false;

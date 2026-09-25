@@ -25,11 +25,13 @@ import { projectIssuesQueryOptions, type IssueInfo, type IssueAttentionReason } 
 
 type RcaAgentReport = components["schemas"]["RcaAgentReport"];
 
-// Seen state is per signed-in account: a shared browser must not hand one
-// user's seen items to the next. Email is the only stable identifier the
-// session carries (see agent-chat/currentUser.ts).
-function seenStorageKey(accountId: string): string {
-  return `aep:issues:attentionSeen:${accountId}`;
+// Seen state is per signed-in account and active organization: a shared
+// browser must not hand one user's seen items to the next, and item ids
+// (project, issue number, reason) repeat across organizations. Email is the
+// only stable account identifier the session carries (see
+// agent-chat/currentUser.ts).
+function seenStorageKey(orgHandle: string | null, accountId: string): string {
+  return `aep:issues:attentionSeen:${orgHandle ?? ""}:${accountId}`;
 }
 
 export type AttentionItem = {
@@ -87,10 +89,11 @@ export function countUnreadAttention(items: AttentionItem[], seenIds: string[]):
 }
 
 export function useAttentionUnread(reports: RcaAgentReport[]) {
-  const storageKey = seenStorageKey(useSession().user.email);
+  const session = useSession();
+  const storageKey = seenStorageKey(session.orgHandle, session.user.email);
   const [seen, setSeen] = useState(() => ({ storageKey, ids: readSeen(storageKey) }));
-  // Account changed under a mounted bell: reload that account's seen state
-  // rather than carrying the previous account's in-memory set over. React
+  // Account or org changed under a mounted bell: reload that scope's seen
+  // state rather than carrying the previous one's in-memory set over. React
   // discards this render and re-runs it with the new state before committing.
   if (seen.storageKey !== storageKey) {
     setSeen({ storageKey, ids: readSeen(storageKey) });

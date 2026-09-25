@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -111,11 +112,22 @@ func hasSREAssets(dir string) bool {
 	return true
 }
 
-func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, ns string, assets sreExtensionAssets) error {
+// sreMCPURLPlaceholder is the token remediation/mcp.json carries for the MCP
+// URL. The SRE extension loader validates the URL before it expands env vars,
+// so the placeholder is rendered here rather than left to AEP_MCP_URL; this
+// matches deployments/scripts/setup-observability.sh.
+const sreMCPURLPlaceholder = "${AEP_MCP_URL}"
+
+// renderMCPJSON substitutes the concrete MCP URL for sreMCPURLPlaceholder.
+func renderMCPJSON(mcpJSON, mcpURL string) string {
+	return strings.ReplaceAll(mcpJSON, sreMCPURLPlaceholder, mcpURL)
+}
+
+func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, ns string, assets sreExtensionAssets, mcpURL string) error {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "sre-agent-extensions", Namespace: ns},
 		Data: map[string]string{
-			"mcp.json":   assets.MCPJSON,
+			"mcp.json":   renderMCPJSON(assets.MCPJSON, mcpURL),
 			"CONTEXT.md": assets.Context,
 			"SKILL.md":   assets.SkillMD,
 		},
@@ -132,12 +144,13 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 }
 
 // mountSREAgentRuntime patches the SRE deployment with the extension mount,
-// the Anthropic key file, and the MCP URL. It carries no MCP credential: the
+// the Anthropic key file, and the MCP URL (the same mcpURL rendered into
+// mcp.json by applyExtensionsConfigMap). It carries no MCP credential: the
 // extension loader will not send an Authorization header to the plaintext
 // in-cluster URL, so aep-mcp-server applies the handoff bearer itself (the
 // platform chart's sreHandoff block). The AEP_MCP_TOKEN delete directive
 // removes the unused credential that earlier aectl versions injected.
-func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName string) error {
+func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName, mcpURL string) error {
 	patch := `{
 		"spec": {"template": {"spec": {
 			"volumes": [
@@ -170,7 +183,7 @@ func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, 
 				"env": [
 					{"name": "EXTENSIONS_DIR", "value": "/etc/openchoreo/sre-agent"},
 					{"name": "RCA_LLM_API_KEY_FILE", "value": "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"},
-					{"name": "AEP_MCP_URL", "value": "http://aep-mcp-server.` + sreNamespace + `.svc.cluster.local:3400/mcp"},
+					{"name": "AEP_MCP_URL", "value": "` + mcpURL + `"},
 					{"name": "AEP_MCP_TOKEN", "$patch": "delete"}
 				]
 			}]

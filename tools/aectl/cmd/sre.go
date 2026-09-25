@@ -118,9 +118,12 @@ type sreParams struct {
 	RcaImageRepo, RcaImageTag, RcaPullPolicy, RcaModel        string
 	AdapterRepo, AdapterTag                                   string
 	ObserverHost, RcaHost                                     string
-	// In-cluster handoff wiring (svc DNS, not host.k3d.internal).
-	RcaServiceURL, AEApiURL, AEPApiURL   string
-	AEHandoff, AEAutoDispatch, AEPublish bool
+	// In-cluster handoff wiring (svc DNS, not host.k3d.internal). AEMCPURL is
+	// aep-mcp-server's MCP endpoint (AEApiURL + /mcp), built once and used for
+	// both the rendered remediation mcp.json and the SRE pod's AEP_MCP_URL, so
+	// the two cannot disagree.
+	RcaServiceURL, AEApiURL, AEPApiURL, AEMCPURL string
+	AEHandoff, AEAutoDispatch, AEPublish         bool
 }
 
 func runSreInstall(cmd *cobra.Command, args []string) error {
@@ -160,6 +163,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		AEAutoDispatch:  sreAEAutoDispatch,
 		AEPublish:       sreAEPublishReport,
 	}
+	p.AEMCPURL = p.AEApiURL + "/mcp"
 	// Split on the LAST colon so a registry port (registry:5000/img:tag) is
 	// kept in the repo; image tags never contain a colon.
 	if i := strings.LastIndex(sreAdapterImage, ":"); i > 0 && i < len(sreAdapterImage)-1 {
@@ -235,10 +239,10 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	_ = rolloutRestart(ctx, client, sreObsNamespace, "observer")
 	if sreAEHandoff {
 		ui.Step("Wiring the remediation agent's SRE-agent extensions (mcp.json/CONTEXT.md/skill)")
-		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets); err != nil {
+		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets, p.AEMCPURL); err != nil {
 			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
 		}
-		if err := mountSREAgentRuntime(ctx, client, sreObsNamespace, "ai-rca-agent"); err != nil {
+		if err := mountSREAgentRuntime(ctx, client, sreObsNamespace, "ai-rca-agent", p.AEMCPURL); err != nil {
 			return fmt.Errorf("mount SRE agent runtime: %w", err)
 		}
 		if err := patchConfigMap(ctx, client, sreObsNamespace, "rca-agent-config", map[string]string{
@@ -251,7 +255,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		_ = rolloutRestart(ctx, client, sreObsNamespace, "ai-rca-agent")
-		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s/mcp, assets=%s)", sreAEAutoDispatch, p.AEApiURL, assets.RootHint))
+		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s, assets=%s)", sreAEAutoDispatch, p.AEMCPURL, assets.RootHint))
 	} else {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}

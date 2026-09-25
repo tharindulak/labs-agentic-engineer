@@ -18,7 +18,7 @@ agent adoption.
   into `deployments/.env` and `docker-compose.yml` wires both services from
   it. On Kubernetes, the platform chart's `sreHandoff.enabled=true` wires both
   from the `aep/aep-mcp-token` OpenBao path and restricts `aep-mcp-server`
-  ingress to the SRE agent's namespace. See
+  ingress to the SRE agent's pods in its namespace. See
   `docs/developer-guide/sre-handoff-security.md`.
 - `remediation/CONTEXT.md` is the unconditional handoff trigger.
 - `remediation/skills/coding-agent-handoff/` is not stored here. It is mounted

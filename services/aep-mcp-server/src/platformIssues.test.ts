@@ -45,6 +45,11 @@ test("AE's own planned work is marked as the spec record it is", () => {
   // The note has to say the thing the model got wrong, not merely that the
   // issue is AE's — "it is deliberate" was the whole basis of the bad decline.
   assert.match(PLATFORM_ISSUE_NOTE, /never grounds for ruling out a code change/);
+  // A record of the original plan, not an instruction: telling the agent to
+  // keep the planned behaviour would contradict the sentence above whenever
+  // the incident calls for changing it.
+  assert.match(PLATFORM_ISSUE_NOTE, /original plan/);
+  assert.doesNotMatch(PLATFORM_ISSUE_NOTE, /preserv/i);
   assert.equal(annotated?.["Title"], platformIssue.Title, "the record must survive intact");
 });
 

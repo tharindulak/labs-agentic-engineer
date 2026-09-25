@@ -248,11 +248,17 @@ else
 fi
 # The SRE extension sends no Authorization header; it relies on the
 # AEP_MCP_TOKEN-derived fallback bearer (docker-compose.yml). A .env written
-# before setup-aep.sh generated that token leaves the handoff unauthenticated.
+# before setup-aep.sh generated that token leaves the handoff unauthenticated;
+# an explicit empty `AEP_MCP_TOKEN=` is the operator disabling it on purpose.
 if ! grep -qE '^AEP_MCP_TOKEN=.+' "$DEPLOY_DIR/.env" 2>/dev/null && [ -z "${AEP_MCP_TOKEN:-}" ]; then
-    echo "⚠️  AEP_MCP_TOKEN is not set in deployments/.env — SRE handoff calls will get 401."
-    echo "    Re-run scripts/setup-aep.sh, or add a random value, e.g.:"
-    echo "    echo \"AEP_MCP_TOKEN=\$(openssl rand -hex 32)\" >> deployments/.env && docker compose up -d aep-api aep-mcp-server"
+    if grep -qE '^AEP_MCP_TOKEN=$' "$DEPLOY_DIR/.env" 2>/dev/null; then
+        echo "ℹ️  AEP_MCP_TOKEN is empty in deployments/.env — the SRE handoff shortcut is disabled"
+        echo "    (SRE handoff calls will get 401). To enable it, delete that line and re-run scripts/setup-aep.sh."
+    else
+        echo "⚠️  AEP_MCP_TOKEN is not set in deployments/.env — SRE handoff calls will get 401."
+        echo "    Re-run scripts/setup-aep.sh, or add a random value, e.g.:"
+        echo "    echo \"AEP_MCP_TOKEN=\$(openssl rand -hex 32)\" >> deployments/.env && docker compose up -d aep-api aep-mcp-server"
+    fi
 fi
 
 # 7c. Converge AE-managed credentials before checking/restarting SRE.

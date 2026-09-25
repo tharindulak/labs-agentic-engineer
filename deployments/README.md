@@ -111,7 +111,8 @@ it finds it.
 `setup-aep.sh` also generates a random `AEP_MCP_TOKEN` into `.env` (preserved
 across re-runs). Compose hands it to `aep-api` (`SRE_HANDOFF_TOKEN`) and
 `aep-mcp-server` (`AEP_MCP_DEFAULT_BEARER`) for the SRE handoff; an empty value
-disables the handoff shortcut. See
+(`AEP_MCP_TOKEN=`, also preserved) disables the handoff shortcut, and deleting
+the line before a re-run rotates it. See
 `docs/developer-guide/sre-handoff-security.md`.
 
 ## Compose architecture (host-side compose ↔ in-cluster OC)

@@ -129,13 +129,13 @@ const escalatedIssue: IssueInfo = {
   attentionReason: "escalated",
 };
 
-function session(email: string): Session {
-  return { user: { name: email, email }, orgHandle: null, signOut: () => {} };
+function session(email: string, orgHandle: string | null): Session {
+  return { user: { name: email, email }, orgHandle, signOut: () => {} };
 }
 
-function renderAttention(email: string, reports: RcaAgentReport[] = [report(3)]) {
+function renderAttention(email: string, reports: RcaAgentReport[] = [report(3)], orgHandle: string | null = "acme") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  let current = session(email);
+  let current = session(email, orgHandle);
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
@@ -148,7 +148,11 @@ function renderAttention(email: string, reports: RcaAgentReport[] = [report(3)])
     ...rendered,
     queryClient,
     switchUser(nextEmail: string) {
-      current = session(nextEmail);
+      current = session(nextEmail, current.orgHandle);
+      rendered.rerender();
+    },
+    switchOrg(nextOrgHandle: string | null) {
+      current = session(current.user.email, nextOrgHandle);
       rendered.rerender();
     },
   };
@@ -176,6 +180,22 @@ describe("useAttentionUnread", () => {
     const alice = renderAttention("alice@example.com");
     await waitFor(() => expect(alice.result.current.items).toHaveLength(1));
     expect(alice.result.current.unreadCount).toBe(0);
+  });
+
+  it("keeps seen state per active organization", async () => {
+    mockGET.mockResolvedValue({ data: [escalatedIssue], error: undefined });
+    const { result, switchOrg } = renderAttention("alice@example.com");
+
+    await waitFor(() => expect(result.current.unreadCount).toBe(1));
+    act(() => result.current.markAllSeen());
+    expect(result.current.unreadCount).toBe(0);
+
+    // The same project name and issue number in another org is a different issue.
+    switchOrg("globex");
+    expect(result.current.unreadCount).toBe(1);
+
+    switchOrg("acme");
+    expect(result.current.unreadCount).toBe(0);
   });
 
   it("polls the project issue lists on the bell's cadence while mounted", async () => {

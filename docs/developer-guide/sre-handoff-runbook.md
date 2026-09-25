@@ -101,7 +101,9 @@ The script:
 2. uses the hotfix SRE image by default;
 3. wires alert suppression (`ALERT_SUPPRESSION_WINDOW=1h`);
 4. mounts the AE-owned remediation extension into the SRE pod;
-5. wires `RCA_LLM_API_KEY_FILE` to the optional Anthropic secret file; and
+5. wires `RCA_LLM_API_KEY_FILE` to the Anthropic secret file, whose volume is
+   required when `AE_HANDOFF=true` (the default), so the SRE pod waits for the
+   projected secret, and optional when `AE_HANDOFF=false`; and
 6. keeps the MCP bearer token in runtime configuration, not in the image.
 
 Fast local assertions:
@@ -147,8 +149,10 @@ The command reconciles the observability namespace, ExternalSecrets, charts,
 SRE extension ConfigMap, and SRE deployment mounts. It reads the extension
 assets from an AE repository checkout: the one containing the working
 directory, or the one passed as `--assets-root <checkout>`. It resolves them
-before changing the cluster. It uses the same extension layout as local setup
-and patches the SRE deployment with:
+before changing the cluster. It uses the same extension layout as local setup,
+renders the MCP URL below into `remediation/mcp.json` in the
+`sre-agent-extensions` ConfigMap (the extension loader validates that URL
+before it expands env vars), and patches the SRE deployment with:
 
 - `EXTENSIONS_DIR=/etc/openchoreo/sre-agent`
 - `RCA_LLM_API_KEY_FILE=/etc/rca-agent/anthropic/RCA_LLM_API_KEY`
@@ -157,8 +161,9 @@ and patches the SRE deployment with:
 The SRE pod gets no MCP credential. Authentication comes from the platform
 chart: install it with `sreHandoff.enabled=true` (after seeding
 `aep/aep-mcp-token` in OpenBao) so `aep-mcp-server` applies the shared handoff
-bearer and only the observability namespace can reach it. See
-`sre-handoff-security.md`.
+bearer and only the SRE agent pods in the observability namespace
+(`sreHandoff.callerNamespace` and `sreHandoff.callerPodLabels`) can reach it.
+See `sre-handoff-security.md`.
 
 Focused check:
 
