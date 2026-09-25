@@ -61,6 +61,7 @@ type ConfigProjection struct {
 	CodingAgent CodingAgentProjection  `json:"codingAgent"` // always present
 	GitProvider *GitProviderProjection `json:"gitProvider"` // null = not connected
 	IDP         IDPProjection          `json:"idp"`         // always present
+	SreLLM      *SreLlmProjection      `json:"sreLlm"`      // null = not configured
 }
 
 // LLMProjection carries the org's LLM connection status. Fields are carried 1:1
@@ -77,6 +78,20 @@ type LLMProjection struct {
 	KeyPrefix       string     `json:"keyPrefix"`
 	KeyLast4        string     `json:"keyLast4"`
 	Status          string     `json:"status"`
+	ConnectedAt     time.Time  `json:"connectedAt"`
+	LastValidatedAt *time.Time `json:"lastValidatedAt,omitempty"`
+	ValidationError *string    `json:"validationError,omitempty"`
+}
+
+// SreLlmProjection carries the platform's SRE agent LLM connection status.
+// Unlike LLMProjection this is platform-wide, not per-org — there is exactly
+// one row regardless of which organization's session reads or writes it.
+type SreLlmProjection struct {
+	Provider        string     `json:"provider" enum:"anthropic,openai"`
+	Model           string     `json:"model"`
+	KeyPrefix       string     `json:"keyPrefix"`
+	KeyLast4        string     `json:"keyLast4"`
+	Status          string     `json:"status"` // matches LLMProjection's shape; always "active" while the row exists (see AnthropicProjection's own comment on why disconnect deletes rather than flips status)
 	ConnectedAt     time.Time  `json:"connectedAt"`
 	LastValidatedAt *time.Time `json:"lastValidatedAt,omitempty"`
 	ValidationError *string    `json:"validationError,omitempty"`
@@ -183,6 +198,7 @@ type ConfigPatch struct {
 	CodingAgent patch.Field[CodingAgentWrite] `json:"codingAgent,omitempty"`
 	GitProvider patch.Field[GitProviderWrite] `json:"gitProvider,omitempty"`
 	IDP         patch.Field[IDPWrite]         `json:"idp,omitempty"`
+	SreLLM      patch.Field[SreLlmWrite]      `json:"sreLlm,omitempty"`
 }
 
 // CodingAgentWrite is the codingAgent section's write shape, and the ONE section
@@ -212,6 +228,18 @@ type CodingAgentWrite struct {
 type LLMWrite struct {
 	Kind   string `json:"kind" enum:"anthropic" required:"true"`
 	APIKey string `json:"apiKey" required:"true"`
+}
+
+// SreLlmWrite is the sreLlm section's write shape: a platform-wide LLM
+// config for the SRE agent, distinct from llm/codingLlm — provider is
+// explicit here (unlike LLMWrite, which is always "anthropic") because the
+// SRE agent genuinely supports either provider via RCA_MODEL_NAME's prefix.
+// null clears the section back to "not configured" (there is no override
+// semantics to preserve, unlike codingLlm).
+type SreLlmWrite struct {
+	Provider string `json:"provider" enum:"anthropic,openai" required:"true"`
+	Model    string `json:"model" required:"true"`
+	APIKey   string `json:"apiKey" required:"true"` // write-only, probed, never echoed
 }
 
 // GitProviderWrite is the gitProvider section's write shape. Mode is pat-only:

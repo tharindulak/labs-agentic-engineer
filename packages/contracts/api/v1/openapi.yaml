@@ -4314,6 +4314,24 @@ components:
           - apiKey
           type: object
           nullable: true
+        sreLlm:
+          additionalProperties: false
+          properties:
+            apiKey:
+              type: string
+            model:
+              type: string
+            provider:
+              enum:
+              - anthropic
+              - openai
+              type: string
+          required:
+          - provider
+          - model
+          - apiKey
+          type: object
+          nullable: true
       type: object
     ConfigProjection:
       x-go-type: orgconfig.ConfigProjection
@@ -4337,12 +4355,17 @@ components:
           allOf:
           - $ref: '#/components/schemas/LLMProjection'
           nullable: true
+        sreLlm:
+          allOf:
+          - $ref: '#/components/schemas/SreLlmProjection'
+          nullable: true
       required:
       - llm
       - codingLlm
       - codingAgent
       - gitProvider
       - idp
+      - sreLlm
       type: object
     ConfigValue:
       additionalProperties: false
@@ -5673,6 +5696,41 @@ components:
       required:
       - kind
       - credentialKind
+      - keyPrefix
+      - keyLast4
+      - status
+      - connectedAt
+      type: object
+    SreLlmProjection:
+      x-go-type: orgconfig.SreLlmProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      properties:
+        connectedAt:
+          format: date-time
+          type: string
+        keyLast4:
+          type: string
+        keyPrefix:
+          type: string
+        lastValidatedAt:
+          format: date-time
+          type: string
+        model:
+          type: string
+        provider:
+          enum:
+          - anthropic
+          - openai
+          type: string
+        status:
+          type: string
+        validationError:
+          type: string
+      required:
+      - provider
+      - model
       - keyPrefix
       - keyLast4
       - status
