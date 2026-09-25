@@ -24,7 +24,7 @@ import { featureScenarios, parseFeatureFile } from "./parseFeature.js";
 
 const __DIRNAME = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__DIRNAME, "../../../..");
-const CHECKER = join(REPO, "skills/acceptance-run/scripts/check-report.mjs");
+const CHECKER = join(REPO, "skills/validation-task/scripts/check-report.mjs");
 
 /**
  * The checker's own `scanFeature`, loaded from the shipped file rather than

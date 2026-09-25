@@ -20,7 +20,7 @@
  * Reads `specs/validation/acceptance/<slug>.feature` into the tree the view renders.
  *
  * A LINE SCANNER, not a Gherkin parser, and deliberately the same one the run
- * is checked with — `skills/acceptance-run/scripts/check-report.mjs`. That file
+ * is checked with — `skills/validation-task/scripts/check-report.mjs`. That file
  * ships inside the skill and has no dependencies because it runs in a
  * validation pod; this one has none because `@cucumber/gherkin` is a parser
  * generator's worth of bytes to put in a console bundle for a grammar whose

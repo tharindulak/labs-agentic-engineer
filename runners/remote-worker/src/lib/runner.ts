@@ -53,7 +53,13 @@ import { stagedSecretValues, webSearchDenial } from "./websearch_dlp.js";
 import { allowsWriteOutsideProject } from "./workspace_guard.js";
 import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
 import { webFetchDenial } from "./webfetch_guard.js";
-import { SKILLS_MIRROR_DIR, requireWorkflowBodies } from "./skills_presence.js";
+import {
+  CODING_WORKFLOW_SKILL,
+  SKILLS_MIRROR_DIR,
+  VALIDATION_WORKFLOW_SKILL,
+  listMirroredSkills,
+  requireWorkflowBodies,
+} from "./skills_presence.js";
 import { skillsNotice, writePromptAppendix } from "./run_context.js";
 import {
   DENIED_CAPABILITIES,
@@ -146,7 +152,7 @@ export function promptWithProjectRoot(prompt: string, workspaceRoot: string, con
  * the lead does, and a developer who clones the project repo can read them too.
  */
 export function contractReferencePath(workspace: string): string {
-  return path.join(mirrorDir(workspace), "aep", "references", "component-contract.md");
+  return path.join(mirrorDir(workspace), CODING_WORKFLOW_SKILL, "references", "component-contract.md");
 }
 
 /**
@@ -220,21 +226,21 @@ export interface McpAuthOpts {
  * The skills a run is steered by whatever its design says — read from the mirror
  * like every other skill, but not optional and not the design's to choose.
  *
- * `aep` is the run's procedure. `aep-validation` REPLACES its run section for a
- * validation task, and a validation run cannot afford the agent declining a
- * description-triggered load of the workflow it is supposed to follow.
+ * Exactly one per task kind, never layered: `aep` for a coding run,
+ * `validation-task` for a validation run (ADR-0037).
  *
  * Everything else a component needs is a `skillsPinned` entry in its
  * `design.json`, and that is the design's call. This list is not: no design
- * decides whether a coding run follows the coding workflow.
+ * decides whether a run follows its workflow, and a run cannot afford the agent
+ * declining a description-triggered load of it.
  *
  * `agent-browser` is deliberately absent. It carries the browser mechanics a
- * validation run reaches for, and `acceptance-run` names it — a description
+ * validation run reaches for, and `validation-task` names it — a description
  * -triggered load is the right shape for mechanics a run may or may not need,
  * and paying for its body on every turn of every validation run is not.
  */
 export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] {
-  return taskKind === "validation" ? ["aep", "acceptance-run"] : ["aep"];
+  return taskKind === "validation" ? [VALIDATION_WORKFLOW_SKILL] : [CODING_WORKFLOW_SKILL];
 }
 
 /**
@@ -243,7 +249,7 @@ export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] 
  * The allowlist gates the Skill tool, so leaving `agent-browser` out of the
  * always-on set is only half a decision: absent from BOTH lists it is not
  * deferred, it is unreachable. That is what shipped — a validation run passed an
- * empty allowlist, so the load `acceptance-run` instructs could never succeed
+ * empty allowlist, so the load `validation-task` instructs could never succeed
  * and the agent grepped the mirror's files by hand instead.
  *
  * Named rather than "the whole mirror" as an implementation run gets: that run
@@ -256,6 +262,15 @@ export function alwaysOnSkills(taskKind: DispatchRequest["taskKind"]): string[] 
  */
 export function onDemandSkills(taskKind: DispatchRequest["taskKind"]): string[] {
   return taskKind === "validation" ? ["agent-browser"] : [];
+}
+
+/**
+ * An implementation run's allowlist: the whole mirror (see PerTaskSkills) minus
+ * the validation workflow, which rides the same mirror because `audience`
+ * cannot say "validation only" (ADR-0037).
+ */
+export async function implementationSkills(workspace: string): Promise<string[]> {
+  return (await listMirroredSkills(workspace)).filter((name) => name !== VALIDATION_WORKFLOW_SKILL);
 }
 
 /**
@@ -315,7 +330,7 @@ export async function startCodingRun(
   };
 
   // Where the skills are, for the one skill that has to name a file inside them:
-  // `acceptance-run` runs the platform's report checker rather than a copy the
+  // `validation-task` runs the platform's report checker rather than a copy the
   // repo committed. The runner is still the only layer that knows the path.
   childEnv.AEP_SKILLS_DIR = mirrorDir(layout.workspace);
   const skills = perTaskSkills?.availableSkillNames ?? [];

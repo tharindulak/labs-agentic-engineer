@@ -40,7 +40,7 @@ type ComponentEndpoint struct {
 // endpoint URLs, and nothing else.
 //
 // No oracle path rides here: this side only ever answered AcceptanceDirPath and
-// the acceptance-run skill walks it without being told (ADR-0029).
+// the validation-task skill walks it without being told (ADR-0029).
 //
 // No test account rides here, not even a username. The build publishes the whole
 // roster — logins included — on the roles gate ticket, and the agent reads it

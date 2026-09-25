@@ -7882,8 +7882,9 @@ components:
           type: string
         required:
           description: >-
-            True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `acceptance-run` for a validation task).
+            True when the runner reads this skill as a run's workflow and cannot
+            start without it: `aep` for a coding run, `validation-task` for a
+            validation run.
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the
@@ -7923,8 +7924,9 @@ components:
           type: string
         required:
           description: >-
-            True when the coding runner reads this skill on every run and cannot
-            start without it (`aep`, and `acceptance-run` for a validation task).
+            True when the runner reads this skill as a run's workflow and cannot
+            start without it: `aep` for a coding run, `validation-task` for a
+            validation run.
             The mirror only copies enabled skills, so disabling one of these would
             take the procedure away from every build in the org — `PATCH
             /skills/{name}` refuses it with 409. The console renders the

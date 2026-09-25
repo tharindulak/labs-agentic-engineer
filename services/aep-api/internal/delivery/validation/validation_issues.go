@@ -286,8 +286,8 @@ func plural(n int, noun string) string {
 }
 
 // renderScope builds the human markdown body of the validation issue — the
-// consumer contract the acceptance-run skill reads. Deployed endpoints and test
-// credentials are deliberately absent: the runner fetches endpoints from the
+// task's inputs. The procedure is the validation-task skill's (ADR-0037).
+// Deployed endpoints and test credentials are deliberately absent: the runner fetches endpoints from the
 // secure validation-context endpoint, and the agent reads a test user's login
 // from the roles gate ticket in this same milestone. Mirrors
 // scripts/create-validation-issue.mjs renderBody minus the Deployed-endpoints
@@ -328,12 +328,7 @@ func renderScope(files []AcceptanceCriteriaFile, sum acceptanceSummary) string {
 		"Per-component design docs: `specs/design/components/<name>/design.json` (OpenAPI contract, when present, alongside as `openapi.yaml`); system design: `specs/design/design.cell` (architecture), `specs/design/domain-model.md` (entities), `specs/design/flows/` (key flows).",
 		"",
 		"## Report",
-		fmt.Sprintf("- Commit `%s` — one entry per scenario in the feature files, including the ones you could not drive.", ReportFilePath),
-		"- Check it before opening the PR: `node \"$AEP_SKILLS_DIR/acceptance-run/scripts/check-report.mjs\" \"$(git rev-parse --show-toplevel)\"`. It exits 2 if a scenario has no entry, if a `passed` is not backed by a command that could have said no, or if a `failed` does not record what the page was doing when it failed.",
-		"- Post a summary comment on this issue when done.",
-		"",
-		"---",
-		"Open one PR whose body includes `Validates #<this issue's number>` so the platform links it back. `Validates` is deliberately NOT one of GitHub's closing keywords: the platform owns this task's close, so that merging the PR links it without ending the task. One PR; the report only.",
+		fmt.Sprintf("Commit `%s` — one entry per scenario in the feature files, including the ones you could not drive.", ReportFilePath),
 	)
 
 	return strings.TrimRight(b.String(), "\n")

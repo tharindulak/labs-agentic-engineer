@@ -4,7 +4,8 @@
 [ADR-0010](../../runners/remote-worker/design/decisions/ADR-0010-a-validation-report-is-an-accumulation.md)
 (the report's shape) and the Playwright half of
 [ADR-0012](ADR-0012-one-debian-runner-image-for-both-task-kinds.md) (what the image carries a browser
-for).
+for). The runner skill named below as `acceptance-run` is `validation-task` since
+[ADR-0037](ADR-0037-a-validation-run-reads-one-workflow.md).
 
 The experiment this began as has concluded, and the compiled path is **removed**: the
 `validation-criteria` skill, the JSON oracle it wrote, and the console viewer that rendered it. The

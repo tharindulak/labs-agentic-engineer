@@ -266,7 +266,7 @@ test("mock-verification walks and repairs a line at a time", () => {
     "## 1 · Stand it up",
     "## 2 · Plan",
     // The dev server — process group, free port, browser close — is the skill's
-    // script, reached through the runner-stamped path like acceptance-run's
+    // script, reached through the runner-stamped path like validation-task's
     // report generator. The walker never re-derives it.
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" up',
     'bash "$AEP_SKILLS_DIR/mock-verification/scripts/walk.sh" down',
@@ -539,7 +539,7 @@ test("the mirror carries the coding-audience skills, composed for the mode", asy
 
     // The runner's own skills arrive the SAME way every other coding skill does.
     // There is no plugin any more, so if they are not here they reach no session.
-    for (const name of ["aep", "acceptance-run", "agent-browser"]) {
+    for (const name of ["aep", "validation-task", "agent-browser"]) {
       assert.ok(fs.existsSync(path.join(skills, name, "SKILL.md")), `mirror is missing ${name}`);
     }
     // Design-only skills stay out: their descriptions would sit in a coding
@@ -637,7 +637,7 @@ test("a skill's references, assets and scripts come along", async () => {
       // The false-pass guard. It ships INSIDE the skill precisely so the mirror
       // carries it into the project clone — a validation pod has no checkout of
       // this repo, so a guard left at the repo root is a guard that never runs.
-      path.join("acceptance-run", "scripts", "check-report.mjs"),
+      path.join("validation-task", "scripts", "check-report.mjs"),
       // Mock mode is the harness (two verbatim templates plus the reference
       // that wires them, under react-webapp) and the authorization half it
       // imports by path (the gateway layer, the session substitute and the
@@ -666,7 +666,7 @@ test("a skill's references, assets and scripts come along", async () => {
 // mirror). `/app/plugin` was such a path, and it stopped existing when the plugin
 // did; the report generator was still being invoked through it.
 test("no library skill hardcodes a runner path", () => {
-  for (const skill of ["aep", "acceptance-run", "agent-browser", "mock-verification"]) {
+  for (const skill of ["aep", "validation-task", "agent-browser", "mock-verification"]) {
     const body = fs.readFileSync(path.join(LIBRARY, skill, "SKILL.md"), "utf8");
     assert.ok(!body.includes("/app/plugin"), `${skill} names the retired /app/plugin`);
     assert.ok(

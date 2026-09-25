@@ -42,7 +42,7 @@ import {
 } from "../src/mocks/fixtures/validation";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const CHECKER = join(REPO, "skills/acceptance-run/scripts/check-report.mjs");
+const CHECKER = join(REPO, "skills/validation-task/scripts/check-report.mjs");
 
 let dir: string | undefined;
 afterEach(() => {

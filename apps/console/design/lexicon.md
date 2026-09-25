@@ -1102,7 +1102,7 @@ word here.
 
 **Taken verbatim from `report.json`, title-cased, and that is the decision.**
 There is no mapping table, so there is no fifth vocabulary to fall out of step
-with `report.go`, the run's checker, the `acceptance-run` skill and ADR-0029 —
+with `report.go`, the run's checker, the `validation-task` skill and ADR-0029 —
 and a word the console has never heard of renders as itself rather than as
 something wrong. It is the same call the Go verdict ladder makes for an
 unrecognised outcome: count it as a gap, never as coverage.

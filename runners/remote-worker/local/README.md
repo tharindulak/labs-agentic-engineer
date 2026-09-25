@@ -51,7 +51,7 @@ The prompt must say "validation task" and point at an issue labelled
 `aep` + `validation` whose body follows the validation issue contract
 (criteria file path, Deployed endpoints table, test layout, report
 requirements) — see `scripts/create-validation-issue.mjs` at the repo
-root for the interim issue generator. The `acceptance-run` skill drives
+root for the interim issue generator. The `validation-task` skill drives
 the rest.
 
 ## Testing a custom task

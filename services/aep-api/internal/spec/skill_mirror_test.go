@@ -619,7 +619,7 @@ func TestRealLibrary_RunnerSkillsAreCodingAudienceAndMirrored(t *testing.T) {
 		enabled = append(enabled, sk)
 	}
 	mirror := desiredMirror(enabled, nil)
-	for _, name := range []string{"aep", "acceptance-run", "agent-browser"} {
+	for _, name := range []string{"aep", "validation-task", "agent-browser"} {
 		if _, ok := mirror[claudeSkillsDir+"/"+name+"/SKILL.md"]; !ok {
 			t.Errorf("%s is absent from the mirror — a dispatched run would not receive it", name)
 		}
@@ -630,12 +630,12 @@ func TestRealLibrary_RunnerSkillsAreCodingAudienceAndMirrored(t *testing.T) {
 		t.Error("aep/references/component-contract.md is absent from the mirror — fan-out subagents get a dead path")
 	}
 	// A skill's scripts/ travel too, not just its references/ — proving References
-	// is not refs-only. Asserted on the acceptance run's report checker because
+	// is not refs-only. Asserted on the validation task's report checker because
 	// that is the one where a miss is silent: a validation pod has no checkout of
 	// this repo, so a guard that does not ride the mirror never runs, and the run
 	// goes green on a report nothing held to its contract.
 	for _, rel := range []string{
-		"/acceptance-run/scripts/check-report.mjs",
+		"/validation-task/scripts/check-report.mjs",
 		"/mock-verification/scripts/walk.sh",
 	} {
 		if _, ok := mirror[claudeSkillsDir+rel]; !ok {

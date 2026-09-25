@@ -259,7 +259,7 @@ vanish from a run's record.
 ## Why a line scanner and not `@cucumber/gherkin`
 
 `parseFeature.ts` is deliberately the same scanner the run is checked with
-(`skills/acceptance-run/scripts/check-report.mjs`). That file has no dependencies
+(`skills/validation-task/scripts/check-report.mjs`). That file has no dependencies
 because it runs in a validation pod; this one has none because a parser
 generator is a lot of bytes to put in a console bundle for a grammar whose whole
 surface here is `Feature` → `Rule` → `Scenario`.

@@ -29,10 +29,6 @@ open, are the record of this cycle — not the working tree.
 **A `git` or `gh` command that fails to authenticate is a platform fault, not an
 obstacle to work around.** Say so in one line and stop the run. 
 
-> **Validation runs**: if your prompt says this is a **validation task** and
-> points at a single validation issue, the `acceptance-run` skill's workflow
-> REPLACES **The run** below — load it. Everything else here still applies.
-
 ## This skill, and the stack skills
 
 This is the **umbrella** skill. **The run** below is the loop over the issue set
