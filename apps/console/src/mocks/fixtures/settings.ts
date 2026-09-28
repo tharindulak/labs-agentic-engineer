@@ -24,7 +24,6 @@ type GitProviderProjection = components["schemas"]["GitProviderProjection"];
 type LLMProjection = components["schemas"]["LLMProjection"];
 type LLMFormatOption = components["schemas"]["LLMFormatOption"];
 type AgentRuntime = components["schemas"]["AgentRuntime"];
-type SreLlmProjection = components["schemas"]["SreLlmProjection"];
 type SkillDetailBody = components["schemas"]["SkillDetailBody"];
 type SkillUpdate = components["schemas"]["SkillUpdate"];
 type ApiError = components["schemas"]["Error"];
@@ -197,17 +196,6 @@ export const llmOllamaFixture: LLMProjection = {
     generatedAgents: true,
     sreAgent: false,
   },
-};
-
-// Platform-wide and independent of `llmConnectedFixture` — the SRE agent's
-// key/provider/model is its own setting, not an override on the org key.
-export const sreLlmConnectedFixture: SreLlmProjection = {
-  provider: "openai",
-  model: "gpt-4o-mini",
-  keyPrefix: "sk-test-abcd",
-  keyLast4: "wxyz",
-  status: "active",
-  connectedAt: "2026-08-06T09:41:00Z",
 };
 
 // When the "disconnected" scenario's connection was removed.

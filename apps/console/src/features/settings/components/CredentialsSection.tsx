@@ -20,7 +20,6 @@ import { Alert, Box, CircularProgress } from "@wso2/oxygen-ui";
 import { useConfig } from "../api/queries";
 import { AiAgentsCard } from "./AiAgentsCard";
 import { GitHubCredentialCard } from "./GitHubCredentialCard";
-import { SreAgentLlmCard } from "./SreAgentLlmCard";
 
 export function CredentialsSection() {
   const { data, isLoading, isError, error } = useConfig();
@@ -41,9 +40,6 @@ export function CredentialsSection() {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <GitHubCredentialCard gitProvider={data.gitProvider} />
       <AiAgentsCard config={data} />
-      {/* Platform-wide, and independent of the org's model connection above —
-          the SRE agent supports either provider, unlike the coding agent. */}
-      <SreAgentLlmCard sreLlm={data.sreLlm} />
     </Box>
   );
 }

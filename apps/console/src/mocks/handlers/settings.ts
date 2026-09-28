@@ -99,8 +99,8 @@ let llmDisconnectedAt: string | null = null;
 // `subscription` is the Claude subscription coding runs bill (null = they
 // bill the connection's key).
 let agents: AgentsProjection = { ...agentsDefaultsFixture };
-// Platform-wide and independent of `llm`/`agents` — not an override on
-// either, so it is never cascaded when the org connection is cleared.
+// The org's SRE model connection: its own endpoint and key, so it is never
+// cascaded when the org connection is cleared.
 let sreLlm: SreLlmProjection | null = null;
 let skills: SkillDetailBody[] = [];
 let skillUpdates: SkillUpdate[] = [];
@@ -253,6 +253,8 @@ function configProjection(): ConfigProjection {
     agents,
     llmFormats: llmFormatsFor(agents.availableRuntimes),
     sreLlm,
+    // The mock server does not push the SRE agent's configuration.
+    sreAgent: null,
     idp: {
       kind: "platform",
       issuer: "https://idp.aep.local",
@@ -537,13 +539,18 @@ export const settingsHandlers = [
       if (body.sreLlm === null) {
         sreLlm = null;
       } else {
+        // Patched field by field over the saved connection, as the server does.
+        const baseURL = (body.sreLlm.baseURL ?? sreLlm?.baseURL ?? "").replace(/\/+$/, "");
+        const host = hostOf(baseURL);
+        const now = new Date().toISOString();
         sreLlm = {
-          provider: body.sreLlm.provider,
-          model: body.sreLlm.model,
-          keyPrefix: body.sreLlm.apiKey.slice(0, 13),
-          keyLast4: body.sreLlm.apiKey.slice(-4),
-          status: "active",
-          connectedAt: new Date().toISOString(),
+          baseURL,
+          host,
+          model: body.sreLlm.model ?? sreLlm?.model ?? "",
+          keyPreview: body.sreLlm.apiKey ? keyPreview(body.sreLlm.apiKey) : (sreLlm?.keyPreview ?? ""),
+          connectedAt: sreLlm !== null && sreLlm.host === host ? sreLlm.connectedAt : now,
+          updatedAt: now,
+          updatedBy: "dev@acme.example",
         };
       }
     }

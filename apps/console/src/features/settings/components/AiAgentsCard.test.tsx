@@ -127,6 +127,7 @@ function config(over: Partial<ConfigProjection> = {}): ConfigProjection {
       publisherClientId: "aep-console",
     },
     sreLlm: null,
+    sreAgent: null,
     ...over,
   };
 }
