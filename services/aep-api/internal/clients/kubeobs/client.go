@@ -28,19 +28,17 @@ package kubeobs
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/httpx"
+	"github.com/wso2/aep/aep-api/internal/clients/kubeauth"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/sreagent"
 )
@@ -55,10 +53,9 @@ const (
 
 // Client speaks to one Kubernetes API.
 type Client struct {
-	baseURL   string
-	bearer    string
-	tokenFile string
-	http      *http.Client
+	baseURL string
+	auth    kubeauth.Authorizer
+	http    *http.Client
 }
 
 // New builds a Client over cfg. BaseURL is required. TokenFile is read on each
@@ -68,15 +65,14 @@ func New(cfg config.KubeAPIConfig) (*Client, error) {
 	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("kubeobs: KubeAPIConfig.BaseURL is required")
 	}
-	tr, err := tlsTransport(cfg.CAFile)
+	tr, err := kubeauth.Transport(cfg.CAFile)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("kubeobs: %w", err)
 	}
 	return &Client{
-		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
-		bearer:    cfg.BearerToken,
-		tokenFile: cfg.TokenFile,
-		http:      &http.Client{Transport: httpx.WrapTransport(tr), Timeout: requestTimeout},
+		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
+		auth:    kubeauth.NewAuthorizer(cfg.BearerToken, cfg.TokenFile),
+		http:    &http.Client{Transport: httpx.WrapTransport(tr), Timeout: requestTimeout},
 	}, nil
 }
 
@@ -192,9 +188,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any, sensi
 	if in != nil {
 		req.Header.Set("Content-Type", mergePatch)
 	}
-	auth, err := c.authorization()
+	auth, err := c.auth.Header()
 	if err != nil {
-		return err
+		return fmt.Errorf("kubeobs: %w", err)
 	}
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
@@ -252,44 +248,6 @@ func statusMessage(raw []byte) string {
 		return st.Message[:maxMessage]
 	}
 	return st.Message
-}
-
-func (c *Client) authorization() (string, error) {
-	if c.bearer != "" {
-		return "Bearer " + c.bearer, nil
-	}
-	if c.tokenFile == "" {
-		return "", nil
-	}
-	b, err := os.ReadFile(c.tokenFile)
-	if err != nil {
-		return "", fmt.Errorf("kubeobs: read token file: %w", err)
-	}
-	tok := strings.TrimSpace(string(b))
-	if tok == "" {
-		return "", fmt.Errorf("kubeobs: token file is empty")
-	}
-	return "Bearer " + tok, nil
-}
-
-func tlsTransport(caFile string) (http.RoundTripper, error) {
-	if caFile == "" {
-		return nil, nil
-	}
-	pem, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("kubeobs: read CA file %s: %w", caFile, err)
-	}
-	if len(pem) == 0 {
-		return nil, fmt.Errorf("kubeobs: CA file %s is empty", caFile)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("kubeobs: CA file %s is not valid PEM", caFile)
-	}
-	return &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-	}, nil
 }
 
 type deployment struct {
