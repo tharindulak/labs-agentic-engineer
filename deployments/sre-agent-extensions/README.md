@@ -9,16 +9,15 @@ is the right point to search AE issues and file exactly one AE issue for coding
 agent adoption.
 
 - `remediation/mcp.json` points the remediation agent at `aep-mcp-server`
-  (`${AEP_MCP_URL}`, rendered at deploy time). It deliberately has no
-  `headers` entry: the extension loader will not send credentials to a
-  plaintext URL, and both the local and in-cluster URLs are plaintext.
-  Instead `aep-mcp-server` applies the shared handoff credential itself as
-  `AEP_MCP_DEFAULT_BEARER` (`Bearer <AEP_MCP_TOKEN>`), and `aep-api` verifies
-  it as `SRE_HANDOFF_TOKEN`. The platform chart's `sreHandoff.enabled=true`
-  wires both from the `aep/aep-mcp-token` OpenBao path (locally,
-  `deployments/scripts/setup-sre.sh` seeds it and enables the block) and restricts `aep-mcp-server`
-  ingress to the SRE agent's pods in its namespace. See
-  `docs/developer-guide/sre-handoff-security.md`.
+  (`${AEP_MCP_URL}`, rendered at deploy time) with
+  `Authorization: Bearer ${AEP_MCP_TOKEN}`, which the agent expands from its
+  own env. The extension loader sends headers only to https URLs, so
+  `AEP_MCP_URL` is the https route the platform chart publishes on the
+  OpenChoreo control-plane gateway when `sreAgent.enabled`
+  (`https://<sreAgent.mcpHostname>[:port]/mcp`, `aectl sre install
+  --mcp-hostname`/`--mcp-port`). `AEP_MCP_TOKEN` is the handoff token aep-api
+  mints for `sreAgent.org` and verifies; aep-mcp-server forwards it to aep-api
+  unchanged.
 - `remediation/CONTEXT.md` is the unconditional handoff trigger.
 - `remediation/skills/coding-agent-handoff/` is not stored here. It is mounted
   from `services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md` at deploy

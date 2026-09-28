@@ -77,6 +77,8 @@ var (
 	sreAEPublishReport bool
 	sreObserverHost    string
 	sreRcaHost         string
+	sreMCPHost         string
+	sreMCPPort         int
 	sreAssetsRoot      string
 	sreOrgNamespace    string
 	sreOrgSecretStore  string
@@ -124,6 +126,8 @@ func init() {
 	f.BoolVar(&sreAEPublishReport, "ae-publish-reports", true, "Publish RCA reports to aep-api (console Alerts)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
+	f.StringVar(&sreMCPHost, "mcp-hostname", "aep-mcp.openchoreo.localhost", "aep-mcp-server's https hostname on the control-plane gateway (must match the platform chart's sreAgent.mcpHostname)")
+	f.IntVar(&sreMCPPort, "mcp-port", 8443, "https port of the control-plane gateway listener aep-mcp-server is routed on (k3d publishes 8443)")
 	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions, services/aep-mcp-server/skills); default: search upward from the working directory")
 	f.StringVar(&sreOrgNamespace, "org-namespace", "", "OpenChoreo namespace of the org whose Console-saved model connection key (an Anthropic key) the agent uses (default: config oc.default_org_namespace, else \"default\")")
 	f.StringVar(&sreOrgSecretStore, "org-secret-store", "default", "ClusterSecretStore that resolves the org's secret paths")
@@ -140,15 +144,26 @@ type sreParams struct {
 	SreLlmVaultKey, SreLlmModelName                           string
 	AdapterRepo, AdapterTag                                   string
 	ObserverHost, RcaHost                                     string
-	// In-cluster handoff wiring (svc DNS, not host.k3d.internal). AEMCPURL is
-	// aep-mcp-server's MCP endpoint (AEApiURL + /mcp), built once and used for
-	// both the rendered remediation mcp.json and the SRE pod's AEP_MCP_URL, so
-	// the two cannot disagree.
+	// Handoff wiring. AEApiURL and AEPApiURL are in-cluster Service DNS.
+	// AEMCPURL is aep-mcp-server's MCP endpoint as the agent reaches it
+	// (sreMCPURL), built once and used for both the rendered remediation
+	// mcp.json and the SRE pod's AEP_MCP_URL, so the two cannot disagree.
 	RcaServiceURL, AEApiURL, AEPApiURL, AEMCPURL string
 	AEHandoff, AEAutoDispatch, AEPublish         bool
 	// The org's Console-saved model connection key (sreAnthropicSecretTmpl).
 	OrgSecretStore string
 	AnthropicRef   kvRef
+}
+
+// sreMCPURL is aep-mcp-server's MCP endpoint as the SRE agent reaches it:
+// https through the control-plane gateway (the platform chart's
+// aep-mcp-server HTTPRoute), because the agent's extension loader sends the
+// Authorization header only to https URLs. Port 443 is left implicit.
+func sreMCPURL(host string, port int) string {
+	if port == 443 {
+		return "https://" + host + "/mcp"
+	}
+	return fmt.Sprintf("https://%s:%d/mcp", host, port)
 }
 
 func runSreInstall(cmd *cobra.Command, args []string) error {
@@ -188,7 +203,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		AEPublish:           sreAEPublishReport,
 		OrgSecretStore:      sreOrgSecretStore,
 	}
-	p.AEMCPURL = p.AEApiURL + "/mcp"
+	p.AEMCPURL = sreMCPURL(sreMCPHost, sreMCPPort)
 	// Split on the LAST colon so a registry port (registry:5000/img:tag) is
 	// kept in the repo; image tags never contain a colon.
 	if i := strings.LastIndex(sreAdapterImage, ":"); i > 0 && i < len(sreAdapterImage)-1 {

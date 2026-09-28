@@ -88,10 +88,10 @@ Tracked follow-ups:
   logs-adapter. Mirror to WSO2/GHCR and pin by digest for prod.
 - **NetworkPolicies are partial** (platform-wide gap). The only one is
   `templates/aep-mcp-server/networkpolicy.yaml`, rendered with
-  `sreHandoff.enabled`: while aep-mcp-server applies the shared handoff bearer
-  (`AEP_MCP_DEFAULT_BEARER`), it admits only pods matching
-  `sreHandoff.callerPodLabels` in `sreHandoff.callerNamespace`. With
-  handoff off, `aep-mcp-server:3400` is guarded only by aep-api JWT validation.
+  `sreAgent.enabled`: the SRE agent reaches aep-mcp-server over https through
+  the control-plane gateway (`templates/aep-mcp-server/httproute.yaml`), so the
+  policy admits only `gateway-default`'s proxy pods. With the SRE agent off,
+  `aep-mcp-server:3400` is guarded only by aep-api JWT validation.
 - **OpenSearch** is dev-sized (256M heap, no HA); no global LLM cost cap.
 - Per-org Anthropic key rotation is AE-owned; the SRE pod consumes only the
   mounted `RCA_LLM_API_KEY_FILE`, refreshed through the secret projection path.

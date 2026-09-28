@@ -145,11 +145,9 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 // mountSREAgentRuntime patches the SRE deployment with the extension mount,
 // the key file (the org's Anthropic key, or the platform's dedicated SRE LLM
 // key when sreLlmConfigured), and the MCP URL (the same mcpURL rendered into
-// mcp.json by applyExtensionsConfigMap). It carries no MCP credential: the
-// extension loader will not send an Authorization header to the plaintext
-// in-cluster URL, so aep-mcp-server applies the handoff bearer itself (the
-// platform chart's sreHandoff block). The AEP_MCP_TOKEN delete directive
-// removes the unused credential that earlier aectl versions injected.
+// mcp.json by applyExtensionsConfigMap). It carries no MCP credential, and
+// its AEP_MCP_TOKEN delete directive removes the static handoff bearer that
+// earlier aectl versions injected.
 //
 // The Anthropic key volume is required: a pod that cannot mount the org's key
 // waits for it instead of accepting an alert and failing inside the analysis.

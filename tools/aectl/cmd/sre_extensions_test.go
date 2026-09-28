@@ -30,9 +30,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// testMCPURL is the in-cluster MCP endpoint aectl builds for a "wso2-aep"
-// AEP namespace.
-const testMCPURL = "http://aep-mcp-server.wso2-aep.svc.cluster.local:3400/mcp"
+// testMCPURL is the MCP endpoint aectl builds for its default --mcp-hostname
+// and --mcp-port.
+const testMCPURL = "https://aep-mcp.openchoreo.localhost:8443/mcp"
 
 func TestLoadSREExtensionAssetsFromRepo(t *testing.T) {
 	assets, err := loadSreExtensionAssets("")
@@ -142,6 +142,8 @@ func TestApplyExtensionsConfigMapIsIdempotent(t *testing.T) {
 
 // The loader validates the MCP URL before env expansion, so the ConfigMap must
 // carry the concrete URL, not the ${AEP_MCP_URL} placeholder from the repo.
+// The Authorization header stays a ${AEP_MCP_TOKEN} reference the agent
+// expands from its own env, so the token never lands in the ConfigMap.
 func TestApplyExtensionsConfigMapRendersMCPURL(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
@@ -160,7 +162,8 @@ func TestApplyExtensionsConfigMapRendersMCPURL(t *testing.T) {
 	}
 	var rendered struct {
 		MCPServers map[string]struct {
-			URL string `json:"url"`
+			URL     string            `json:"url"`
+			Headers map[string]string `json:"headers"`
 		} `json:"mcpServers"`
 	}
 	if err := json.Unmarshal([]byte(cm.Data["mcp.json"]), &rendered); err != nil {
@@ -168,6 +171,9 @@ func TestApplyExtensionsConfigMapRendersMCPURL(t *testing.T) {
 	}
 	if got := rendered.MCPServers["ae"].URL; got != testMCPURL {
 		t.Fatalf("mcp.json ae url = %q, want %q", got, testMCPURL)
+	}
+	if got, want := rendered.MCPServers["ae"].Headers["Authorization"], "Bearer ${AEP_MCP_TOKEN}"; got != want {
+		t.Fatalf("mcp.json ae Authorization header = %q, want %q", got, want)
 	}
 	if strings.Contains(cm.Data["mcp.json"], sreMCPURLPlaceholder) {
 		t.Fatalf("mcp.json still carries the placeholder: %s", cm.Data["mcp.json"])
