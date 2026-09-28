@@ -63,6 +63,7 @@ type LLMPatch = components["schemas"]["LLMPatch"];
 type LLMCheck = components["schemas"]["LLMCheck"];
 type LLMCapabilities = components["schemas"]["LLMCapabilities"];
 type SreLlmProjection = components["schemas"]["SreLlmProjection"];
+type SreAgentProjection = components["schemas"]["SreAgentProjection"];
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
 type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 type SkillUpdate = components["schemas"]["SkillUpdate"];
@@ -245,6 +246,21 @@ function importSkill(name: string, source: string): ImportResult {
   };
 }
 
+// This mock server DOES push the SRE agent's configuration, so the row can
+// be exercised without a real cluster: an override always runs; otherwise
+// the org connection runs it when it has the `sreAgent` capability, else
+// there is nothing to run. Real rollout states (`applying`, `failed`) are
+// out of scope for the mock — there is no reconciler here to fail.
+function sreAgentProjection(): SreAgentProjection {
+  if (sreLlm !== null) {
+    return { enabled: true, source: "override", host: sreLlm.host, model: sreLlm.model, status: "running" };
+  }
+  if (llm !== null && llm.capabilities.sreAgent) {
+    return { enabled: true, source: "organization", host: hostOf(llm.baseURL), model: llm.model, status: "running" };
+  }
+  return { enabled: true, source: "none", host: "", model: "", status: "unconfigured" };
+}
+
 function configProjection(): ConfigProjection {
   return {
     gitProvider,
@@ -253,8 +269,7 @@ function configProjection(): ConfigProjection {
     agents,
     llmFormats: llmFormatsFor(agents.availableRuntimes),
     sreLlm,
-    // The mock server does not push the SRE agent's configuration.
-    sreAgent: null,
+    sreAgent: sreAgentProjection(),
     idp: {
       kind: "platform",
       issuer: "https://idp.aep.local",

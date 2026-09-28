@@ -45,6 +45,10 @@ const testState: { isPending: boolean; isError: boolean; error: Error | null } =
 vi.mock("../api/queries", () => ({
   useSaveAiSettings: () => ({ mutate, reset: vi.fn(), ...saveState }),
   useTestConnection: () => ({ mutate: testMutate, reset: vi.fn(), ...testState }),
+  // The SRE agent model row mounts unconditionally (it decides its own
+  // hidden state from `config.sreAgent`); every fixture here leaves it null.
+  useSaveSreModel: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false, error: null }),
+  useClearSreModel: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false, error: null }),
 }));
 
 const { AiAgentsCard } = await import("./AiAgentsCard");
