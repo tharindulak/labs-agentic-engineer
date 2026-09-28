@@ -176,6 +176,7 @@ export const llmConnectedFixture: LLMProjection = {
     imageInput: "yes",
     nativePdf: true,
     generatedAgents: true,
+    sreAgent: false,
   },
 };
 
@@ -194,6 +195,7 @@ export const llmOllamaFixture: LLMProjection = {
     imageInput: "no",
     nativePdf: false,
     generatedAgents: true,
+    sreAgent: false,
   },
 };
 

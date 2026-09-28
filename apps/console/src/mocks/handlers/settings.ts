@@ -349,6 +349,7 @@ function capabilitiesOf(kind: LLMProjection["kind"], host: string, model: string
         : "unknown",
     nativePdf: anthropicApi,
     generatedAgents: true,
+    sreAgent: kind === "openai-compatible",
   };
 }
 

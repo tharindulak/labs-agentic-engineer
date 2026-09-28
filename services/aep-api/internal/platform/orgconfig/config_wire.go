@@ -102,6 +102,7 @@ type LLMCapabilities struct {
 	ImageInput         modelconn.Tristate  `json:"imageInput" enum:"yes,no,unknown"`
 	NativePDF          bool                `json:"nativePdf"`
 	GeneratedAgents    bool                `json:"generatedAgents"`
+	SREAgent           bool                `json:"sreAgent"`
 }
 
 // LLMCapabilitiesFrom projects a connection's capabilities onto the wire.
@@ -112,6 +113,7 @@ func LLMCapabilitiesFrom(c modelconn.Capabilities) LLMCapabilities {
 		ImageInput:         c.ImageInput,
 		NativePDF:          c.NativePDF,
 		GeneratedAgents:    c.GeneratedAgents,
+		SREAgent:           c.SREAgent,
 	}
 }
 
