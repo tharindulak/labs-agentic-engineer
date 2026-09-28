@@ -22,10 +22,13 @@ package organization
 // commit.
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -502,9 +505,22 @@ func TestSreModelConnectionService_Projection(t *testing.T) {
 
 // --- GET /config's sreAgent ----------------------------------------------------
 
-type sreStatus struct{ status, reason string }
+// sreStatus answers for owner only (ok=false for any other org), or fails
+// every read with err.
+type sreStatus struct {
+	owner, status, reason string
+	err                   error
+}
 
-func (s sreStatus) Status(context.Context) (string, string, error) { return s.status, s.reason, nil }
+func (s sreStatus) Status(_ context.Context, org string) (string, string, bool, error) {
+	if s.err != nil {
+		return "", "", false, s.err
+	}
+	if org != s.owner {
+		return "", "", false, nil
+	}
+	return s.status, s.reason, true, nil
+}
 
 func TestService_Get_SreAgent(t *testing.T) {
 	ctx := context.Background()
@@ -527,7 +543,7 @@ func TestService_Get_SreAgent(t *testing.T) {
 
 	t.Run("the effective connection and the status with one", func(t *testing.T) {
 		out, err := NewService(nil, nil, nil, nil, PlatformIDPConfig{}, "", "").WithSreModel(sre).
-			WithSREAgentStatus(sreStatus{status: "failed", reason: "helm upgrade failed"}).Get(ctx, sreOrg)
+			WithSREAgentStatus(sreStatus{owner: sreOrg, status: "failed", reason: "helm upgrade failed"}).Get(ctx, sreOrg)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -535,6 +551,43 @@ func TestService_Get_SreAgent(t *testing.T) {
 			Host: "a.example", Status: "failed", Reason: "helm upgrade failed"}
 		if out.SreAgent == nil || *out.SreAgent != want {
 			t.Errorf("sreAgent = %+v, want %+v", out.SreAgent, want)
+		}
+	})
+
+	t.Run("null for an org the observability plane does not serve", func(t *testing.T) {
+		out, err := NewService(nil, nil, nil, nil, PlatformIDPConfig{}, "", "").WithSreModel(sre).
+			WithSREAgentStatus(sreStatus{owner: "globex", status: "running"}).Get(ctx, sreOrg)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if out.SreAgent != nil {
+			t.Errorf("sreAgent = %+v, want nil (another org owns the SRE agent)", out.SreAgent)
+		}
+	})
+
+	t.Run("failed, not an error, when the status cannot be read", func(t *testing.T) {
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+		defer slog.SetDefault(prev)
+
+		out, err := NewService(nil, nil, nil, nil, PlatformIDPConfig{}, "", "").WithSreModel(sre).
+			WithSREAgentStatus(sreStatus{err: errors.New("dial tcp: connection refused")}).Get(ctx, sreOrg)
+		if err != nil {
+			t.Fatalf("Get: %v, want GET /config to stay loadable", err)
+		}
+		want := orgconfig.SreAgentProjection{Enabled: true, Source: "override", Model: "gpt-4o-mini",
+			Host: "a.example", Status: "failed",
+			Reason: "SRE agent status unavailable: cannot read the observability plane"}
+		if out.SreAgent == nil || *out.SreAgent != want {
+			t.Errorf("sreAgent = %+v, want %+v", out.SreAgent, want)
+		}
+		logged := buf.String()
+		if !strings.Contains(logged, `"level":"WARN"`) || !strings.Contains(logged, "connection refused") {
+			t.Errorf("want a warning carrying the read error, got %q", logged)
+		}
+		if strings.Contains(logged, sreKey) {
+			t.Error("the warning carries the SRE model key")
 		}
 	})
 }

@@ -147,18 +147,21 @@ func (s *Service) WithSreModel(svc *SreModelConnectionService) *Service {
 	return s
 }
 
-// SREAgentStatusReader reports how the OpenChoreo SRE agent's rollout stands:
-// status is one of unconfigured|applying|running|failed, reason says why when
-// there is something to add.
+// SREAgentStatusReader reports how the OpenChoreo SRE agent's rollout stands
+// for org: status is one of unconfigured|applying|running|failed, reason says
+// why when there is something to add. ok=false means the agent does not serve
+// org (one observability plane serves one org), so there is nothing to show.
 type SREAgentStatusReader interface {
-	Status(ctx context.Context) (status, reason string, err error)
+	Status(ctx context.Context, org string) (status, reason string, ok bool, err error)
 }
+
+// sreStatusUnavailable is the reason GET /config shows when the status reader
+// fails: the settings stay loadable while the cluster API is down.
+const sreStatusUnavailable = "SRE agent status unavailable: cannot read the observability plane"
 
 // WithSREAgentStatus attaches the SRE agent's status, which turns on GET
 // /config's sreAgent section. Without it the server does not push the SRE
 // agent's configuration, and sreAgent is null.
-//
-//deadcode:keep wired by Task 9 reconciler
 func (s *Service) WithSREAgentStatus(r SREAgentStatusReader) *Service {
 	s.sreStatus = r
 	return s
@@ -238,13 +241,19 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 }
 
 // sreAgentProjection is the SRE agent as the org's settings leave it: the
-// connection it runs on and how its rollout stands.
+// connection it runs on and how its rollout stands. nil when the agent does
+// not serve org. A status read that fails shows as failed rather than failing
+// the whole GET.
 func (s *Service) sreAgentProjection(ctx context.Context, org string) (*orgconfig.SreAgentProjection, error) {
-	eff, err := s.sreModelSvc.EffectiveSRE(ctx, org)
-	if err != nil {
-		return nil, err
+	status, reason, ok, err := s.sreStatus.Status(ctx, org)
+	switch {
+	case err != nil:
+		slog.WarnContext(ctx, "orgconfig.sre_agent_status_unavailable", "org", org, "err", err)
+		status, reason = "failed", sreStatusUnavailable
+	case !ok:
+		return nil, nil
 	}
-	status, reason, err := s.sreStatus.Status(ctx)
+	eff, err := s.sreModelSvc.EffectiveSRE(ctx, org)
 	if err != nil {
 		return nil, err
 	}
