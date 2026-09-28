@@ -36,13 +36,10 @@ type OrgSreModelConnectionRepository interface {
 type orgSreModelConnectionRepository struct{ db *gorm.DB }
 
 // NewOrgSreModelConnectionRepository constructs the gorm-backed repository.
-//
-//deadcode:keep wired by Task 6 SreModelConnectionService
 func NewOrgSreModelConnectionRepository(db *gorm.DB) OrgSreModelConnectionRepository {
 	return &orgSreModelConnectionRepository{db: db}
 }
 
-//deadcode:keep wired by Task 6 SreModelConnectionService
 func (r *orgSreModelConnectionRepository) GetByOrg(ctx context.Context, ocOrgID string) (*OrgSreModelConnection, error) {
 	return getSreModelConnection(r.db.WithContext(ctx), ocOrgID)
 }
@@ -50,8 +47,6 @@ func (r *orgSreModelConnectionRepository) GetByOrg(ctx context.Context, ocOrgID 
 // getSreModelConnection is the one read of the row, shared by the pool reader
 // and the card's transaction so the two cannot disagree on what "absent"
 // means.
-//
-//deadcode:keep wired by Task 6 SreModelConnectionService
 func getSreModelConnection(db *gorm.DB, ocOrgID string) (*OrgSreModelConnection, error) {
 	var row OrgSreModelConnection
 	err := db.Where("oc_org_id = ?", ocOrgID).First(&row).Error

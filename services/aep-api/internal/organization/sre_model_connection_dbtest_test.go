@@ -19,10 +19,11 @@ package organization_test
 // DBTEST tier (skips under -short; `make test-db` runs it): the org's SRE
 // model connection — OrgSreModelConnectionRepository's plain read and
 // AgentsCardTx's upsert/delete — over a pristine per-test Postgres
-// (dbtest.New). Task 6 wires the service on top; this pins the storage round
-// trip only: absent is nil-not-error, an upsert is readable back with the
+// (dbtest.New): absent is nil-not-error, an upsert is readable back with the
 // fixed OpenAI-compatible/Bearer shape, a second upsert replaces the row
-// rather than erroring, and delete is idempotent.
+// rather than erroring, and delete is idempotent. On top of it,
+// SreModelConnectionService's Set → Projection round trip over the real
+// store: the key is stored and previewed, never projected.
 //
 // External test package: an in-package dbtest file would be an import cycle
 // (dbtest imports migrate, which imports organization), same as
@@ -30,18 +31,20 @@ package organization_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
+	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// sreModelConnDBAESKey is the 32-byte AES-256 key for the real DBStore the
-// AgentsCardRepository requires, unused by these tests (no secret bytes are
-// written here).
+// sreModelConnDBAESKey is the 32-byte AES-256 key for the real DBStore.
 const sreModelConnDBAESKey = "0123456789abcdef0123456789abcdef"
 
 func TestOrgSreModelConnectionRepository_GetByOrgAbsentReturnsNilNotError(t *testing.T) {
@@ -191,5 +194,75 @@ func TestAgentsCardTx_UpsertSreModelConnection_OrgIsolation(t *testing.T) {
 	got, err := repo.GetByOrg(ctx, "globex")
 	if err != nil || got == nil {
 		t.Fatalf("globex must be untouched by acme's delete: row=%+v err=%v", got, err)
+	}
+}
+
+// orgWithoutConnection is a ConnectionReader for an org with no model
+// connection: EffectiveSRE then has only the SRE model connection to go on.
+type orgWithoutConnection struct{}
+
+func (orgWithoutConnection) Effective(context.Context, string) (modelconn.Connection, string, bool, error) {
+	return modelconn.Connection{}, "", false, nil
+}
+
+func (orgWithoutConnection) KeyRef(context.Context, string) (modelconn.Connection, organization.SecretRefTriplet, error) {
+	return modelconn.Connection{}, organization.SecretRefTriplet{}, &organization.NotFoundError{What: "org_model_connections"}
+}
+
+func TestSreModelConnectionService_SetThenProjection(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	store, err := secrets.NewDBStore(db, []byte(sreModelConnDBAESKey))
+	if err != nil {
+		t.Fatalf("real DBStore: %v", err)
+	}
+	endpoint := newModelEndpoint(t, http.StatusOK)
+	svc := organization.NewSreModelConnectionService(organization.NewOrgSreModelConnectionRepository(db), store,
+		organization.NewAgentsCardRepository(db, store), orgWithoutConnection{}).WithProbeClient(endpoint.client())
+	ctx := context.Background()
+	key, baseURL, model := "sre-db-key-0123456789abcdef", "https://gw.example.com/v1", "glm-5.3"
+
+	if err := svc.Set(ctx, "acme", "user@acme.test", orgconfig.SreLlmWrite{BaseURL: &baseURL, APIKey: &key, Model: &model}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	proj, err := svc.Projection(ctx, "acme")
+	if err != nil {
+		t.Fatalf("Projection: %v", err)
+	}
+	if proj == nil || proj.BaseURL != baseURL || proj.Host != "gw.example.com" || proj.Model != model || proj.UpdatedBy != "user@acme.test" {
+		t.Fatalf("Projection = %+v, want the saved connection", proj)
+	}
+	if proj.KeyPreview != "sre-…cdef" {
+		t.Errorf("keyPreview = %q, want %q", proj.KeyPreview, "sre-…cdef")
+	}
+	raw, err := json.Marshal(proj)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), key) {
+		t.Fatalf("the projection carries the key: %s", raw)
+	}
+
+	stored, err := store.Get(ctx, "acme", "sre-model/key")
+	if err != nil || string(stored) != key {
+		t.Fatalf("stored key: err=%v match=%v, want the saved key", err, string(stored) == key)
+	}
+	eff, err := svc.EffectiveSRE(ctx, "acme")
+	if err != nil {
+		t.Fatalf("EffectiveSRE: %v", err)
+	}
+	if eff.Source != organization.SRESourceOverride || eff.Conn.Host != "gw.example.com" || eff.Key != key {
+		t.Errorf("EffectiveSRE = {%s %s}, want the override with its key", eff.Source, eff.Conn.Host)
+	}
+
+	if err := svc.Clear(ctx, "acme", "user@acme.test"); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if proj, err := svc.Projection(ctx, "acme"); err != nil || proj != nil {
+		t.Fatalf("Projection after Clear = %+v, %v; want nil, nil", proj, err)
+	}
+	if _, err := store.Get(ctx, "acme", "sre-model/key"); err == nil {
+		t.Fatal("the key outlived Clear")
 	}
 }

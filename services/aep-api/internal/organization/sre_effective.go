@@ -43,8 +43,6 @@ type EffectiveSRE struct {
 // ResolveEffectiveSRE is the one statement of which connection the SRE agent
 // runs on: an SRE model connection when one is set, else the org model
 // connection when it has the SREAgent capability, else none.
-//
-// //deadcode:keep wired by Task 6 SreModelConnectionService.EffectiveSRE
 func ResolveEffectiveSRE(override *OrgSreModelConnection, overrideKey string,
 	org *modelconn.Connection, orgKey string) EffectiveSRE {
 	if override != nil && overrideKey != "" {

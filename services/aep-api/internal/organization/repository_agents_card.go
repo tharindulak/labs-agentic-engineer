@@ -74,6 +74,9 @@ type AgentsCardTx interface {
 	// lives.
 	StampConnectionSecretRef(ocOrgID string, ref SecretRefTriplet) error
 
+	// GetSreModelConnection reads the org's SRE model connection, or nil when
+	// absent.
+	GetSreModelConnection(ocOrgID string) (*OrgSreModelConnection, error)
 	// UpsertSreModelConnection writes the whole org_sre_model_connections row,
 	// creating it or replacing its columns.
 	UpsertSreModelConnection(row *OrgSreModelConnection) error
@@ -228,7 +231,10 @@ func (t *agentsCardTx) StampConnectionSecretRef(ocOrgID string, ref SecretRefTri
 // another), same as connectionColumns above.
 var sreModelConnectionColumns = []string{"base_url", "host", "model", "connected_at", "updated_at", "updated_by"}
 
-//deadcode:keep wired by Task 6 SreModelConnectionService
+func (t *agentsCardTx) GetSreModelConnection(ocOrgID string) (*OrgSreModelConnection, error) {
+	return getSreModelConnection(t.tx, ocOrgID)
+}
+
 func (t *agentsCardTx) UpsertSreModelConnection(row *OrgSreModelConnection) error {
 	return t.tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "oc_org_id"}},
@@ -236,7 +242,6 @@ func (t *agentsCardTx) UpsertSreModelConnection(row *OrgSreModelConnection) erro
 	}).Create(row).Error
 }
 
-//deadcode:keep wired by Task 6 SreModelConnectionService
 func (t *agentsCardTx) DeleteSreModelConnection(ocOrgID string) error {
 	return t.tx.Where("oc_org_id = ?", ocOrgID).Delete(&OrgSreModelConnection{}).Error
 }

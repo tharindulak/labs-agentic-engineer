@@ -65,7 +65,11 @@ type ConfigProjection struct {
 	Agents      AgentsProjection       `json:"agents"`      // always present
 	GitProvider *GitProviderProjection `json:"gitProvider"` // null = not connected
 	IDP         IDPProjection          `json:"idp"`         // always present
-	SreLLM      *SreLlmProjection      `json:"sreLlm"`      // null = not configured
+	SreLLM      *SreLlmProjection      `json:"sreLlm"`      // null = no SRE model connection
+	// SreAgent is the OpenChoreo SRE agent as the org's settings leave it:
+	// which connection it runs on and how its rollout stands. nil when this
+	// server does not push the SRE agent's configuration.
+	SreAgent *SreAgentProjection `json:"sreAgent"`
 }
 
 // --- llm: the organization's model connection --------------------------------
@@ -208,18 +212,34 @@ type SubscriptionProjection struct {
 // through a `claude setup-token` token.
 const SubscriptionKindClaude = "claude"
 
-// SreLlmProjection carries the platform's SRE agent LLM connection status.
-// Unlike LLMProjection this is platform-wide, not per-org — there is exactly
-// one row regardless of which organization's session reads or writes it.
+// SreLlmProjection is the org's SRE model connection: the OpenAI-compatible
+// endpoint only the OpenChoreo SRE agent calls, over a Bearer key of its own.
+// The key is write-only and projected only as KeyPreview. Like LLMProjection
+// a stored connection is usable by construction (a save is refused unless its
+// probe passes), so there is no status.
 type SreLlmProjection struct {
-	Provider        string     `json:"provider" enum:"anthropic,openai"`
-	Model           string     `json:"model"`
-	KeyPrefix       string     `json:"keyPrefix"`
-	KeyLast4        string     `json:"keyLast4"`
-	Status          string     `json:"status"` // matches LLMProjection's shape; always "active" while the row exists
-	ConnectedAt     time.Time  `json:"connectedAt"`
-	LastValidatedAt *time.Time `json:"lastValidatedAt,omitempty"`
-	ValidationError *string    `json:"validationError,omitempty"`
+	BaseURL     string    `json:"baseURL"`
+	Host        string    `json:"host"`
+	Model       string    `json:"model"`
+	KeyPreview  string    `json:"keyPreview"`
+	ConnectedAt time.Time `json:"connectedAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	UpdatedBy   string    `json:"updatedBy"`
+}
+
+// SreAgentProjection is the OpenChoreo SRE agent as the org's settings leave
+// it. Source says which connection it runs on: the SRE model connection
+// (override), the org's model connection when that has the sreAgent
+// capability (organization), or none. Model and Host are empty on none.
+type SreAgentProjection struct {
+	Enabled bool   `json:"enabled"`
+	Source  string `json:"source" enum:"override,organization,none"`
+	Model   string `json:"model"`
+	Host    string `json:"host"`
+	Status  string `json:"status" enum:"unconfigured,applying,running,failed"`
+	// Reason says why the status is what it is; empty when there is nothing
+	// to add.
+	Reason string `json:"reason,omitempty"`
 }
 
 // DefaultAgents is the projection for an org that has never set one. It
@@ -308,16 +328,16 @@ type LLMPatch struct {
 	Model   string           `json:"model,omitempty"`
 }
 
-// SreLlmWrite is the sreLlm section's write shape: a platform-wide LLM
-// config for the SRE agent, distinct from llm/codingLlm — provider is
-// explicit here (unlike LLMWrite, which is always "anthropic") because the
-// SRE agent genuinely supports either provider via RCA_MODEL_NAME's prefix.
-// null clears the section back to "not configured" (there is no override
-// semantics to preserve, unlike codingLlm).
+// SreLlmWrite is the sreLlm section's write shape, patched field by field like
+// LLMPatch: an omitted field keeps the saved value. The first save needs all
+// three; a save that moves the connection to another host needs APIKey too (a
+// stored key is never sent to another host). Format and auth are fixed
+// (OpenAI-compatible, Bearer). APIKey is write-only: probed, never echoed.
+// null removes the connection, so the SRE agent falls back to the org's.
 type SreLlmWrite struct {
-	Provider string `json:"provider" enum:"anthropic,openai" required:"true"`
-	Model    string `json:"model" required:"true"`
-	APIKey   string `json:"apiKey" required:"true"` // write-only, probed, never echoed
+	BaseURL *string `json:"baseURL,omitempty"`
+	APIKey  *string `json:"apiKey,omitempty"`
+	Model   *string `json:"model,omitempty"`
 }
 
 // GitProviderWrite is the gitProvider section's write shape. Mode is pat-only:

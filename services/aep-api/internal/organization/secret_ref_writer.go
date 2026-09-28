@@ -59,13 +59,10 @@ type SecretRefWriter struct {
 	anthropicRepo OrgAnthropicRepository
 	idpRepo       IDPRepository
 	modelConnRepo OrgModelConnectionRepository
-	sreLlmRepo    PlatformSreLlmRepository
 }
 
 // NewSecretRefWriter returns a no-op writer when client is nil (matches the
-// composition-root behavior when SecretsProvider is nil). sreLlmRepo may be
-// nil in harnesses that never call WriteSreLlm — attach it via
-// WithPlatformSreLlm.
+// composition-root behavior when SecretsProvider is nil).
 func NewSecretRefWriter(
 	client secretmanagersvc.SecretManagementClient,
 	orgCredRepo OrgCredentialRepository,
@@ -80,15 +77,6 @@ func NewSecretRefWriter(
 		idpRepo:       idpRepo,
 		modelConnRepo: modelConnRepo,
 	}
-}
-
-// WithPlatformSreLlm attaches the sre-llm repository; chainable. A setter
-// rather than a fifth constructor parameter so every existing call site
-// (tests included) keeps compiling unchanged — mirrors the WithCodingAgent
-// pattern on organization.Service.
-func (w *SecretRefWriter) WithPlatformSreLlm(repo PlatformSreLlmRepository) *SecretRefWriter {
-	w.sreLlmRepo = repo
-	return w
 }
 
 // Enabled reports whether the writer is wired to a real secrets client.
@@ -347,53 +335,6 @@ func AMPModelKeySecretRefName(component, environment string) string {
 
 func ampModelKeyEntity(component, environment string) string {
 	return fmt.Sprintf("amp-model-%s-%s", component, environment)
-}
-
-// WriteSreLlm uploads the platform's SRE agent LLM key to SM-API and stamps
-// the triplet onto platform_sre_llm_config's singleton row. Same semantics
-// as WriteAnthropic — org is only used to compute the vault path (via the
-// request's JWT ouId claim); the row it stamps carries no org column, and
-// the reconcile script/aectl later read the STORED path back rather than
-// re-deriving it, so which org was active when this ran is otherwise inert.
-func (w *SecretRefWriter) WriteSreLlm(ctx context.Context, org string, apiKey string) (string, error) {
-	if !w.Enabled() {
-		return "", nil
-	}
-	if strings.TrimSpace(org) == "" {
-		return "", errors.New("secret-ref writer: org required")
-	}
-	if strings.TrimSpace(apiKey) == "" {
-		return "", errors.New("secret-ref writer: apiKey required")
-	}
-	orgUUID, err := orgUUIDForSecretLocation(ctx)
-	if err != nil {
-		return "", fmt.Errorf("secret-ref writer: sre-llm upload: %w", err)
-	}
-	loc := secretmanagersvc.SecretLocation{
-		OrgName:               orgUUID,
-		ControlPlaneNamespace: org,
-		EntityName:            "sre-llm",
-		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
-	}
-	secretRefName, err := w.client.CreateSecret(ctx, loc, map[string]string{
-		secretmanagersvc.SecretKeyAPIKey: apiKey,
-	})
-	if err != nil {
-		return "", fmt.Errorf("secret-ref writer: sre-llm upload: %w", err)
-	}
-	vaultKey, err := w.resolveVaultKey(ctx, secretRefName)
-	if err != nil {
-		return secretRefName, fmt.Errorf("secret-ref writer: resolve sre-llm vault key: %w", err)
-	}
-	if w.sreLlmRepo == nil {
-		return secretRefName, errors.New("secret-ref writer: sre-llm repository not wired")
-	}
-	prop := secretmanagersvc.SecretKeyAPIKey
-	if err := w.sreLlmRepo.UpdateColumns(ctx, stampSecretRefTriplet(secretRefName, vaultKey, prop)); err != nil {
-		return secretRefName, fmt.Errorf("secret-ref writer: stamp sre-llm triplet: %w", err)
-	}
-	slog.InfoContext(ctx, "secret-ref writer: sre-llm key uploaded", "secretRefName", secretRefName, "vaultKey", vaultKey)
-	return secretRefName, nil
 }
 
 // WriteGitHubPAT uploads a per-org GitHub PAT to SM-API and stamps the

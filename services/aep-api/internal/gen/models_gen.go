@@ -3189,7 +3189,10 @@ type SpecStage struct {
 	Version string `json:"version"`
 }
 
-// SreLlmProjection defines model for SreLlmProjection.
+// SreAgentProjection Which connection the OpenChoreo SRE agent runs on, and how its rollout stands.
+type SreAgentProjection = orgconfig.SreAgentProjection
+
+// SreLlmProjection The organization's SRE model connection: OpenAI-compatible, Bearer. A stored connection is usable by construction: a save is refused unless the probe passes.
 type SreLlmProjection = orgconfig.SreLlmProjection
 
 // StartConnectInputBody defines model for StartConnectInputBody.

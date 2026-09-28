@@ -66,12 +66,6 @@ func BaseModels() []any {
 		// expresses the whole schema; phase17 moves the rows of its
 		// predecessor, org_coding_agent_settings.
 		&organization.OrgAgentSettings{},
-		// The platform's SRE agent LLM config (provider/model/key) — a
-		// singleton row (id=1 always), nothing to encrypt in this table (the
-		// key itself lives in org_secrets under the sentinel "platform" org
-		// id), so AutoMigrate expresses the whole schema and there is no
-		// Step to append.
-		&organization.PlatformSreLlmConfig{},
 		&delivery.Execution{},
 		&spec.AgentTurn{},
 		&modelcost.ModelRate{},

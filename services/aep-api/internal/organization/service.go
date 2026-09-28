@@ -48,7 +48,7 @@ var ErrGitHubAppNotConfigured = errors.New("orgconfig: github app oauth client n
 // is produced by PATCH probe/persist failures; the HTTP layer maps Status +
 // Section into a problem response.
 type SectionError struct {
-	Section string // "llm" | "agents" | "gitProvider" | "idp" | "sreLlm"
+	Section string // "llm" | "agents" | "gitProvider" | "idp" | "sreLlm" (the SRE model connection)
 	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream)
 	Code    string // the stable reason slug, when the refusal has one (e.g. agents_subscription_requires_claude_code)
 	Message string
@@ -89,7 +89,8 @@ type Service struct {
 	bearerSvc     *BearerService
 	idpSvc        IDPService
 	agentSettings *AgentSettingsService
-	sreLlmSvc     *SreLlmConfigService
+	sreModelSvc   *SreModelConnectionService
+	sreStatus     SREAgentStatusReader
 	llmTests      *llmTestLimiter
 	platformIDP   PlatformIDPConfig
 
@@ -137,12 +138,29 @@ func (s *Service) WithAgentSettings(svc *AgentSettingsService) *Service {
 	return s
 }
 
-// WithSreLlm attaches the SRE agent's platform-wide LLM config service.
-// A setter for the same reason WithCodingAgent is one: an unwired service
-// still projects a truthful sreLlm=nil ("not configured"), so a harness
-// exercising only the credential sections doesn't have to wire it.
-func (s *Service) WithSreLlm(svc *SreLlmConfigService) *Service {
-	s.sreLlmSvc = svc
+// WithSreModel attaches the org's SRE model connection (the sreLlm section).
+// A setter for the same reason WithAgentSettings is one: an unwired service
+// still projects a truthful sreLlm=nil ("none"), so a harness exercising only
+// the other sections doesn't have to wire it.
+func (s *Service) WithSreModel(svc *SreModelConnectionService) *Service {
+	s.sreModelSvc = svc
+	return s
+}
+
+// SREAgentStatusReader reports how the OpenChoreo SRE agent's rollout stands:
+// status is one of unconfigured|applying|running|failed, reason says why when
+// there is something to add.
+type SREAgentStatusReader interface {
+	Status(ctx context.Context) (status, reason string, err error)
+}
+
+// WithSREAgentStatus attaches the SRE agent's status, which turns on GET
+// /config's sreAgent section. Without it the server does not push the SRE
+// agent's configuration, and sreAgent is null.
+//
+//deadcode:keep wired by Task 9 reconciler
+func (s *Service) WithSREAgentStatus(r SREAgentStatusReader) *Service {
+	s.sreStatus = r
 	return s
 }
 
@@ -202,16 +220,42 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 		}
 	}
 
-	if s.sreLlmSvc != nil {
-		cfg, err := s.sreLlmSvc.Get(ctx)
+	if s.sreModelSvc != nil {
+		proj, err := s.sreModelSvc.Projection(ctx, org)
 		if err != nil {
 			return nil, fmt.Errorf("orgconfig get sreLlm: %w", err)
 		}
-		out.SreLLM = sreLlmProjectionFrom(cfg)
+		out.SreLLM = proj
+		if s.sreStatus != nil {
+			if out.SreAgent, err = s.sreAgentProjection(ctx, org); err != nil {
+				return nil, fmt.Errorf("orgconfig get sreAgent: %w", err)
+			}
+		}
 	}
 
 	out.IDP = s.idpProjection(ctx, org)
 	return out, nil
+}
+
+// sreAgentProjection is the SRE agent as the org's settings leave it: the
+// connection it runs on and how its rollout stands.
+func (s *Service) sreAgentProjection(ctx context.Context, org string) (*orgconfig.SreAgentProjection, error) {
+	eff, err := s.sreModelSvc.EffectiveSRE(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	status, reason, err := s.sreStatus.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &orgconfig.SreAgentProjection{
+		Enabled: true,
+		Source:  string(eff.Source),
+		Model:   eff.Conn.Model,
+		Host:    eff.Conn.Host,
+		Status:  status,
+		Reason:  reason,
+	}, nil
 }
 
 // idpProjection returns the org's persisted IDP profile, or the platform
@@ -280,17 +324,17 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
 	}
+	if p.SreLLM.Sent && s.sreModelSvc == nil {
+		return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
+	}
 	if p.SreLLM.Sent && !p.SreLLM.Null {
-		if s.sreLlmSvc == nil {
-			return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
-		}
-		if err := s.sreLlmSvc.ValidateKey(ctx, p.SreLLM.Value.Provider, p.SreLLM.Value.APIKey); err != nil {
+		if err := s.sreModelSvc.Check(ctx, org, p.SreLLM.Value); err != nil {
 			return nil, sectionErrorFrom("sreLlm", err)
 		}
 	}
 
 	// 3. Persist phase — probes already passed, so these are writes over
-	//    freshly-validated inputs. Ordered card → gitProvider → idp.
+	//    freshly-validated inputs. Ordered card → gitProvider → sreLlm → idp.
 	sections := []string{}
 	if card {
 		if err := s.agentSettings.apply(ctx, org, actor, p, probed); err != nil {
@@ -314,14 +358,11 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 		sections = append(sections, "gitProvider")
 	}
 	if p.SreLLM.Sent {
-		if s.sreLlmSvc == nil {
-			return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
-		}
 		if p.SreLLM.Null {
-			if err := s.sreLlmSvc.Clear(ctx, org, actor); err != nil {
+			if err := s.sreModelSvc.Clear(ctx, org, actor); err != nil {
 				return nil, sectionErrorFrom("sreLlm", err)
 			}
-		} else if _, err := s.sreLlmSvc.Set(ctx, org, actor, p.SreLLM.Value.Provider, p.SreLLM.Value.Model, p.SreLLM.Value.APIKey); err != nil {
+		} else if err := s.sreModelSvc.Set(ctx, org, actor, p.SreLLM.Value); err != nil {
 			return nil, sectionErrorFrom("sreLlm", err)
 		}
 		sections = append(sections, "sreLlm")
@@ -416,23 +457,6 @@ func (s *Service) DiscoverIDP(ctx context.Context, issuer string) (issuerOut, jw
 }
 
 // --- projection mappers -----------------------------------------------------
-
-func sreLlmProjectionFrom(c *SreLlmConfig) *orgconfig.SreLlmProjection {
-	if c == nil {
-		return nil
-	}
-	return &orgconfig.SreLlmProjection{
-		Provider:        c.Provider,
-		Model:           c.Model,
-		KeyPrefix:       c.KeyPrefix,
-		KeyLast4:        c.KeyLast4,
-		Status:          c.Status,
-		ConnectedAt:     c.ConnectedAt,
-		LastValidatedAt: c.LastValidatedAt,
-		ValidationError: c.ValidationError,
-	}
-}
-
 
 func gitProviderProjectionFrom(p *Projection) *orgconfig.GitProviderProjection {
 	if p == nil {
