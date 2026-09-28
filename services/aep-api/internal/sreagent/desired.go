@@ -53,10 +53,10 @@ func DesiredFrom(e organization.EffectiveSRE, mcpToken string) Desired {
 //deadcode:keep wired by Task 9 reconciler
 func (d Desired) SecretData() map[string][]byte {
 	return map[string][]byte{
-		"RCA_LLM_API_KEY":   []byte(d.APIKey),
-		"RCA_MODEL_NAME":    []byte(d.Model),
-		"RCA_LLM_BASE_URL":  []byte(d.BaseURL),
-		"AEP_MCP_TOKEN":     []byte(d.MCPToken),
+		"RCA_LLM_API_KEY":  []byte(d.APIKey),
+		"RCA_MODEL_NAME":   []byte(d.Model),
+		"RCA_LLM_BASE_URL": []byte(d.BaseURL),
+		"AEP_MCP_TOKEN":    []byte(d.MCPToken),
 	}
 }
 
@@ -84,19 +84,19 @@ func (d Desired) Hash() string {
 }
 
 type DeploymentState struct {
-	Replicas            int32
-	UpdatedReplicas     int32
-	AvailableReplicas   int32
-	ObservedGeneration  int64
-	Generation          int64
-	TemplateHash        string
+	Replicas           int32
+	UpdatedReplicas    int32
+	AvailableReplicas  int32
+	ObservedGeneration int64
+	Generation         int64
+	TemplateHash       string
 }
 
 type PodState struct {
-	Hash              string
-	WaitingReason     string
-	TerminatedReason  string
-	ExitCode          int32
+	Hash             string
+	WaitingReason    string
+	TerminatedReason string
+	ExitCode         int32
 }
 
 type Status string
