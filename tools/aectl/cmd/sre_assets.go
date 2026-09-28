@@ -16,6 +16,14 @@
 
 package cmd
 
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/wso2/aep/aectl/internal/openbao"
+)
+
 // Manifest + Helm-values templates for `aectl sre install`. Rendered against
 // sreParams. Secrets are pulled from OpenBao via ESO (never plaintext), through
 // the platform chart's ClusterSecretStore (aep-platform), which reads the
@@ -70,6 +78,30 @@ spec:
   data:
     - secretKey: RCA_LLM_API_KEY
       remoteRef: { key: "{{.AnthropicRef.Key}}", property: "{{.AnthropicRef.Property}}" }
+`
+
+// The SRE agent's dedicated key, when `--sre-llm-provider`/`--sre-llm-model`/
+// `--sre-llm-api-key` seeded one into OpenBao (runSreInstall, aep/sre-llm-api-key).
+// Applied only when p.SreLlmVaultKey is set — independent of the org's model
+// connection (sreAnthropicSecretTmpl/haveKey above), since this key does not
+// override it, it replaces it outright (mountSREAgentRuntime points
+// RCA_LLM_API_KEY_FILE here instead of at rca-agent-anthropic-secret).
+const sreLlmSecretTmpl = `
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: sre-llm-secret
+  namespace: {{.ObsNamespace}}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{.PlatformSecretStore}}
+    kind: ClusterSecretStore
+  target:
+    name: sre-llm-secret
+  data:
+    - secretKey: RCA_LLM_API_KEY
+      remoteRef: { key: {{.SreLlmVaultKey}}, property: value }
 `
 
 // The observer's Thunder client secret, for a plane aectl did not install.
@@ -185,7 +217,7 @@ rca:
     tag: {{.RcaImageTag}}
     pullPolicy: {{.RcaPullPolicy}}
   llm:
-    modelName: {{.RcaModel}}
+    modelName: {{ if .SreLlmModelName }}{{.SreLlmModelName}}{{ else }}{{.RcaModel}}{{ end }}
   secretName: rca-agent-secret
   oauth:
     clientId: openchoreo-rca-agent
@@ -418,3 +450,34 @@ for idx in $($CURL "${OS}/_cat/indices/container-logs-*?h=index" 2>/dev/null); d
 done
 echo "Bootstrap complete."
 `
+
+// writeOpenBaoSecret writes value to OpenBao at secret/data/<path>, the same
+// layout secret_import.go's `aep platform secret import` uses. Extracted as
+// a shared helper because sre install needs the identical write, driven by
+// --sre-llm-api-key instead of an interactive/file prompt.
+func writeOpenBaoSecret(ctx context.Context, path, value string) error {
+	pfCmd, err := openbao.PortForward(ctx, ocOpenBaoNamespace, ocOpenBaoRelease, kubeconfig)
+	if err != nil {
+		return fmt.Errorf("port-forward to OpenBao: %w", err)
+	}
+	defer func() { _ = pfCmd.Process.Kill() }()
+
+	baseURL := "http://localhost:" + openbao.LocalPort
+	if err := openbao.WaitForReachable(ctx, baseURL, 30*time.Second); err != nil {
+		return fmt.Errorf("OpenBao not reachable via port-forward: %w", err)
+	}
+	saToken, err := openbao.GetSAToken(ctx, ocOpenBaoNamespace, ocOpenBaoSA, kubeconfig)
+	if err != nil {
+		return err
+	}
+	token, err := openbao.KubernetesLogin(ctx, baseURL, ocWriteRole, saToken)
+	if err != nil {
+		return err
+	}
+	if _, err := openbao.Must(ctx, "PUT", baseURL, token, "/v1/secret/data/"+path, map[string]interface{}{
+		"data": map[string]interface{}{"value": value},
+	}); err != nil {
+		return fmt.Errorf("write secret/data/%s: %w", path, err)
+	}
+	return nil
+}

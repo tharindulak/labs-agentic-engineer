@@ -3189,6 +3189,9 @@ type SpecStage struct {
 	Version string `json:"version"`
 }
 
+// SreLlmProjection defines model for SreLlmProjection.
+type SreLlmProjection = orgconfig.SreLlmProjection
+
 // StartConnectInputBody defines model for StartConnectInputBody.
 type StartConnectInputBody struct {
 	// InstallationID Optional installation to pin (set when the user picks a candidate from the 2+ picker)

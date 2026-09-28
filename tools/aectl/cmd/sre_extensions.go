@@ -143,7 +143,8 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 }
 
 // mountSREAgentRuntime patches the SRE deployment with the extension mount,
-// the Anthropic key file, and the MCP URL (the same mcpURL rendered into
+// the key file (the org's Anthropic key, or the platform's dedicated SRE LLM
+// key when sreLlmConfigured), and the MCP URL (the same mcpURL rendered into
 // mcp.json by applyExtensionsConfigMap). It carries no MCP credential: the
 // extension loader will not send an Authorization header to the plaintext
 // in-cluster URL, so aep-mcp-server applies the handoff bearer itself (the
@@ -152,7 +153,14 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 //
 // The Anthropic key volume is required: a pod that cannot mount the org's key
 // waits for it instead of accepting an alert and failing inside the analysis.
-func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName, mcpURL string) error {
+// The sre-llm-key volume is optional — it is only ever populated when
+// sreLlmSecretTmpl was applied (sreLlmConfigured), and RCA_LLM_API_KEY_FILE
+// only ever points at it in that case.
+func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName, mcpURL string, sreLlmConfigured bool) error {
+	keyFilePath := "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"
+	if sreLlmConfigured {
+		keyFilePath = "/etc/rca-agent/sre-llm/RCA_LLM_API_KEY"
+	}
 	patch := `{
 		"spec": {"template": {"spec": {
 			"volumes": [
@@ -174,17 +182,26 @@ func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, 
 						"optional": false,
 						"defaultMode": 256
 					}
+				},
+				{
+					"name": "sre-llm-key",
+					"secret": {
+						"secretName": "sre-llm-secret",
+						"optional": true,
+						"defaultMode": 256
+					}
 				}
 			],
 			"containers": [{
 				"name": "` + deployName + `",
 				"volumeMounts": [
 					{"name": "sre-agent-extensions", "mountPath": "/etc/openchoreo/sre-agent", "readOnly": true},
-					{"name": "anthropic-key", "mountPath": "/etc/rca-agent/anthropic", "readOnly": true}
+					{"name": "anthropic-key", "mountPath": "/etc/rca-agent/anthropic", "readOnly": true},
+					{"name": "sre-llm-key", "mountPath": "/etc/rca-agent/sre-llm", "readOnly": true}
 				],
 				"env": [
 					{"name": "EXTENSIONS_DIR", "value": "/etc/openchoreo/sre-agent"},
-					{"name": "RCA_LLM_API_KEY_FILE", "value": "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"},
+					{"name": "RCA_LLM_API_KEY_FILE", "value": "` + keyFilePath + `"},
 					{"name": "AEP_MCP_URL", "value": "` + mcpURL + `"},
 					{"name": "AEP_MCP_TOKEN", "$patch": "delete"}
 				]

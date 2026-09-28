@@ -4590,6 +4590,24 @@ components:
             the key on Anthropic's API), `anthropic_key_invalid` (a key on
             Anthropic's API without the `sk-ant-` shape).
           nullable: true
+        sreLlm:
+          additionalProperties: false
+          properties:
+            apiKey:
+              type: string
+            model:
+              type: string
+            provider:
+              enum:
+              - anthropic
+              - openai
+              type: string
+          required:
+          - provider
+          - model
+          - apiKey
+          type: object
+          nullable: true
       type: object
     ConfigProjection:
       x-go-type: orgconfig.ConfigProjection
@@ -4634,12 +4652,17 @@ components:
           items:
             $ref: '#/components/schemas/LLMFormatOption'
           type: array
+        sreLlm:
+          allOf:
+          - $ref: '#/components/schemas/SreLlmProjection'
+          nullable: true
       required:
       - llm
       - llmFormats
       - agents
       - gitProvider
       - idp
+      - sreLlm
       type: object
     ConfigValue:
       additionalProperties: false
@@ -6141,6 +6164,41 @@ components:
       - updatedBy
       - priced
       - capabilities
+      type: object
+    SreLlmProjection:
+      x-go-type: orgconfig.SreLlmProjection
+      x-go-type-import:
+        path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
+      additionalProperties: false
+      properties:
+        connectedAt:
+          format: date-time
+          type: string
+        keyLast4:
+          type: string
+        keyPrefix:
+          type: string
+        lastValidatedAt:
+          format: date-time
+          type: string
+        model:
+          type: string
+        provider:
+          enum:
+          - anthropic
+          - openai
+          type: string
+        status:
+          type: string
+        validationError:
+          type: string
+      required:
+      - provider
+      - model
+      - keyPrefix
+      - keyLast4
+      - status
+      - connectedAt
       type: object
     Lineage:
       additionalProperties: false

@@ -48,7 +48,7 @@ var ErrGitHubAppNotConfigured = errors.New("orgconfig: github app oauth client n
 // is produced by PATCH probe/persist failures; the HTTP layer maps Status +
 // Section into a problem response.
 type SectionError struct {
-	Section string // "llm" | "agents" | "gitProvider" | "idp"
+	Section string // "llm" | "agents" | "gitProvider" | "idp" | "sreLlm"
 	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream)
 	Code    string // the stable reason slug, when the refusal has one (e.g. agents_subscription_requires_claude_code)
 	Message string
@@ -89,6 +89,7 @@ type Service struct {
 	bearerSvc     *BearerService
 	idpSvc        IDPService
 	agentSettings *AgentSettingsService
+	sreLlmSvc     *SreLlmConfigService
 	llmTests      *llmTestLimiter
 	platformIDP   PlatformIDPConfig
 
@@ -133,6 +134,15 @@ func NewService(
 // is a loud failure, not a silent no-op.
 func (s *Service) WithAgentSettings(svc *AgentSettingsService) *Service {
 	s.agentSettings = svc
+	return s
+}
+
+// WithSreLlm attaches the SRE agent's platform-wide LLM config service.
+// A setter for the same reason WithCodingAgent is one: an unwired service
+// still projects a truthful sreLlm=nil ("not configured"), so a harness
+// exercising only the credential sections doesn't have to wire it.
+func (s *Service) WithSreLlm(svc *SreLlmConfigService) *Service {
+	s.sreLlmSvc = svc
 	return s
 }
 
@@ -190,6 +200,14 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 			}
 			out.LLMDisconnectedAt = at
 		}
+	}
+
+	if s.sreLlmSvc != nil {
+		cfg, err := s.sreLlmSvc.Get(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("orgconfig get sreLlm: %w", err)
+		}
+		out.SreLLM = sreLlmProjectionFrom(cfg)
 	}
 
 	out.IDP = s.idpProjection(ctx, org)
@@ -262,6 +280,14 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
 	}
+	if p.SreLLM.Sent && !p.SreLLM.Null {
+		if s.sreLlmSvc == nil {
+			return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
+		}
+		if err := s.sreLlmSvc.ValidateKey(ctx, p.SreLLM.Value.Provider, p.SreLLM.Value.APIKey); err != nil {
+			return nil, sectionErrorFrom("sreLlm", err)
+		}
+	}
 
 	// 3. Persist phase — probes already passed, so these are writes over
 	//    freshly-validated inputs. Ordered card → gitProvider → idp.
@@ -286,6 +312,19 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
 		sections = append(sections, "gitProvider")
+	}
+	if p.SreLLM.Sent {
+		if s.sreLlmSvc == nil {
+			return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
+		}
+		if p.SreLLM.Null {
+			if err := s.sreLlmSvc.Clear(ctx, org, actor); err != nil {
+				return nil, sectionErrorFrom("sreLlm", err)
+			}
+		} else if _, err := s.sreLlmSvc.Set(ctx, org, actor, p.SreLLM.Value.Provider, p.SreLLM.Value.Model, p.SreLLM.Value.APIKey); err != nil {
+			return nil, sectionErrorFrom("sreLlm", err)
+		}
+		sections = append(sections, "sreLlm")
 	}
 	if p.IDP.Sent && !p.IDP.Null {
 		if s.idpSvc == nil {
@@ -377,6 +416,23 @@ func (s *Service) DiscoverIDP(ctx context.Context, issuer string) (issuerOut, jw
 }
 
 // --- projection mappers -----------------------------------------------------
+
+func sreLlmProjectionFrom(c *SreLlmConfig) *orgconfig.SreLlmProjection {
+	if c == nil {
+		return nil
+	}
+	return &orgconfig.SreLlmProjection{
+		Provider:        c.Provider,
+		Model:           c.Model,
+		KeyPrefix:       c.KeyPrefix,
+		KeyLast4:        c.KeyLast4,
+		Status:          c.Status,
+		ConnectedAt:     c.ConnectedAt,
+		LastValidatedAt: c.LastValidatedAt,
+		ValidationError: c.ValidationError,
+	}
+}
+
 
 func gitProviderProjectionFrom(p *Projection) *orgconfig.GitProviderProjection {
 	if p == nil {

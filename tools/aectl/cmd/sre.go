@@ -67,6 +67,10 @@ var (
 	sreRcaImageTag     string
 	sreRcaPullPolicy   string
 	sreRcaModel        string
+	sreRcaName         string
+	sreLlmProvider     string
+	sreLlmModel        string
+	sreLlmAPIKey       string
 	sreAdapterImage    string
 	sreAEHandoff       bool
 	sreAEAutoDispatch  bool
@@ -110,6 +114,10 @@ func init() {
 	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.0.1-hotfix.1-anthropic", "RCA/SRE agent image tag")
 	f.StringVar(&sreRcaPullPolicy, "rca-image-pull-policy", "IfNotPresent", "RCA/SRE agent image pull policy")
 	f.StringVar(&sreRcaModel, "rca-model", "anthropic:claude-sonnet-4-6", "RCA/SRE agent LLM model")
+	f.StringVar(&sreRcaName, "rca-name", "sre-agent", "RCA/SRE agent Deployment/Service name (must match the chart's rca.name)")
+	f.StringVar(&sreLlmProvider, "sre-llm-provider", "", "SRE agent LLM provider override (anthropic|openai) — when set with --sre-llm-model and --sre-llm-api-key, seeds a dedicated SRE agent key instead of reusing the default Anthropic key")
+	f.StringVar(&sreLlmModel, "sre-llm-model", "", "SRE agent LLM model override, paired with --sre-llm-provider (e.g. gpt-4o-mini)")
+	f.StringVar(&sreLlmAPIKey, "sre-llm-api-key", "", "SRE agent LLM API key, paired with --sre-llm-provider")
 	f.StringVar(&sreAdapterImage, "adapter-image", "docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive", "logs-adapter image (repo:tag)")
 	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts the SRE remediation extension)")
 	f.BoolVar(&sreAEAutoDispatch, "ae-auto-dispatch", true, "Auto-dispatch the coding agent after issue creation (false = issue-only)")
@@ -129,6 +137,7 @@ type sreParams struct {
 	ObsNamespace, PlatformSecretStore                         string
 	OCApiURL, ThunderJwksURL, ThunderTokenURL, ThunderAuthURL string
 	RcaImageRepo, RcaImageTag, RcaPullPolicy, RcaModel        string
+	SreLlmVaultKey, SreLlmModelName                           string
 	AdapterRepo, AdapterTag                                   string
 	ObserverHost, RcaHost                                     string
 	// In-cluster handoff wiring (svc DNS, not host.k3d.internal). AEMCPURL is
@@ -197,6 +206,23 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// A dedicated SRE agent key/model, explicitly seeded at install time —
+	// independent of (and not an override on) the org's model connection.
+	if sreLlmProvider != "" || sreLlmModel != "" || sreLlmAPIKey != "" {
+		if sreLlmProvider == "" || sreLlmModel == "" || sreLlmAPIKey == "" {
+			return fmt.Errorf("--sre-llm-provider, --sre-llm-model, and --sre-llm-api-key must be set together")
+		}
+		if sreLlmProvider != "anthropic" && sreLlmProvider != "openai" {
+			return fmt.Errorf("--sre-llm-provider must be 'anthropic' or 'openai', got %q", sreLlmProvider)
+		}
+		vaultKey := "aep/sre-llm-api-key"
+		if err := writeOpenBaoSecret(ctx, vaultKey, sreLlmAPIKey); err != nil {
+			return fmt.Errorf("seed sre-llm key into OpenBao: %w", err)
+		}
+		p.SreLlmVaultKey = vaultKey
+		p.SreLlmModelName = fmt.Sprintf("%s:%s", sreLlmProvider, sreLlmModel)
+	}
+
 	// 1. Detect the plane and the org's model connection key.
 	plane, adopt, err := installedObsPlane(ctx, sreObsNamespace)
 	if err != nil {
@@ -262,6 +288,12 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		}
 		wantSecrets = append(wantSecrets, "rca-agent-anthropic-secret")
 	}
+	if p.SreLlmVaultKey != "" {
+		if err := applyTemplate(ctx, applier, "sre-llm-secret", sreObsNamespace, sreLlmSecretTmpl, p); err != nil {
+			return fmt.Errorf("apply sre-llm key ExternalSecret: %w", err)
+		}
+		wantSecrets = append(wantSecrets, "sre-llm-secret")
+	}
 	// ESO must materialise these before the charts start.
 	for _, s := range wantSecrets {
 		if err := waitForSecret(ctx, client, sreObsNamespace, s, 2*time.Minute); err != nil {
@@ -293,7 +325,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	p.RcaServiceURL = fmt.Sprintf("http://%s:8080", agentDeploy)
 
-	// 4. Best-effort readiness (do NOT wait on the SRE agent — it stays
+	// 4. Best-effort readiness (do NOT wait on the RCA/SRE agent deployment — it stays
 	// unwired until step 5). Warn (don't abort) so name/version drift in the
 	// upstream charts can't wedge the install.
 	waitForDeployment(ctx, client, sreObsNamespace, "observer", 5*time.Minute)
@@ -315,7 +347,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets, p.AEMCPURL); err != nil {
 			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
 		}
-		if err := mountSREAgentRuntime(ctx, client, sreObsNamespace, agentDeploy, p.AEMCPURL); err != nil {
+		if err := mountSREAgentRuntime(ctx, client, sreObsNamespace, agentDeploy, p.AEMCPURL, p.SreLlmVaultKey != ""); err != nil {
 			return fmt.Errorf("mount SRE agent runtime: %w", err)
 		}
 		if err := patchConfigMap(ctx, client, sreObsNamespace, "rca-agent-config", map[string]string{

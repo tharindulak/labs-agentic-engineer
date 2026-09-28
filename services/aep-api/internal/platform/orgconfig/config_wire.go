@@ -65,6 +65,7 @@ type ConfigProjection struct {
 	Agents      AgentsProjection       `json:"agents"`      // always present
 	GitProvider *GitProviderProjection `json:"gitProvider"` // null = not connected
 	IDP         IDPProjection          `json:"idp"`         // always present
+	SreLLM      *SreLlmProjection      `json:"sreLlm"`      // null = not configured
 }
 
 // --- llm: the organization's model connection --------------------------------
@@ -205,6 +206,20 @@ type SubscriptionProjection struct {
 // through a `claude setup-token` token.
 const SubscriptionKindClaude = "claude"
 
+// SreLlmProjection carries the platform's SRE agent LLM connection status.
+// Unlike LLMProjection this is platform-wide, not per-org — there is exactly
+// one row regardless of which organization's session reads or writes it.
+type SreLlmProjection struct {
+	Provider        string     `json:"provider" enum:"anthropic,openai"`
+	Model           string     `json:"model"`
+	KeyPrefix       string     `json:"keyPrefix"`
+	KeyLast4        string     `json:"keyLast4"`
+	Status          string     `json:"status"` // matches LLMProjection's shape; always "active" while the row exists
+	ConnectedAt     time.Time  `json:"connectedAt"`
+	LastValidatedAt *time.Time `json:"lastValidatedAt,omitempty"`
+	ValidationError *string    `json:"validationError,omitempty"`
+}
+
 // DefaultAgents is the projection for an org that has never set one. It
 // offers the default runtime only: that is the one every installation runs.
 func DefaultAgents() AgentsProjection {
@@ -257,6 +272,7 @@ type ConfigPatch struct {
 	Agents      patch.Field[AgentsWrite]      `json:"agents,omitempty"`
 	GitProvider patch.Field[GitProviderWrite] `json:"gitProvider,omitempty"`
 	IDP         patch.Field[IDPWrite]         `json:"idp,omitempty"`
+	SreLLM      patch.Field[SreLlmWrite]      `json:"sreLlm,omitempty"`
 }
 
 // AgentsWrite is the agents section's write shape; its fields are individually
@@ -288,6 +304,18 @@ type LLMPatch struct {
 	BaseURL string           `json:"baseURL,omitempty"`
 	APIKey  string           `json:"apiKey,omitempty"`
 	Model   string           `json:"model,omitempty"`
+}
+
+// SreLlmWrite is the sreLlm section's write shape: a platform-wide LLM
+// config for the SRE agent, distinct from llm/codingLlm — provider is
+// explicit here (unlike LLMWrite, which is always "anthropic") because the
+// SRE agent genuinely supports either provider via RCA_MODEL_NAME's prefix.
+// null clears the section back to "not configured" (there is no override
+// semantics to preserve, unlike codingLlm).
+type SreLlmWrite struct {
+	Provider string `json:"provider" enum:"anthropic,openai" required:"true"`
+	Model    string `json:"model" required:"true"`
+	APIKey   string `json:"apiKey" required:"true"` // write-only, probed, never echoed
 }
 
 // GitProviderWrite is the gitProvider section's write shape. Mode is pat-only:

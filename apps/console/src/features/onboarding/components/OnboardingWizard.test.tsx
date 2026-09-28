@@ -86,6 +86,7 @@ function config(over: Partial<ConfigProjection> = {}) {
       hasClientSecret: false,
       publisherClientId: "aep-console",
     },
+    sreLlm: null,
     ...over,
   } satisfies ConfigProjection;
 }

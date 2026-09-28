@@ -62,6 +62,7 @@ type LLMProjection = components["schemas"]["LLMProjection"];
 type LLMPatch = components["schemas"]["LLMPatch"];
 type LLMCheck = components["schemas"]["LLMCheck"];
 type LLMCapabilities = components["schemas"]["LLMCapabilities"];
+type SreLlmProjection = components["schemas"]["SreLlmProjection"];
 type CreateSkillInput = components["schemas"]["CreateSkillInput"];
 type UpdateSkillInput = components["schemas"]["UpdateSkillInput"];
 type SkillUpdate = components["schemas"]["SkillUpdate"];
@@ -98,6 +99,9 @@ let llmDisconnectedAt: string | null = null;
 // `subscription` is the Claude subscription coding runs bill (null = they
 // bill the connection's key).
 let agents: AgentsProjection = { ...agentsDefaultsFixture };
+// Platform-wide and independent of `llm`/`agents` — not an override on
+// either, so it is never cascaded when the org connection is cleared.
+let sreLlm: SreLlmProjection | null = null;
 let skills: SkillDetailBody[] = [];
 let skillUpdates: SkillUpdate[] = [];
 let initialized = false;
@@ -248,6 +252,7 @@ function configProjection(): ConfigProjection {
     ...(llm === null && llmDisconnectedAt ? { llmDisconnectedAt } : {}),
     agents,
     llmFormats: llmFormatsFor(agents.availableRuntimes),
+    sreLlm,
     idp: {
       kind: "platform",
       issuer: "https://idp.aep.local",
@@ -525,6 +530,21 @@ export const settingsHandlers = [
     // cannot present one, and only Anthropic's own API takes one.
     if (agents.runtime !== "claude-code" || !llm?.capabilities.claudeSubscription) {
       agents = { ...agents, subscription: null };
+    }
+
+    if (body.sreLlm !== undefined) {
+      if (body.sreLlm === null) {
+        sreLlm = null;
+      } else {
+        sreLlm = {
+          provider: body.sreLlm.provider,
+          model: body.sreLlm.model,
+          keyPrefix: body.sreLlm.apiKey.slice(0, 13),
+          keyLast4: body.sreLlm.apiKey.slice(-4),
+          status: "active",
+          connectedAt: new Date().toISOString(),
+        };
+      }
     }
 
     if (body.gitProvider != null) {
