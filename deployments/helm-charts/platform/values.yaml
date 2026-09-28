@@ -330,6 +330,19 @@ sreHandoff:
     app.kubernetes.io/name: openchoreo-observability-plane
     app.kubernetes.io/component: sre-agent
 
+# SRE-agent push target (config.SREAgentConfig) — names the ONE org's
+# observability-plane Secret/Deployment aep-api's reconciler pushes the SRE
+# agent's LLM settings to. Off by default. Distinct from sreHandoff above:
+# that block authenticates aep-mcp-server's forwarded bearer; this one
+# addresses where a push lands. `aectl sre install --org` sets org (and, when
+# needed, the other three) on install.
+sreAgent:
+  enabled: false
+  org: ""
+  namespace: "openchoreo-observability-plane"
+  deployment: "sre-agent"
+  secret: "sre-agent-aep"
+
 temporal:
   enabled: true
   # Temporal namespace aep-api connects to; auto-setup registers it on startup.

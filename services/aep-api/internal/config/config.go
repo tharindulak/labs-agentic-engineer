@@ -94,6 +94,14 @@ type Config struct {
 	SREHandoffToken string
 	SREHandoffOrg   string
 
+	// SREAgent names the one owning org's observability-plane Secret/Deployment
+	// that aep-api pushes the SRE agent's LLM settings to (Task 9's
+	// reconciler). Read from SRE_AGENT_ORG / SRE_AGENT_NAMESPACE /
+	// SRE_AGENT_DEPLOYMENT / SRE_AGENT_SECRET. Distinct from SREHandoffToken/
+	// SREHandoffOrg above: that pair authenticates aep-mcp-server's forwarded
+	// bearer; this one addresses the push target.
+	SREAgent SREAgentConfig
+
 	// OAuthStateSigningKey is the HS256 key used to sign the connect-state
 	// JWT that rides the GitHub App OAuth `state` query param (CSRF
 	// protection on the connect callback). Task JWTs use RS256 via
@@ -493,3 +501,22 @@ type TemporalConfig struct {
 
 // Enabled reports whether the Temporal integration is configured.
 func (t TemporalConfig) Enabled() bool { return t.HostPort != "" }
+
+// SREAgentConfig names the observability-plane Secret/Deployment of the ONE
+// org that owns the SRE agent — the push target aep-api's reconciler
+// (Task 9) writes the agent's LLM settings to. `aectl sre install --org`
+// (Task 15) sets these through the platform Helm chart's sreAgent values.
+type SREAgentConfig struct {
+	Org        string
+	Namespace  string
+	Deployment string
+	Secret     string
+}
+
+// Enabled reports whether a push target is fully configured. All four
+// fields must be set together — a partial target is not addressable.
+//
+//deadcode:keep wired by Task 9 reconciler
+func (c SREAgentConfig) Enabled() bool {
+	return c.Org != "" && c.Namespace != "" && c.Deployment != "" && c.Secret != ""
+}
