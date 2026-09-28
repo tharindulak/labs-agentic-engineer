@@ -38,8 +38,6 @@ type Desired struct {
 
 // DesiredFrom maps the effective SRE connection onto what the stock agent
 // reads: RCA_MODEL_NAME must carry the `openai:` prefix for init_chat_model.
-//
-//deadcode:keep wired by Task 9 reconciler
 func DesiredFrom(e organization.EffectiveSRE, mcpToken string) Desired {
 	if e.Source == organization.SRESourceNone {
 		return Desired{}
@@ -49,8 +47,6 @@ func DesiredFrom(e organization.EffectiveSRE, mcpToken string) Desired {
 
 // SecretData returns the secret data for the SRE agent. It always carries all
 // four keys because the Deployment's secretKeyRefs require them.
-//
-//deadcode:keep wired by Task 9 reconciler
 func (d Desired) SecretData() map[string][]byte {
 	return map[string][]byte{
 		"RCA_LLM_API_KEY":  []byte(d.APIKey),
@@ -61,8 +57,6 @@ func (d Desired) SecretData() map[string][]byte {
 }
 
 // Replicas returns the desired number of replicas: 1 when Configured, else 0.
-//
-//deadcode:keep wired by Task 9 reconciler
 func (d Desired) Replicas() int32 {
 	if d.Configured {
 		return 1
@@ -72,8 +66,6 @@ func (d Desired) Replicas() int32 {
 
 // Hash returns the sha256 hex hash over the four values (Model, BaseURL, APIKey,
 // MCPToken). This is used to detect configuration changes that require a restart.
-//
-//deadcode:keep wired by Task 9 reconciler
 func (d Desired) Hash() string {
 	h := sha256.New()
 	for _, v := range []string{d.Model, d.BaseURL, d.APIKey, d.MCPToken} {
@@ -111,8 +103,6 @@ const (
 // StatusOf reads the console's SRE agent status off the Deployment and its
 // pods: failed wins over applying, so a crashlooping new pod never reads as
 // "still applying".
-//
-//deadcode:keep wired by Task 9 reconciler
 func StatusOf(d Desired, dep DeploymentState, pods []PodState) (Status, string) {
 	if !d.Configured {
 		return StatusUnconfigured, ""

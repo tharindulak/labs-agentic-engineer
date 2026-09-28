@@ -160,8 +160,6 @@ func (s *ModelConnectionService) WithProbeClient(c *http.Client) *ModelConnectio
 // delete of the connection: a change can decide whether the SRE agent runs
 // on it (its SREAgent capability). One callback: a second call replaces the
 // first.
-//
-//deadcode:keep wired by Task 9 reconciler (Reconciler.Kick)
 func (s *ModelConnectionService) OnChange(f func(ocOrgID string)) {
 	s.onChange = f
 }

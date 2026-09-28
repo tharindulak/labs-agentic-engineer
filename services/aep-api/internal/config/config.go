@@ -95,7 +95,7 @@ type Config struct {
 	SREHandoffOrg   string
 
 	// SREAgent names the one owning org's observability-plane Secret/Deployment
-	// that aep-api pushes the SRE agent's LLM settings to (Task 9's
+	// that aep-api pushes the SRE agent's LLM settings to (the sreagent
 	// reconciler). Read from SRE_AGENT_ORG / SRE_AGENT_NAMESPACE /
 	// SRE_AGENT_DEPLOYMENT / SRE_AGENT_SECRET. Distinct from SREHandoffToken/
 	// SREHandoffOrg above: that pair authenticates aep-mcp-server's forwarded
@@ -503,8 +503,8 @@ type TemporalConfig struct {
 func (t TemporalConfig) Enabled() bool { return t.HostPort != "" }
 
 // SREAgentConfig names the observability-plane Secret/Deployment of the ONE
-// org that owns the SRE agent — the push target aep-api's reconciler
-// (Task 9) writes the agent's LLM settings to. `aectl sre install --org`
+// org that owns the SRE agent — the push target aep-api's sreagent
+// reconciler writes the agent's LLM settings to. `aectl sre install --org`
 // (Task 15) sets these through the platform Helm chart's sreAgent values.
 type SREAgentConfig struct {
 	Org        string
@@ -515,8 +515,6 @@ type SREAgentConfig struct {
 
 // Enabled reports whether a push target is fully configured. All four
 // fields must be set together — a partial target is not addressable.
-//
-//deadcode:keep wired by Task 9 reconciler
 func (c SREAgentConfig) Enabled() bool {
 	return c.Org != "" && c.Namespace != "" && c.Deployment != "" && c.Secret != ""
 }

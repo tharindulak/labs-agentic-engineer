@@ -132,7 +132,9 @@ connect-callback controller, and the S2S credentials-refresh.*
   else the org's connection when it has the `SREAgent` capability, else none. An `sreLlm` save follows
   the connection's rules (https, keys of 12+ characters, a new host only with its key), is probed
   before any section of the patch is written, and writes under the card's lock. Both services'
-  `OnChange` run after every committed change of their connection.
+  `OnChange` run after every committed change of their connection. `GET /config`'s `sreAgent` is set
+  only for the org the SRE agent serves (`SREAgentStatusReader` answers ok=false for any other), and a
+  failed status read shows as `failed`, never as a failed GET.
 - **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**
   `ProvisionPublisherForBuild` (actor `build-provision`) ensures the Thunder publisher app and stamps
   `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns

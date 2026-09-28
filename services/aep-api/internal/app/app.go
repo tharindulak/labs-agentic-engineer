@@ -327,6 +327,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// OpenChoreo SRE agent calls instead of the org's model connection. It
 	// saves under the card's lock, and falls back to modelConnections.
 	sreModelConnections := organization.NewSreModelConnectionService(orgSreModelConnRepo, credStore, agentsCardRepo, modelConnections)
+	// Pushes that connection to the stock SRE agent on the observability plane
+	// (its Secret, restart hash and replicas) after every save that can change
+	// it and on a periodic pass. nil without a push target.
+	sreAgent, err := newSREAgentReconciler(cfg, credStore, sreModelConnections, modelConnections)
+	if err != nil {
+		return nil, err
+	}
 
 	// Task JWT manager — RS256. The public key is published on
 	// /auth/external/jwks.json. Used to mint BFF MCP tokens
@@ -958,6 +965,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		cfg.BFFPublicURL,
 		cfg.GitHubAppClientID,
 	).WithAgentSettings(agentSettings).WithSreModel(sreModelConnections)
+	if sreAgent != nil {
+		orgConfigSvc.WithSREAgentStatus(sreAgent)
+	}
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).
@@ -1567,6 +1577,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// the SM-API mirror at boot; the periodic passes retire the old copies
 		// once none of the org's cycles is open.
 		organization.NewModelKeyRename(organization.NewModelKeyRenameRepository(db, credStore), orgRepo, secretRefWriter, runCycleRepo),
+	}
+	if sreAgent != nil {
+		watchers = append(watchers, sreAgent)
 	}
 	// Disk-lifecycle reaper: global passes self-elect via non-blocking flock.
 	// Omitted when Fake() leaves Workspace nil (no disk at assemble time).

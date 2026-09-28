@@ -85,8 +85,6 @@ func (s *SreModelConnectionService) WithProbeClient(c *http.Client) *SreModelCon
 
 // OnChange registers f to run after every committed save or clear, with the
 // org it changed. One callback: a second call replaces the first.
-//
-//deadcode:keep wired by Task 9 reconciler (Reconciler.Kick)
 func (s *SreModelConnectionService) OnChange(f func(org string)) {
 	s.onChange = f
 }
