@@ -49,6 +49,7 @@ import {
   skillsLoadError,
   skillsSyncError,
   skillsRepoUrl,
+  sreAgentProjectionFixture,
   subscriptionFixture,
   subscriptionValidationError,
   type SettingsScenario,
@@ -253,12 +254,12 @@ function importSkill(name: string, source: string): ImportResult {
 // out of scope for the mock — there is no reconciler here to fail.
 function sreAgentProjection(): SreAgentProjection {
   if (sreLlm !== null) {
-    return { enabled: true, source: "override", host: sreLlm.host, model: sreLlm.model, status: "running" };
+    return sreAgentProjectionFixture({ source: "override", host: sreLlm.host, model: sreLlm.model, status: "running" });
   }
   if (llm !== null && llm.capabilities.sreAgent) {
-    return { enabled: true, source: "organization", host: hostOf(llm.baseURL), model: llm.model, status: "running" };
+    return sreAgentProjectionFixture({ source: "organization", host: hostOf(llm.baseURL), model: llm.model, status: "running" });
   }
-  return { enabled: true, source: "none", host: "", model: "", status: "unconfigured" };
+  return sreAgentProjectionFixture();
 }
 
 function configProjection(): ConfigProjection {

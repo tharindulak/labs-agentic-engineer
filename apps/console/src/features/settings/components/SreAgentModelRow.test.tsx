@@ -23,11 +23,9 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { ApiRequestError } from "../../../api/errors";
+import { llmConnectedFixture, openaiOrgFixture, sreAgentProjectionFixture, sreLlmFixture } from "../../../mocks/fixtures/settings";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
-type LLMProjection = components["schemas"]["LLMProjection"];
-type SreAgentProjection = components["schemas"]["SreAgentProjection"];
-type SreLlmProjection = components["schemas"]["SreLlmProjection"];
 
 const saveMutate = vi.fn();
 const clearMutate = vi.fn();
@@ -49,55 +47,9 @@ vi.mock("../api/queries", () => ({
 
 const { SreAgentModelRow } = await import("./SreAgentModelRow");
 
-const anthropic: LLMProjection = {
-  kind: "anthropic",
-  baseURL: "https://api.anthropic.com/v1",
-  model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
-  connectedAt: "2026-06-01T12:05:00Z",
-  updatedAt: "2026-09-25T13:53:00Z",
-  updatedBy: "dev@acme.example",
-  priced: true,
-  capabilities: {
-    claudeSubscription: true,
-    webSearch: "anthropic-server-tool",
-    imageInput: "yes",
-    nativePdf: true,
-    generatedAgents: true,
-    sreAgent: false,
-  },
-};
-
-const openaiCompatibleOrg: LLMProjection = {
-  ...anthropic,
-  kind: "openai-compatible",
-  baseURL: "https://api.openai.com/v1",
-  model: "gpt-5.4",
-  capabilities: { ...anthropic.capabilities, claudeSubscription: false, sreAgent: true },
-};
-
-const defaultSreAgent: SreAgentProjection = {
-  enabled: true,
-  source: "none",
-  model: "",
-  host: "",
-  status: "unconfigured",
-  reason: "",
-};
-
-const override: SreLlmProjection = {
-  baseURL: "https://api.openai.com/v1",
-  host: "api.openai.com",
-  model: "gpt-5.4-mini",
-  keyPreview: "sk-p…abcd",
-  connectedAt: "2026-09-20T08:00:00Z",
-  updatedAt: "2026-09-20T08:00:00Z",
-  updatedBy: "dev@acme.example",
-};
-
 function config(over: Partial<ConfigProjection> = {}): ConfigProjection {
   return {
-    llm: openaiCompatibleOrg,
+    llm: openaiOrgFixture,
     llmFormats: [],
     agents: {
       runtime: "opencode",
@@ -115,7 +67,7 @@ function config(over: Partial<ConfigProjection> = {}): ConfigProjection {
       publisherClientId: "aep-console",
     },
     sreLlm: null,
-    sreAgent: defaultSreAgent,
+    sreAgent: sreAgentProjectionFixture(),
     ...over,
   };
 }
@@ -146,7 +98,7 @@ afterEach(cleanup);
 
 describe("inherited from the org connection", () => {
   it("renders the org connection and an Override button", () => {
-    renderRow(config({ sreAgent: { ...defaultSreAgent, source: "organization", model: "gpt-5.4", host: "api.openai.com", status: "running" } }));
+    renderRow(config({ sreAgent: sreAgentProjectionFixture({ source: "organization", model: openaiOrgFixture.model, host: "api.openai.com", status: "running" }) }));
     expect(
       screen.getByText("Uses the organization's model connection (gpt-5.4 @ api.openai.com)"),
     ).toBeInTheDocument();
@@ -154,7 +106,7 @@ describe("inherited from the org connection", () => {
   });
 
   it("opens a form with Base URL, API key and Model, and saves it", () => {
-    renderRow(config({ sreAgent: { ...defaultSreAgent, source: "organization", model: "gpt-5.4", host: "api.openai.com", status: "running" } }));
+    renderRow(config({ sreAgent: sreAgentProjectionFixture({ source: "organization", model: openaiOrgFixture.model, host: "api.openai.com", status: "running" }) }));
     fireEvent.click(screen.getByRole("button", { name: "Override" }));
 
     type("Base URL", "https://api.mistral.ai/v1");
@@ -183,7 +135,7 @@ describe("hidden", () => {
 
 describe("override", () => {
   it("shows Edit and Remove; Remove confirms then clears", () => {
-    renderRow(config({ sreLlm: override, sreAgent: { ...defaultSreAgent, source: "override", model: override.model, host: override.host, status: "running" } }));
+    renderRow(config({ sreLlm: sreLlmFixture, sreAgent: sreAgentProjectionFixture({ source: "override", model: sreLlmFixture.model, host: sreLlmFixture.host, status: "running" }) }));
 
     expect(screen.getByText("sk-p…abcd")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
@@ -198,7 +150,7 @@ describe("override", () => {
 
 describe("unavailable", () => {
   it("shows the reason and a Set SRE model button", () => {
-    renderRow(config({ llm: anthropic }));
+    renderRow(config({ llm: llmConnectedFixture }));
     expect(screen.getByText(/needs an OpenAI-compatible endpoint/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set SRE model" })).toBeInTheDocument();
   });
@@ -206,7 +158,7 @@ describe("unavailable", () => {
 
 describe("status chip", () => {
   it("shows Failed: ... when the agent status is failed", () => {
-    renderRow(config({ sreAgent: { ...defaultSreAgent, source: "organization", model: "gpt-5.4", host: "api.openai.com", status: "failed", reason: "exited (code 3)" } }));
+    renderRow(config({ sreAgent: sreAgentProjectionFixture({ source: "organization", model: openaiOrgFixture.model, host: "api.openai.com", status: "failed", reason: "exited (code 3)" }) }));
     expect(screen.getByText("Failed: exited (code 3)")).toBeInTheDocument();
   });
 });
@@ -215,7 +167,7 @@ describe("a refused save", () => {
   it("shows the error on the key field", () => {
     saveState.isError = true;
     saveState.error = refused("llm_key_rejected", "api.openai.com answered 401: the key was rejected.");
-    renderRow(config({ sreAgent: { ...defaultSreAgent, source: "organization", model: "gpt-5.4", host: "api.openai.com", status: "running" } }));
+    renderRow(config({ sreAgent: sreAgentProjectionFixture({ source: "organization", model: openaiOrgFixture.model, host: "api.openai.com", status: "running" }) }));
     fireEvent.click(screen.getByRole("button", { name: "Override" }));
     expect(screen.getByText("api.openai.com answered 401: the key was rejected.")).toBeInTheDocument();
   });

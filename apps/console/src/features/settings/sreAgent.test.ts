@@ -20,43 +20,14 @@
 
 import { describe, expect, it } from "vitest";
 import type { components } from "../../generated/aep-api";
+import { llmConnectedFixture, openaiOrgFixture, sreAgentProjectionFixture, sreLlmFixture } from "../../mocks/fixtures/settings";
 import { sreRowState, sreStatusLabel } from "./sreAgent";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
-type LLMProjection = components["schemas"]["LLMProjection"];
-type SreAgentProjection = components["schemas"]["SreAgentProjection"];
-
-const anthropic: LLMProjection = {
-  kind: "anthropic",
-  baseURL: "https://api.anthropic.com/v1",
-  model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
-  connectedAt: "2026-06-01T12:05:00Z",
-  updatedAt: "2026-09-25T13:53:00Z",
-  updatedBy: "dev@acme.example",
-  priced: true,
-  capabilities: {
-    claudeSubscription: true,
-    webSearch: "anthropic-server-tool",
-    imageInput: "yes",
-    nativePdf: true,
-    generatedAgents: true,
-    sreAgent: false,
-  },
-};
-
-const defaultSreAgent: SreAgentProjection = {
-  enabled: true,
-  source: "none",
-  model: "",
-  host: "",
-  status: "unconfigured",
-  reason: "",
-};
 
 function config(over: Partial<ConfigProjection> = {}): ConfigProjection {
   return {
-    llm: anthropic,
+    llm: llmConnectedFixture,
     llmFormats: [],
     agents: {
       runtime: "claude-code",
@@ -74,7 +45,7 @@ function config(over: Partial<ConfigProjection> = {}): ConfigProjection {
       publisherClientId: "aep-console",
     },
     sreLlm: null,
-    sreAgent: defaultSreAgent,
+    sreAgent: sreAgentProjectionFixture(),
     ...over,
   };
 }
@@ -86,30 +57,29 @@ describe("sreRowState", () => {
 
   it("inherits a bearer OpenAI-compatible org connection", () => {
     const cfg = config({
-      sreAgent: { ...defaultSreAgent, source: "organization", model: "gpt-5.4", host: "api.openai.com", status: "running" },
+      llm: openaiOrgFixture,
+      sreAgent: sreAgentProjectionFixture({
+        source: "organization",
+        model: openaiOrgFixture.model,
+        host: "api.openai.com",
+        status: "running",
+      }),
     });
-    expect(sreRowState(cfg)).toEqual({ kind: "inherited", model: "gpt-5.4", host: "api.openai.com" });
+    expect(sreRowState(cfg)).toEqual({ kind: "inherited", model: openaiOrgFixture.model, host: "api.openai.com" });
   });
 
   it("shows the override when one is set", () => {
     const cfg = config({
-      sreLlm: {
-        baseURL: "https://api.openai.com/v1",
-        host: "api.openai.com",
-        model: "gpt-5.4-mini",
-        keyPreview: "sk-…abcd",
-        connectedAt: "2026-09-20T08:00:00Z",
-        updatedAt: "2026-09-20T08:00:00Z",
-        updatedBy: "dev@acme.example",
-      },
-      sreAgent: { ...defaultSreAgent, source: "override" },
+      sreLlm: sreLlmFixture,
+      sreAgent: sreAgentProjectionFixture({ source: "override" }),
     });
     expect(sreRowState(cfg).kind).toBe("override");
   });
 
   it("is unavailable on an Anthropic org connection and names the format", () => {
-    const cfg = config({ llm: { ...anthropic, capabilities: { ...anthropic.capabilities, sreAgent: false } } });
-    const s = sreRowState(cfg);
+    // The default fixture is already an Anthropic connection with no SRE
+    // capability, so the default config already exercises this case.
+    const s = sreRowState(config());
     expect(s.kind).toBe("unavailable");
     expect((s as { reason: string }).reason).toMatch(/anthropic/i);
   });
