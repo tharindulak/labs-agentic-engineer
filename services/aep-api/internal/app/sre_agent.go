@@ -23,15 +23,17 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/kubeobs"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/organization"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sreagent"
 )
 
 // newSREAgentReconciler builds the reconciler that pushes the owning org's
 // effective SRE connection to the stock OpenChoreo SRE agent, and has every
 // save that can change that connection kick it. nil when cfg names no push
-// target: the SRE agent is then not this server's to configure.
-func newSREAgentReconciler(cfg config.Config, store secrets.CredentialStore,
+// target: the SRE agent is then not this server's to configure. tokens is
+// shared with the app's auth.SREHandoffVerifier: the same store-backed
+// instance that mints/holds each org's handoff token also backs the handoff
+// gate's per-request lookup.
+func newSREAgentReconciler(cfg config.Config, tokens sreagent.Tokens,
 	sreModels *organization.SreModelConnectionService, models *organization.ModelConnectionService) (*sreagent.Reconciler, error) {
 	if !cfg.SREAgent.Enabled() {
 		slog.Info("SRE agent reconciler disabled: no SRE_AGENT_ORG/NAMESPACE/DEPLOYMENT/SECRET push target")
@@ -44,7 +46,7 @@ func newSREAgentReconciler(cfg config.Config, store secrets.CredentialStore,
 	if err != nil {
 		return nil, fmt.Errorf("sre agent reconciler: %w", err)
 	}
-	rec := sreagent.NewReconciler(cfg.SREAgent, kube, sreModels.EffectiveSRE, sreagent.NewTokens(store))
+	rec := sreagent.NewReconciler(cfg.SREAgent, kube, sreModels.EffectiveSRE, tokens)
 	sreModels.OnChange(rec.Kick)
 	models.OnChange(rec.Kick)
 	slog.Info("SRE agent reconciler", "org", cfg.SREAgent.Org, "namespace", cfg.SREAgent.Namespace,

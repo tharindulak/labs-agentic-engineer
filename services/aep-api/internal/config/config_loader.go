@@ -62,8 +62,6 @@ func Load() (Config, error) {
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
 		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
-		SREHandoffToken:          r.readOptionalString("SRE_HANDOFF_TOKEN", ""),
-		SREHandoffOrg:            r.readOptionalString("SRE_HANDOFF_ORG", ""),
 		SREAgent: SREAgentConfig{
 			Org:        r.readOptionalString("SRE_AGENT_ORG", ""),
 			Namespace:  r.readOptionalString("SRE_AGENT_NAMESPACE", ""),

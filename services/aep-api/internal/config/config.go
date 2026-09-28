@@ -83,23 +83,13 @@ type Config struct {
 	// line, and pass through. Read from TENANT_GATE_MODE; unset ⇒ enforce.
 	TenantGateMode string
 
-	// SREHandoffToken and SREHandoffOrg configure the long-lived credential
-	// aep-mcp-server forwards on behalf of the OpenChoreo SRE agent for
-	// CreateIssue/ListIssues only (internal/edge/sre_handoff_gate.go). Both
-	// must be set together — either empty leaves the shortcut disabled
-	// (secure default) and those two operations require a normal Thunder
-	// JWT like every other /api/ operation. Read from SRE_HANDOFF_TOKEN /
-	// SRE_HANDOFF_ORG. Never a ConfigMap value — Secret only, same posture
-	// as every other credential in this file.
-	SREHandoffToken string
-	SREHandoffOrg   string
-
 	// SREAgent names the one owning org's observability-plane Secret/Deployment
 	// that aep-api pushes the SRE agent's LLM settings to (the sreagent
-	// reconciler). Read from SRE_AGENT_ORG / SRE_AGENT_NAMESPACE /
-	// SRE_AGENT_DEPLOYMENT / SRE_AGENT_SECRET. Distinct from SREHandoffToken/
-	// SREHandoffOrg above: that pair authenticates aep-mcp-server's forwarded
-	// bearer; this one addresses the push target.
+	// reconciler), and doubles as the SRE-handoff shortcut's org
+	// (internal/edge/sre_handoff_gate.go): aep-mcp-server's forwarded bearer
+	// for CreateIssue/ListIssues is checked against the token minted for this
+	// org (org_secrets, not a static env secret). Read from SRE_AGENT_ORG /
+	// SRE_AGENT_NAMESPACE / SRE_AGENT_DEPLOYMENT / SRE_AGENT_SECRET.
 	SREAgent SREAgentConfig
 
 	// OAuthStateSigningKey is the HS256 key used to sign the connect-state

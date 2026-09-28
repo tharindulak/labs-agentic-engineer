@@ -247,25 +247,16 @@ spec:
                   key: POSTGRES_PASSWORD
             - name: DATABASE_URL
               value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable"
-            {{- if .Values.sreHandoff.enabled }}
-            # SRE-agent issue-handoff shortcut (auth.SREHandoffVerifier). Off
-            # by default (values.yaml) — omitting these env vars entirely
-            # keeps the shortcut disabled, same secure default as every other
-            # aep-api deployment target.
-            - name: SRE_HANDOFF_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: aep-sre-handoff-secrets
-                  key: SRE_HANDOFF_TOKEN
-            - name: SRE_HANDOFF_ORG
-              value: {{ .Values.sreHandoff.org | quote }}
-            {{- end }}
             {{- if .Values.sreAgent.enabled }}
             # SRE-agent push target (config.SREAgentConfig) — the ONE org's
             # observability-plane Secret/Deployment aep-api's reconciler
-            # pushes the SRE agent's LLM settings to. Off by default
-            # (values.yaml) — omitting these env vars entirely leaves the
-            # reconciler disabled (SREAgentConfig.Enabled() == false).
+            # pushes the SRE agent's LLM settings to. SRE_AGENT_ORG also
+            # doubles as the SRE-handoff shortcut's org
+            # (auth.SREHandoffVerifier): the shortcut checks aep-mcp-server's
+            # forwarded bearer against the token minted for this org in
+            # org_secrets, not an env secret. Off by default (values.yaml) —
+            # omitting these env vars entirely leaves the reconciler (and the
+            # handoff shortcut) disabled (SREAgentConfig.Enabled() == false).
             - name: SRE_AGENT_ORG
               value: {{ .Values.sreAgent.org | quote }}
             - name: SRE_AGENT_NAMESPACE
