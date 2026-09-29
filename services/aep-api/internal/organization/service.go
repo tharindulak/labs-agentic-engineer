@@ -336,8 +336,10 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 	if p.SreLLM.Sent && s.sreModelSvc == nil {
 		return nil, fmt.Errorf("orgconfig patch sreLlm: service not configured")
 	}
+	var sreLLM sreDraft
 	if p.SreLLM.Sent && !p.SreLLM.Null {
-		if err := s.sreModelSvc.Check(ctx, org, p.SreLLM.Value); err != nil {
+		var err error
+		if sreLLM, err = s.sreModelSvc.Check(ctx, org, p.SreLLM.Value); err != nil {
 			return nil, sectionErrorFrom("sreLlm", err)
 		}
 	}
@@ -371,7 +373,7 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			if err := s.sreModelSvc.Clear(ctx, org, actor); err != nil {
 				return nil, sectionErrorFrom("sreLlm", err)
 			}
-		} else if err := s.sreModelSvc.Set(ctx, org, actor, p.SreLLM.Value); err != nil {
+		} else if err := s.sreModelSvc.Persist(ctx, org, actor, sreLLM); err != nil {
 			return nil, sectionErrorFrom("sreLlm", err)
 		}
 		sections = append(sections, "sreLlm")

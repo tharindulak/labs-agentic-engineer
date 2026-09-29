@@ -104,10 +104,10 @@ type sreDraft struct {
 
 // Check validates w merged over the org's stored connection and probes the
 // result, writing nothing: the /config PATCH's probe phase, so a refusal here
-// leaves every other section of the patch unwritten too.
-func (s *SreModelConnectionService) Check(ctx context.Context, org string, w orgconfig.SreLlmWrite) error {
-	_, err := s.probed(ctx, org, w)
-	return err
+// leaves every other section of the patch unwritten too. The returned draft
+// is already probed; hand it to Persist to write it without probing again.
+func (s *SreModelConnectionService) Check(ctx context.Context, org string, w orgconfig.SreLlmWrite) (sreDraft, error) {
+	return s.probed(ctx, org, w)
 }
 
 // Set saves w merged over the org's stored connection, field by field: it
@@ -115,12 +115,22 @@ func (s *SreModelConnectionService) Check(ctx context.Context, org string, w org
 // one, the key, in one transaction under the card's lock. A refusal is a
 // SectionError on sreLlm and writes nothing. OnChange runs after the commit.
 func (s *SreModelConnectionService) Set(ctx context.Context, org, actor string, w orgconfig.SreLlmWrite) error {
-	d, err := s.probed(ctx, org, w)
+	d, err := s.Check(ctx, org, w)
 	if err != nil {
 		return err
 	}
+	return s.Persist(ctx, org, actor, d)
+}
+
+// Persist writes a draft Check already validated and probed, without probing
+// it again: the /config PATCH's persist phase, once every section's probe
+// phase has passed. The row it was judged against is re-read inside the
+// transaction, under the card's lock, so a connection that moved between
+// Check and Persist is still a conflict (sameRow) rather than a write of a
+// connection nothing probed. OnChange runs after the commit.
+func (s *SreModelConnectionService) Persist(ctx context.Context, org, actor string, d sreDraft) error {
 	now := s.now().UTC()
-	err = s.card.Tx(ctx, func(tx AgentsCardTx) error {
+	err := s.card.Tx(ctx, func(tx AgentsCardTx) error {
 		if err := lockCard(tx.AdvisoryLock, org); err != nil {
 			return err
 		}

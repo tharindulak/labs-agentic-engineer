@@ -34,6 +34,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
+	"github.com/wso2/aep/aep-api/internal/platform/patch"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
@@ -399,6 +400,36 @@ type racingCard struct {
 func (c racingCard) Tx(ctx context.Context, fn func(tx AgentsCardTx) error) error {
 	c.race()
 	return c.sreCard.Tx(ctx, fn)
+}
+
+// --- Service.Patch probes the SRE model connection once ----------------------
+
+// TestServicePatch_SreLlm_ProbesOnce guards the /config PATCH sequencing:
+// Patch's probe phase calls Check, and the persist phase must write the draft
+// Check already validated and probed rather than probing it again. A flaky
+// second probe must not be able to leave sreLlm unwritten after sibling
+// sections already committed.
+func TestServicePatch_SreLlm_ProbesOnce(t *testing.T) {
+	ctx := context.Background()
+	w := newSreWorld()
+	prober := &sreProber{}
+	sre := newSreService(w, prober, sreOrgConn{})
+	svc := NewService(nil, nil, nil, nil, PlatformIDPConfig{}, "", "").WithSreModel(sre)
+
+	_, err := svc.Patch(ctx, sreOrg, sreActor, orgconfig.ConfigPatch{
+		SreLLM: patch.Field[orgconfig.SreLlmWrite]{Sent: true, Value: orgconfig.SreLlmWrite{
+			BaseURL: ptr("https://a.example/v1"), APIKey: ptr(sreKey), Model: ptr("gpt-4o-mini"),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+	if len(prober.targets) != 1 {
+		t.Fatalf("probe calls = %d, want 1 (Patch must not probe twice per save)", len(prober.targets))
+	}
+	if w.row == nil || w.row.Host != "a.example" || w.key(sreOrg) != sreKey {
+		t.Fatalf("row = %+v key = %q, want a.example with the sent key written", w.row, w.key(sreOrg))
+	}
 }
 
 // --- Clear -------------------------------------------------------------------
