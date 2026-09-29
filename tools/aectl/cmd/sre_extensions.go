@@ -26,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -140,72 +139,4 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 		}
 	}
 	return nil
-}
-
-// mountSREAgentRuntime patches the SRE deployment with the extension mount,
-// the key file (the org's Anthropic key, or the platform's dedicated SRE LLM
-// key when sreLlmConfigured), and the MCP URL (the same mcpURL rendered into
-// mcp.json by applyExtensionsConfigMap). It carries no MCP credential, and
-// its AEP_MCP_TOKEN delete directive removes the static handoff bearer that
-// earlier aectl versions injected.
-//
-// The Anthropic key volume is required: a pod that cannot mount the org's key
-// waits for it instead of accepting an alert and failing inside the analysis.
-// The sre-llm-key volume is optional — it is only ever populated when
-// sreLlmSecretTmpl was applied (sreLlmConfigured), and RCA_LLM_API_KEY_FILE
-// only ever points at it in that case.
-func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName, mcpURL string, sreLlmConfigured bool) error {
-	keyFilePath := "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"
-	if sreLlmConfigured {
-		keyFilePath = "/etc/rca-agent/sre-llm/RCA_LLM_API_KEY"
-	}
-	patch := `{
-		"spec": {"template": {"spec": {
-			"volumes": [
-				{
-					"name": "sre-agent-extensions",
-					"configMap": {
-						"name": "sre-agent-extensions",
-						"items": [
-							{"key": "mcp.json", "path": "remediation/mcp.json"},
-							{"key": "CONTEXT.md", "path": "remediation/CONTEXT.md"},
-							{"key": "SKILL.md", "path": "remediation/skills/coding-agent-handoff/SKILL.md"}
-						]
-					}
-				},
-				{
-					"name": "anthropic-key",
-					"secret": {
-						"secretName": "rca-agent-anthropic-secret",
-						"optional": false,
-						"defaultMode": 256
-					}
-				},
-				{
-					"name": "sre-llm-key",
-					"secret": {
-						"secretName": "sre-llm-secret",
-						"optional": true,
-						"defaultMode": 256
-					}
-				}
-			],
-			"containers": [{
-				"name": "` + deployName + `",
-				"volumeMounts": [
-					{"name": "sre-agent-extensions", "mountPath": "/etc/openchoreo/sre-agent", "readOnly": true},
-					{"name": "anthropic-key", "mountPath": "/etc/rca-agent/anthropic", "readOnly": true},
-					{"name": "sre-llm-key", "mountPath": "/etc/rca-agent/sre-llm", "readOnly": true}
-				],
-				"env": [
-					{"name": "EXTENSIONS_DIR", "value": "/etc/openchoreo/sre-agent"},
-					{"name": "RCA_LLM_API_KEY_FILE", "value": "` + keyFilePath + `"},
-					{"name": "AEP_MCP_URL", "value": "` + mcpURL + `"},
-					{"name": "AEP_MCP_TOKEN", "$patch": "delete"}
-				]
-			}]
-		}}}
-	}`
-	_, err := client.AppsV1().Deployments(ns).Patch(ctx, deployName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
-	return err
 }

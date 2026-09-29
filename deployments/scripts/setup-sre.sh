@@ -28,15 +28,15 @@
 #
 #   1. the observability-alert-rule ClusterTrait the chart's ComponentTypes
 #      allow but `aectl platform install` does not apply (deployments/README.md).
-#   2. `aectl sre install`, which enables the SRE agent on the observability
-#      plane setup-env-for-aectl.sh installed (at that plane's chart version,
-#      with the SRE image override), mounts the AE extension, and points the
-#      agent at the org's model connection key as saved in the AE Console
-#      (an Anthropic key: the SRE image calls Anthropic).
+#   2. `aectl sre install --org`, which enables the SRE agent on the
+#      observability plane setup-env-for-aectl.sh installed (at that plane's
+#      chart version, with the stock ghcr.io/openchoreo/sre-agent image) and
+#      mounts the AE remediation extension. aep-api's own reconciler pushes
+#      the org's LLM key/model and handoff token into the agent's Secret.
 #
 # The SRE agent has no key of its own: until the org's model connection is saved
-# in the Console, its pod waits for it. Save the key, then re-run this script
-# (only step 2 then changes anything).
+# in the Console, its pod waits for aep-api to push one. Save the key, then
+# re-run this script (only step 2 then changes anything).
 #
 # Every step is idempotent.
 
@@ -77,7 +77,8 @@ kubectl apply -f "$ALERT_RULE_TRAIT"
 
 # ── 2. SRE agent on the observability plane ─────────────────────────────────
 echo "🤖 Running aectl sre install"
-"$AECTL" sre install --namespace "$AEP_NS" --obs-namespace "$OBS_NS" --assets-root "$REPO_ROOT"
+"$AECTL" sre install --namespace "$AEP_NS" --obs-namespace "$OBS_NS" --assets-root "$REPO_ROOT" \
+    --org "${AEP_ORG:-default}"
 
 echo ""
 echo "✅ SRE handoff wired. Runbook: docs/developer-guide/sre-handoff-runbook.md"

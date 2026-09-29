@@ -16,24 +16,16 @@
 
 package cmd
 
-import (
-	"context"
-	"fmt"
-	"time"
-
-	"github.com/wso2/aep/aectl/internal/openbao"
-)
-
 // Manifest + Helm-values templates for `aectl sre install`. Rendered against
 // sreParams. Secrets are pulled from OpenBao via ESO (never plaintext), through
 // the platform chart's ClusterSecretStore (aep-platform), which reads the
 // aep/* paths `aectl platform install` seeds.
 
 // The SRE agent's own ExternalSecret, sourced from secret/data/aep/*. Applied
-// whether or not aectl installs the plane itself.
-// The chart requires RCA_LLM_API_KEY in this Secret, but the agent reads its
-// key from RCA_LLM_API_KEY_FILE (the Console key, sreAnthropicSecretTmpl) when
-// that is set, so the platform value here is only the chart's placeholder.
+// whether or not aectl installs the plane itself. Carries only the OAuth
+// client secret the chart's rca.secretName requires; the agent's LLM key,
+// model and handoff token come from the AE-owned sre-agent-aep Secret
+// aep-api's reconciler writes (wired via rca.extraEnvs, not this template).
 const sreAgentSecretsTmpl = `
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -48,60 +40,8 @@ spec:
   target:
     name: rca-agent-secret
   data:
-    - secretKey: RCA_LLM_API_KEY
-      remoteRef: { key: aep/anthropic-api-key, property: value }
     - secretKey: OAUTH_CLIENT_SECRET
       remoteRef: { key: aep/thunder-clients/openchoreo-rca-agent, property: value }
-`
-
-// The SRE agent's Anthropic key: the org's model connection key as saved in the
-// AE Console, read from the KV path aep-api published in the org's
-// model-connection-secrets SecretReference (sre_plane.go). Through the org secret store (OpenChoreo's
-// "default" ClusterSecretStore, which every workload reading that path uses),
-// not the aep/* store above. The short refresh picks up a key re-saved
-// in the Console without a re-run.
-const sreAnthropicSecretTmpl = `
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: rca-agent-anthropic-secret
-  namespace: {{.ObsNamespace}}
-  labels:
-    aep.wso2.com/source: ae-org-anthropic
-spec:
-  refreshInterval: 1m
-  secretStoreRef:
-    name: {{.OrgSecretStore}}
-    kind: ClusterSecretStore
-  target:
-    name: rca-agent-anthropic-secret
-  data:
-    - secretKey: RCA_LLM_API_KEY
-      remoteRef: { key: "{{.AnthropicRef.Key}}", property: "{{.AnthropicRef.Property}}" }
-`
-
-// The SRE agent's dedicated key, when `--sre-llm-provider`/`--sre-llm-model`/
-// `--sre-llm-api-key` seeded one into OpenBao (runSreInstall, aep/sre-llm-api-key).
-// Applied only when p.SreLlmVaultKey is set — independent of the org's model
-// connection (sreAnthropicSecretTmpl/haveKey above), since this key does not
-// override it, it replaces it outright (mountSREAgentRuntime points
-// RCA_LLM_API_KEY_FILE here instead of at rca-agent-anthropic-secret).
-const sreLlmSecretTmpl = `
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: sre-llm-secret
-  namespace: {{.ObsNamespace}}
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: {{.PlatformSecretStore}}
-    kind: ClusterSecretStore
-  target:
-    name: sre-llm-secret
-  data:
-    - secretKey: RCA_LLM_API_KEY
-      remoteRef: { key: {{.SreLlmVaultKey}}, property: value }
 `
 
 // The observer's Thunder client secret, for a plane aectl did not install.
@@ -216,8 +156,6 @@ rca:
     repository: {{.RcaImageRepo}}
     tag: {{.RcaImageTag}}
     pullPolicy: {{.RcaPullPolicy}}
-  llm:
-    modelName: {{ if .SreLlmModelName }}{{.SreLlmModelName}}{{ else }}{{.RcaModel}}{{ end }}
   secretName: rca-agent-secret
   oauth:
     clientId: openchoreo-rca-agent
@@ -239,8 +177,7 @@ gateway:
 // SRE agent overlay for a plane aectl did not install, applied with
 // --reuse-values at that release's own chart version: the rca block and the
 // observer's service-account claim the agent's queries need, so the plane's
-// installer keeps owning everything else. The image override is
-// the SRE build with the Anthropic structured-output fix and the AE handoff.
+// installer keeps owning everything else.
 const sreAgentValuesTmpl = `
 observer:
   security:
@@ -271,8 +208,6 @@ rca:
     repository: {{.RcaImageRepo}}
     tag: {{.RcaImageTag}}
     pullPolicy: {{.RcaPullPolicy}}
-  llm:
-    modelName: {{.RcaModel}}
   secretName: rca-agent-secret
   oauth:
     clientId: openchoreo-rca-agent
@@ -450,34 +385,3 @@ for idx in $($CURL "${OS}/_cat/indices/container-logs-*?h=index" 2>/dev/null); d
 done
 echo "Bootstrap complete."
 `
-
-// writeOpenBaoSecret writes value to OpenBao at secret/data/<path>, the same
-// layout secret_import.go's `aep platform secret import` uses. Extracted as
-// a shared helper because sre install needs the identical write, driven by
-// --sre-llm-api-key instead of an interactive/file prompt.
-func writeOpenBaoSecret(ctx context.Context, path, value string) error {
-	pfCmd, err := openbao.PortForward(ctx, ocOpenBaoNamespace, ocOpenBaoRelease, kubeconfig)
-	if err != nil {
-		return fmt.Errorf("port-forward to OpenBao: %w", err)
-	}
-	defer func() { _ = pfCmd.Process.Kill() }()
-
-	baseURL := "http://localhost:" + openbao.LocalPort
-	if err := openbao.WaitForReachable(ctx, baseURL, 30*time.Second); err != nil {
-		return fmt.Errorf("OpenBao not reachable via port-forward: %w", err)
-	}
-	saToken, err := openbao.GetSAToken(ctx, ocOpenBaoNamespace, ocOpenBaoSA, kubeconfig)
-	if err != nil {
-		return err
-	}
-	token, err := openbao.KubernetesLogin(ctx, baseURL, ocWriteRole, saToken)
-	if err != nil {
-		return err
-	}
-	if _, err := openbao.Must(ctx, "PUT", baseURL, token, "/v1/secret/data/"+path, map[string]interface{}{
-		"data": map[string]interface{}{"value": value},
-	}); err != nil {
-		return fmt.Errorf("write secret/data/%s: %w", path, err)
-	}
-	return nil
-}

@@ -54,9 +54,12 @@ import (
 //   - none is installed: aectl installs the plane and logs charts itself at
 //     --obs-plane-version / --obs-logs-version.
 //
-// The agent's Anthropic key is the org's model connection key as saved in the
-// AE Console (sre_plane.go). Prerequisite: `aectl platform install` (it registers the
-// openchoreo-rca-agent Thunder client and seeds the OpenBao secrets this reads).
+// The agent's LLM key/model/base URL and its AEP handoff token are pushed by
+// aep-api into the AE-owned sre-agent-aep Secret (rca.extraEnvs) for the
+// --org this command wires up; this command does not carry any LLM
+// credential itself. Prerequisite: `aectl platform install` (it registers
+// the openchoreo-rca-agent Thunder client and seeds the OpenBao secrets this
+// reads).
 
 var (
 	sreNamespace       string // where AEP + OpenBao live (secret source)
@@ -66,22 +69,15 @@ var (
 	sreRcaImageRepo    string
 	sreRcaImageTag     string
 	sreRcaPullPolicy   string
-	sreRcaModel        string
 	sreRcaName         string
-	sreLlmProvider     string
-	sreLlmModel        string
-	sreLlmAPIKey       string
 	sreAdapterImage    string
 	sreAEHandoff       bool
-	sreAEAutoDispatch  bool
-	sreAEPublishReport bool
 	sreObserverHost    string
 	sreRcaHost         string
 	sreMCPHost         string
 	sreMCPPort         int
 	sreAssetsRoot      string
-	sreOrgNamespace    string
-	sreOrgSecretStore  string
+	sreOrg             string
 	srePlatformStore   string
 	sreSkipOCVerCheck  bool
 )
@@ -111,50 +107,43 @@ func init() {
 	f := sreInstallCmd.Flags()
 	f.StringVar(&sreNamespace, "namespace", "wso2-aep", "Namespace where AEP + OpenBao are installed")
 	f.StringVar(&sreObsNamespace, "obs-namespace", "openchoreo-observability-plane", "Observability plane namespace")
-	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.0.1-hotfix.1", "openchoreo-observability-plane chart version, when no plane is installed yet (an installed plane keeps its own)")
-	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version, when no plane is installed yet")
-	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/sre-agent", "RCA/SRE agent image repository")
-	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.0.1-hotfix.1-anthropic", "RCA/SRE agent image tag")
+	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.3.0", "openchoreo-observability-plane chart version, when no plane is installed yet (an installed plane keeps its own)")
+	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.3", "observability-logs-opensearch chart version, when no plane is installed yet")
+	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "ghcr.io/openchoreo/sre-agent", "RCA/SRE agent image repository")
+	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.3.0@sha256:25e5e6c423d049460f4a60d95497747c2a99b02713faf8523a38ef8e6a85c599", "RCA/SRE agent image tag (digest-pinned so both architectures resolve the same build)")
 	f.StringVar(&sreRcaPullPolicy, "rca-image-pull-policy", "IfNotPresent", "RCA/SRE agent image pull policy")
-	f.StringVar(&sreRcaModel, "rca-model", "anthropic:claude-sonnet-4-6", "RCA/SRE agent LLM model")
 	f.StringVar(&sreRcaName, "rca-name", "sre-agent", "RCA/SRE agent Deployment/Service name (must match the chart's rca.name)")
-	f.StringVar(&sreLlmProvider, "sre-llm-provider", "", "SRE agent LLM provider override (anthropic|openai) — when set with --sre-llm-model and --sre-llm-api-key, seeds a dedicated SRE agent key instead of reusing the default Anthropic key")
-	f.StringVar(&sreLlmModel, "sre-llm-model", "", "SRE agent LLM model override, paired with --sre-llm-provider (e.g. gpt-4o-mini)")
-	f.StringVar(&sreLlmAPIKey, "sre-llm-api-key", "", "SRE agent LLM API key, paired with --sre-llm-provider")
 	f.StringVar(&sreAdapterImage, "adapter-image", "docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive", "logs-adapter image (repo:tag)")
 	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts the SRE remediation extension)")
-	f.BoolVar(&sreAEAutoDispatch, "ae-auto-dispatch", true, "Auto-dispatch the coding agent after issue creation (false = issue-only)")
-	f.BoolVar(&sreAEPublishReport, "ae-publish-reports", true, "Publish RCA reports to aep-api (console Alerts)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
 	f.StringVar(&sreMCPHost, "mcp-hostname", "aep-mcp.openchoreo.localhost", "aep-mcp-server's https hostname on the control-plane gateway (must match the platform chart's sreAgent.mcpHostname)")
 	f.IntVar(&sreMCPPort, "mcp-port", 8443, "https port of the control-plane gateway listener aep-mcp-server is routed on (k3d publishes 8443)")
 	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions, services/aep-mcp-server/skills); default: search upward from the working directory")
-	f.StringVar(&sreOrgNamespace, "org-namespace", "", "OpenChoreo namespace of the org whose Console-saved model connection key (an Anthropic key) the agent uses (default: config oc.default_org_namespace, else \"default\")")
-	f.StringVar(&sreOrgSecretStore, "org-secret-store", "default", "ClusterSecretStore that resolves the org's secret paths")
+	f.StringVar(&sreOrg, "org", "", "OpenChoreo org whose SRE agent this install wires up (aep-api pushes that org's LLM key/model and handoff token into the agent's Secret)")
 	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 	f.BoolVar(&sreSkipOCVerCheck, "skip-oc-version-check", false, "Skip the OpenChoreo minimum version check (not recommended)")
+	_ = sreInstallCmd.MarkFlagRequired("org")
 }
 
 // sreParams holds everything the value/manifest templates need.
 type sreParams struct {
 	ObsNamespace, PlatformSecretStore                         string
 	OCApiURL, ThunderJwksURL, ThunderTokenURL, ThunderAuthURL string
-	RcaImageRepo, RcaImageTag, RcaPullPolicy, RcaModel        string
-	SreLlmVaultKey, SreLlmModelName                           string
+	RcaImageRepo, RcaImageTag, RcaPullPolicy                  string
 	AdapterRepo, AdapterTag                                   string
 	ObserverHost, RcaHost                                     string
-	// Handoff wiring. AEApiURL and AEPApiURL are in-cluster Service DNS.
-	// AEMCPURL is aep-mcp-server's MCP endpoint as the agent reaches it
-	// (sreMCPURL), built once and used for both the rendered remediation
-	// mcp.json and the SRE pod's AEP_MCP_URL, so the two cannot disagree.
-	RcaServiceURL, AEApiURL, AEPApiURL, AEMCPURL string
-	AEHandoff, AEAutoDispatch, AEPublish         bool
-	// The org's Console-saved model connection key (sreAnthropicSecretTmpl).
-	OrgSecretStore string
-	AnthropicRef   kvRef
+	// Handoff wiring. AEMCPURL is aep-mcp-server's MCP endpoint as the agent
+	// reaches it (sreMCPURL), built once and used for the rendered
+	// remediation mcp.json (the agent's own AEP_MCP_URL/RCA_LLM_API_KEY/
+	// handoff token come from the sre-agent-aep Secret aep-api owns).
+	RcaServiceURL, AEMCPURL string
+	AEHandoff               bool
+	// Org is the OpenChoreo org whose observability-plane SRE agent aep-api's
+	// reconciler pushes the LLM key/model and handoff token to.
+	Org string
 }
 
 // sreMCPURL is aep-mcp-server's MCP endpoint as the SRE agent reaches it:
@@ -200,15 +189,10 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		RcaImageRepo:        sreRcaImageRepo,
 		RcaImageTag:         sreRcaImageTag,
 		RcaPullPolicy:       sreRcaPullPolicy,
-		RcaModel:            sreRcaModel,
 		ObserverHost:        sreObserverHost,
 		RcaHost:             sreRcaHost,
-		AEApiURL:            fmt.Sprintf("http://aep-mcp-server.%s.svc.cluster.local:3400", sreNamespace),
-		AEPApiURL:           fmt.Sprintf("http://aep-api.%s.svc.cluster.local:9090", sreNamespace),
 		AEHandoff:           sreAEHandoff,
-		AEAutoDispatch:      sreAEAutoDispatch,
-		AEPublish:           sreAEPublishReport,
-		OrgSecretStore:      sreOrgSecretStore,
+		Org:                 sreOrg,
 	}
 	p.AEMCPURL = sreMCPURL(sreMCPHost, sreMCPPort)
 	// Split on the LAST colon so a registry port (registry:5000/img:tag) is
@@ -228,24 +212,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// A dedicated SRE agent key/model, explicitly seeded at install time —
-	// independent of (and not an override on) the org's model connection.
-	if sreLlmProvider != "" || sreLlmModel != "" || sreLlmAPIKey != "" {
-		if sreLlmProvider == "" || sreLlmModel == "" || sreLlmAPIKey == "" {
-			return fmt.Errorf("--sre-llm-provider, --sre-llm-model, and --sre-llm-api-key must be set together")
-		}
-		if sreLlmProvider != "anthropic" && sreLlmProvider != "openai" {
-			return fmt.Errorf("--sre-llm-provider must be 'anthropic' or 'openai', got %q", sreLlmProvider)
-		}
-		vaultKey := "aep/sre-llm-api-key"
-		if err := writeOpenBaoSecret(ctx, vaultKey, sreLlmAPIKey); err != nil {
-			return fmt.Errorf("seed sre-llm key into OpenBao: %w", err)
-		}
-		p.SreLlmVaultKey = vaultKey
-		p.SreLlmModelName = fmt.Sprintf("%s:%s", sreLlmProvider, sreLlmModel)
-	}
-
-	// 1. Detect the plane and the org's model connection key.
+	// 1. Detect the plane.
 	plane, adopt, err := installedObsPlane(ctx, sreObsNamespace)
 	if err != nil {
 		return err
@@ -255,18 +222,6 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	} else {
 		ui.Warn(fmt.Sprintf("No observability plane in %q — installing chart %s.", sreObsNamespace, sreObsPlaneVersion))
 	}
-	orgNS := sreOrgNamespace
-	if orgNS == "" {
-		orgNS = viper.GetString("oc.default_org_namespace")
-	}
-	if orgNS == "" {
-		orgNS = "default"
-	}
-	anthropicRef, haveKey, err := resolveOrgAnthropicKVRef(ctx, applier, orgNS)
-	if err != nil {
-		return fmt.Errorf("resolve the org's model connection key: %w", err)
-	}
-	p.AnthropicRef = anthropicRef
 
 	// 2. Namespace + cluster-gateway-ca + secrets via OpenBao->ESO.
 	if err := ensureNamespace(ctx, client, sreObsNamespace); err != nil {
@@ -303,18 +258,6 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("apply plane secrets: %w", err)
 		}
 		wantSecrets = append(wantSecrets, "opensearch-admin-credentials", "observer-secret")
-	}
-	if haveKey {
-		if err := applyTemplate(ctx, applier, "sre-anthropic-secret", sreObsNamespace, sreAnthropicSecretTmpl, p); err != nil {
-			return fmt.Errorf("apply Anthropic key ExternalSecret: %w", err)
-		}
-		wantSecrets = append(wantSecrets, "rca-agent-anthropic-secret")
-	}
-	if p.SreLlmVaultKey != "" {
-		if err := applyTemplate(ctx, applier, "sre-llm-secret", sreObsNamespace, sreLlmSecretTmpl, p); err != nil {
-			return fmt.Errorf("apply sre-llm key ExternalSecret: %w", err)
-		}
-		wantSecrets = append(wantSecrets, "sre-llm-secret")
 	}
 	// ESO must materialise these before the charts start.
 	for _, s := range wantSecrets {
@@ -369,20 +312,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets, p.AEMCPURL); err != nil {
 			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
 		}
-		if err := mountSREAgentRuntime(ctx, client, sreObsNamespace, agentDeploy, p.AEMCPURL, p.SreLlmVaultKey != ""); err != nil {
-			return fmt.Errorf("mount SRE agent runtime: %w", err)
-		}
-		if err := patchConfigMap(ctx, client, sreObsNamespace, "rca-agent-config", map[string]string{
-			"AE_HANDOFF":         "true",
-			"AE_AUTO_DISPATCH":   fmt.Sprintf("%t", sreAEAutoDispatch),
-			"AE_API_URL":         p.AEApiURL,
-			"AE_PUBLISH_REPORTS": fmt.Sprintf("%t", sreAEPublishReport),
-			"AEP_API_URL":        p.AEPApiURL,
-		}); err != nil {
-			return err
-		}
 		_ = rolloutRestart(ctx, client, sreObsNamespace, agentDeploy)
-		ui.Detail(fmt.Sprintf("AE handoff: enabled (auto-dispatch=%t, mcp=%s, assets=%s)", sreAEAutoDispatch, p.AEMCPURL, assets.RootHint))
+		ui.Detail(fmt.Sprintf("AE handoff: enabled (mcp=%s, assets=%s)", p.AEMCPURL, assets.RootHint))
 	} else {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}
@@ -407,10 +338,6 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ui.Detail("Log-based alerts may misbehave until the container-logs template maps log as 'wildcard'.")
 	}
 
-	if !haveKey {
-		ui.Warn(fmt.Sprintf("No model connection saved for org namespace %q yet — the SRE agent waits for its key.", orgNS))
-		ui.Detail("Save the org's model connection (an Anthropic key) in the AE Console (Settings), then re-run `aectl sre install`.")
-	}
 	printSreCompletion(p)
 	return nil
 }
@@ -418,9 +345,9 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 func printSreCompletion(p sreParams) {
 	ui.Success("SRE agent + observability plane installed")
 	ui.Section("Security Note")
-	ui.Detail(fmt.Sprintf("Auto-dispatch is %s. A fired alert can drive automated code changes;", onOff(p.AEAutoDispatch && p.AEHandoff)))
-	ui.Detail("RCA feeds pod logs to an LLM (prompt-injection surface). Set")
-	ui.Detail("--ae-auto-dispatch=false for issue-only (human dispatches).")
+	ui.Detail(fmt.Sprintf("AE handoff is %s. RCA feeds pod logs to an LLM (prompt-injection", onOff(p.AEHandoff)))
+	ui.Detail("surface), and a fired alert can drive automated code changes. Set")
+	ui.Detail("--ae-handoff=false to disable the handoff.")
 	ui.Detail("RCA/logs-adapter images are non-WSO2 registries (pin/mirror for prod).")
 	ui.Section("Next Steps")
 	ui.Detail("Create an ObservabilityAlertRule per component you want auto-RCA on")
