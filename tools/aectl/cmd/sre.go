@@ -87,6 +87,14 @@ var (
 	// because `sre install` happened to run (see runSreInstall's early check).
 	srePlatformChart   string
 	srePlatformVersion string
+	// Install-time SRE model seed (Task A2): when llmAPIKeyFile+llmModel are
+	// both given, this command writes them (plus llmBaseURL) into the
+	// sre-model-seed Secret and tells the platform release about it, so
+	// aep-api can bring the SRE agent's model connection up without a
+	// Console/API save. See resolveSreModelSeed.
+	sreLLMAPIKeyFile string
+	sreLLMModel      string
+	sreLLMBaseURL    string
 )
 
 var sreCmd = &cobra.Command{
@@ -136,6 +144,9 @@ func init() {
 	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
 	f.StringVar(&srePlatformChart, "platform-chart", "", "Local path to the AEP platform chart, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --platform-chart; one of --platform-chart/--platform-version is required)")
 	f.StringVar(&srePlatformVersion, "platform-version", "", "AEP platform chart version, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --version; one of --platform-chart/--platform-version is required)")
+	f.StringVar(&sreLLMAPIKeyFile, "llm-api-key-file", "", "Path to a file holding the org's SRE model API key, seeded into the sre-model-seed Secret at install so aep-api can bring the SRE agent up without a Console/API save (the key is read from this file, never taken as a flag value; must be given with --llm-model)")
+	f.StringVar(&sreLLMModel, "llm-model", "", "Model name for the install-time SRE model seed (e.g. gpt-5.4; must be given with --llm-api-key-file)")
+	f.StringVar(&sreLLMBaseURL, "llm-base-url", "https://api.openai.com/v1", "OpenAI-compatible base URL for the install-time SRE model seed")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 	f.BoolVar(&sreSkipOCVerCheck, "skip-oc-version-check", false, "Skip the OpenChoreo minimum version check (not recommended)")
@@ -203,6 +214,14 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	// risk that.
 	if srePlatformChart == "" && srePlatformVersion == "" {
 		return fmt.Errorf("--platform-chart or --platform-version is required (pins the platform chart this command's internal `aectl platform update` upgrades — without one it would silently pull the latest unpinned chart from GHCR)")
+	}
+
+	// Resolve+validate the install-time SRE model seed before touching the
+	// cluster, so a bad --llm-* flag combination fails fast rather than
+	// after a partially-applied install.
+	seed, err := resolveSreModelSeed(sreLLMAPIKeyFile, sreLLMModel, sreLLMBaseURL)
+	if err != nil {
+		return err
 	}
 
 	client, err := k8s.NewClient(kubeconfig)
@@ -355,7 +374,19 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	if err := applyTemplate(ctx, applier, "sre-push-role", sreObsNamespace, sreAgentPushRoleTmpl, p); err != nil {
 		return fmt.Errorf("apply aep-api-sre-push Role/RoleBinding: %w", err)
 	}
-	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion); err != nil {
+	// Write the install-time SRE model seed Secret before the platform
+	// update below tells aep-api its name (sreAgent.seed.secretName), so the
+	// Secret always exists by the time aep-api's reconciler could look for
+	// it.
+	seedSecretName := ""
+	if seed != nil {
+		ui.Step("Writing the SRE model seed Secret")
+		if err := ensureSREModelSeedSecret(ctx, client, sreNamespace, *seed); err != nil {
+			return fmt.Errorf("write %s secret: %w", sreModelSeedSecretName, err)
+		}
+		seedSecretName = sreModelSeedSecretName
+	}
+	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion, seedSecretName); err != nil {
 		return fmt.Errorf("wire sreAgent.* on the platform release: %w", err)
 	}
 	ui.Success("Push Role and platform sreAgent.* wiring applied")
@@ -409,11 +440,11 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ui.Detail("Log-based alerts may misbehave until the container-logs template maps log as 'wildcard'.")
 	}
 
-	printSreCompletion(p)
+	printSreCompletion(p, seed)
 	return nil
 }
 
-func printSreCompletion(p sreParams) {
+func printSreCompletion(p sreParams, seed *sreModelSeed) {
 	ui.Success("SRE agent + observability plane installed")
 	ui.Section("Security Note")
 	ui.Detail(fmt.Sprintf("AE handoff is %s. RCA feeds pod logs to an LLM (prompt-injection", onOff(p.AEHandoff)))
@@ -424,6 +455,9 @@ func printSreCompletion(p sreParams) {
 	ui.Detail("Create an ObservabilityAlertRule per component you want auto-RCA on")
 	ui.Detail("(component UID + name labels, incident.enabled, triggerAiRca: true).")
 	ui.Detail("Guide: docs/developer-guide/sre-handoff-runbook.md")
+	if seed != nil {
+		ui.Detail(fmt.Sprintf("SRE model seed written (model %s @ %s); aep-api applies it within ~1 minute unless the org already has an SRE model connection — check Settings → SRE agent model or kubectl -n %s get deploy sre-agent", seed.Model, seed.BaseURL, p.ObsNamespace))
+	}
 	fmt.Println()
 }
 
@@ -485,20 +519,29 @@ func ensureSREAgentSecret(ctx context.Context, client kubernetes.Interface, ns s
 // updatePlatformSreAgent so the (sreParams, chartPath, chartVersion) ->
 // platformUpdateConfig mapping — in particular that the chart source always
 // reaches the config — is unit-testable without shelling out to helm.
-func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion string) platformUpdateConfig {
+// seedSecretName is sreModelSeedSecretName when this run wrote the
+// sre-model-seed Secret, "" otherwise: an install run without --llm-* flags
+// must leave sreAgent.seed.secretName untouched (Never clear an
+// already-seeded org's value just because a later run didn't pass the
+// flags).
+func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, seedSecretName string) platformUpdateConfig {
+	sets := []string{
+		"sreAgent.enabled=true",
+		"sreAgent.org=" + p.Org,
+		"sreAgent.namespace=" + p.ObsNamespace,
+		"sreAgent.deployment=" + p.RcaName,
+		"sreAgent.secret=sre-agent-aep",
+		"sreAgent.mcpHostname=" + p.MCPHostname,
+	}
+	if seedSecretName != "" {
+		sets = append(sets, "sreAgent.seed.secretName="+seedSecretName)
+	}
 	return platformUpdateConfig{
 		Namespace:    p.AEPNamespace,
 		Release:      defaultPlatformRelease,
 		ChartPath:    chartPath,
 		ChartVersion: chartVersion,
-		HelmSets: []string{
-			"sreAgent.enabled=true",
-			"sreAgent.org=" + p.Org,
-			"sreAgent.namespace=" + p.ObsNamespace,
-			"sreAgent.deployment=" + p.RcaName,
-			"sreAgent.secret=sre-agent-aep",
-			"sreAgent.mcpHostname=" + p.MCPHostname,
-		},
+		HelmSets:     sets,
 	}
 }
 
@@ -508,9 +551,10 @@ func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion string) p
 // command, and this call's own ctx is honored rather than a fresh
 // context.Background(). chartPath/chartVersion pin the chart source
 // (runSreInstall requires one of them up front) so this never falls back to
-// platformUpdate's own unpinned-OCI default.
-func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion string) error {
-	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion))
+// platformUpdate's own unpinned-OCI default. seedSecretName is
+// sreAgentPlatformUpdateConfig's own parameter, forwarded as-is.
+func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion, seedSecretName string) error {
+	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion, seedSecretName))
 }
 
 // ensureClusterGatewayCA copies the cluster gateway CA cert from the

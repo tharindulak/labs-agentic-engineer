@@ -38,6 +38,12 @@
 # in the Console, its pod waits for aep-api to push one. Save the key, then
 # re-run this script (only step 2 then changes anything).
 #
+# Optionally, set SRE_LLM_API_KEY_FILE (path to a file holding the key) and
+# SRE_LLM_MODEL (and SRE_LLM_BASE_URL) to have `aectl sre install` seed an
+# install-time SRE model connection instead of waiting on a Console/API save
+# — see "Seed the SRE model at install" in
+# docs/developer-guide/sre-handoff-runbook.md.
+#
 # Every step is idempotent.
 
 set -euo pipefail
@@ -82,8 +88,16 @@ kubectl apply -f "$ALERT_RULE_TRAIT"
 
 # ── 2. SRE agent on the observability plane ─────────────────────────────────
 echo "🤖 Running aectl sre install"
-"$AECTL" sre install --namespace "$AEP_NS" --obs-namespace "$OBS_NS" --assets-root "$REPO_ROOT" \
-    --org "${AEP_ORG:-default}" --platform-chart "$PLATFORM_CHART"
+SRE_INSTALL_ARGS=(--namespace "$AEP_NS" --obs-namespace "$OBS_NS" --assets-root "$REPO_ROOT" \
+    --org "${AEP_ORG:-default}" --platform-chart "$PLATFORM_CHART")
+# Install-time SRE model seed: only when both the key file and model are set
+# (aectl itself requires the pair together; leaving either unset here means
+# no seed, same as not passing the flags at all).
+if [ -n "${SRE_LLM_API_KEY_FILE:-}" ] && [ -n "${SRE_LLM_MODEL:-}" ]; then
+    SRE_INSTALL_ARGS+=(--llm-api-key-file "$SRE_LLM_API_KEY_FILE" --llm-model "$SRE_LLM_MODEL")
+    [ -n "${SRE_LLM_BASE_URL:-}" ] && SRE_INSTALL_ARGS+=(--llm-base-url "$SRE_LLM_BASE_URL")
+fi
+"$AECTL" sre install "${SRE_INSTALL_ARGS[@]}"
 
 echo ""
 echo "✅ SRE handoff wired. Runbook: docs/developer-guide/sre-handoff-runbook.md"
