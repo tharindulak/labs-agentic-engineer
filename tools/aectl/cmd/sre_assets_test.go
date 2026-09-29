@@ -66,3 +66,20 @@ func TestSreAgentAEOwnedSecretAndRole(t *testing.T) {
 		}
 	}
 }
+
+// TestSreTemplates_CarryForceSync verifies every ExternalSecret aectl renders
+// carries ESO's force-sync annotation with the per-run value, so a re-run
+// with an unchanged spec still triggers a fresh sync instead of waiting out
+// ESO's 1h refreshInterval (waitForExternalSecretRefresh would otherwise
+// time out).
+func TestSreTemplates_CarryForceSync(t *testing.T) {
+	p := sreParams{ObsNamespace: "obs", PlatformSecretStore: "aep-platform", ForceSync: "1790592655"}
+	for name, tmpl := range map[string]string{
+		"sreAgentSecretsTmpl": sreAgentSecretsTmpl, "sreObserverClientSecretTmpl": sreObserverClientSecretTmpl, "srePlaneSecretsTmpl": srePlaneSecretsTmpl,
+	} {
+		out := renderSreTemplate(t, tmpl, p)
+		if n := strings.Count(out, "kind: ExternalSecret"); n != strings.Count(out, `force-sync: "1790592655"`) {
+			t.Errorf("%s: every ExternalSecret must carry force-sync (%d ExternalSecrets)", name, n)
+		}
+	}
+}

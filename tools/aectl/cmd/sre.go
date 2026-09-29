@@ -170,6 +170,12 @@ type sreParams struct {
 	// sreAgentPushRoleTmpl and the platform chart's
 	// sreAgent.{deployment,org,namespace,secret,mcpHostname} values.
 	RcaName, AEPNamespace string
+	// ForceSync is a per-run value (unix seconds) written into every
+	// ExternalSecret's force-sync annotation. ESO re-syncs an ExternalSecret
+	// whenever its spec changes, so bumping this on every run makes a re-run
+	// with an otherwise-unchanged spec still trigger a fresh sync instead of
+	// waiting out the 1h refreshInterval — see waitForExternalSecretRefresh.
+	ForceSync string
 }
 
 // sreMCPURL is aep-mcp-server's MCP endpoint as the SRE agent reaches it:
@@ -229,6 +235,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		AEHandoff:           sreAEHandoff,
 		Org:                 sreOrg,
 		AEPNamespace:        sreNamespace,
+		ForceSync:           strconv.FormatInt(time.Now().Unix(), 10),
 	}
 	p.AEMCPURL = sreMCPURL(sreMCPHost, sreMCPPort)
 	p.MCPHostname = sreMCPHost

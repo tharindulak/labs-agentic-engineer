@@ -32,6 +32,8 @@ kind: ExternalSecret
 metadata:
   name: rca-agent-secret
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -57,6 +59,8 @@ kind: ExternalSecret
 metadata:
   name: observer-secret
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -77,6 +81,8 @@ kind: ExternalSecret
 metadata:
   name: opensearch-admin-credentials
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
@@ -95,6 +101,8 @@ kind: ExternalSecret
 metadata:
   name: observer-secret
   namespace: {{.ObsNamespace}}
+  annotations:
+    force-sync: "{{.ForceSync}}"
 spec:
   refreshInterval: 1h
   secretStoreRef:
