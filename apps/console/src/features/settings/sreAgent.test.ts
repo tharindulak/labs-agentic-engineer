@@ -21,7 +21,7 @@
 import { describe, expect, it } from "vitest";
 import type { components } from "../../generated/aep-api";
 import { llmConnectedFixture, openaiOrgFixture, sreAgentProjectionFixture, sreLlmFixture } from "../../mocks/fixtures/settings";
-import { sreRowState, sreStatusLabel } from "./sreAgent";
+import { sreAgentPollInterval, sreRowState, sreStatusLabel } from "./sreAgent";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 
@@ -101,5 +101,27 @@ describe("sreStatusLabel", () => {
     expect(sreStatusLabel("applying")).toEqual({ text: "Applying…", severity: "info" });
     expect(sreStatusLabel("running")).toEqual({ text: "Running", severity: "success" });
     expect(sreStatusLabel("unconfigured")).toEqual({ text: "Not running", severity: "info" });
+  });
+});
+
+// The PATCH /config response that saves an override lands right after
+// aep-api pushes it, so `sreAgent.status` reads "applying" for a beat — the
+// config query must keep polling GET /config until the rollout resolves,
+// or the row's status chip is stuck on "Applying…" until a page reload.
+describe("sreAgentPollInterval", () => {
+  it("polls while the agent is applying", () => {
+    expect(sreAgentPollInterval(config({ sreAgent: sreAgentProjectionFixture({ status: "applying" }) }))).toBe(5000);
+  });
+
+  it.each(["running", "failed", "unconfigured"] as const)("stops polling once status is %s", (status) => {
+    expect(sreAgentPollInterval(config({ sreAgent: sreAgentProjectionFixture({ status }) }))).toBe(false);
+  });
+
+  it("stops polling when the server has no SRE agent", () => {
+    expect(sreAgentPollInterval(config({ sreAgent: null }))).toBe(false);
+  });
+
+  it("stops polling when there is no data yet", () => {
+    expect(sreAgentPollInterval(undefined)).toBe(false);
   });
 });

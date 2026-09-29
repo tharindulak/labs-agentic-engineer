@@ -24,7 +24,9 @@
  * does not push the SRE agent), the org's own model connection is doing the
  * job (`inherited`), an SRE-only connection overrides it (`override`), or
  * neither is usable (`unavailable`, with why). `sreStatusLabel` turns the
- * agent's rollout status into the chip beside the row.
+ * agent's rollout status into the chip beside the row. `sreAgentPollInterval`
+ * is `useConfig`'s `refetchInterval`, so the chip does not get stuck on a
+ * stale "applying" read.
  */
 
 import type { components } from "../../generated/aep-api";
@@ -84,4 +86,18 @@ export function sreStatusLabel(
     case "unconfigured":
       return { text: "Not running", severity: "info" };
   }
+}
+
+// Short enough that the status chip leaves "Applying…" for "Running"/"Failed"
+// soon after aep-api's push resolves, without hammering GET /config.
+const SRE_AGENT_POLL_MS = 5_000;
+
+/**
+ * `useConfig`'s `refetchInterval`: a save's PATCH response is read right after
+ * aep-api pushes, so `sreAgent.status` is still "applying" — poll GET /config
+ * until the rollout lands on running/failed/unconfigured (or the agent goes
+ * away), instead of leaving the chip stuck until a page reload.
+ */
+export function sreAgentPollInterval(config: ConfigProjection | undefined): number | false {
+  return config?.sreAgent?.status === "applying" ? SRE_AGENT_POLL_MS : false;
 }

@@ -21,6 +21,7 @@ import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { configKeys, resourceKeys, skillsKeys } from "./keys";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
+import { sreAgentPollInterval } from "../sreAgent";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type ConfigPatch = components["schemas"]["ConfigPatch"];
@@ -47,6 +48,10 @@ export function useConfig() {
       return data;
     },
     staleTime: 30_000,
+    // Re-polls GET /config while the SRE agent's rollout is "applying", so the
+    // model row's status chip does not get stuck on a stale read (see
+    // sreAgentPollInterval). Stops as soon as the status settles.
+    refetchInterval: (query) => sreAgentPollInterval(query.state.data),
   });
 }
 
