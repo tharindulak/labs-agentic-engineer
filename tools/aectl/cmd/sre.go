@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/yaml"
 
 	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 	"github.com/wso2/aep/aectl/internal/ui"
@@ -80,6 +81,13 @@ var (
 	sreOrg             string
 	srePlatformStore   string
 	sreSkipOCVerCheck  bool
+	// Passed through to the `aectl platform update` this command runs
+	// in-process to flip sreAgent.* on the AEP platform release. Mirrors
+	// `platform update`'s own --platform-chart/--version: required (one or
+	// the other) so that release is never upgraded to an unpinned chart just
+	// because `sre install` happened to run (see runSreInstall's early check).
+	srePlatformChart   string
+	srePlatformVersion string
 )
 
 var sreCmd = &cobra.Command{
@@ -96,7 +104,13 @@ obs-namespace secrets (via OpenBao/ESO), the alert->RCA auto-trigger + AEP
 handoff wiring, the authz grants, and the observability CRs.
 
 Run 'aectl init' first — it registers the openchoreo-rca-agent Thunder client and
-seeds the OpenBao secrets this command reads via External Secrets.`,
+seeds the OpenBao secrets this command reads via External Secrets.
+
+Requires --platform-chart or --platform-version: this command also flips
+sreAgent.* on the AEP platform release (org, obs namespace, RCA deployment
+name, Secret, MCP hostname) via an internal 'aectl platform update', and a
+pinned chart source keeps that call from silently upgrading the release to
+whatever is latest on GHCR.`,
 	RunE: runSreInstall,
 }
 
@@ -122,6 +136,8 @@ func init() {
 	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions, services/aep-mcp-server/skills); default: search upward from the working directory")
 	f.StringVar(&sreOrg, "org", "", "OpenChoreo org whose SRE agent this install wires up (aep-api pushes that org's LLM key/model and handoff token into the agent's Secret)")
 	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
+	f.StringVar(&srePlatformChart, "platform-chart", "", "Local path to the AEP platform chart, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --platform-chart; one of --platform-chart/--platform-version is required)")
+	f.StringVar(&srePlatformVersion, "platform-version", "", "AEP platform chart version, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --version; one of --platform-chart/--platform-version is required)")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 	f.BoolVar(&sreSkipOCVerCheck, "skip-oc-version-check", false, "Skip the OpenChoreo minimum version check (not recommended)")
@@ -136,17 +152,24 @@ type sreParams struct {
 	AdapterRepo, AdapterTag                                   string
 	ObserverHost, RcaHost                                     string
 	// Handoff wiring. AEMCPURL is aep-mcp-server's MCP endpoint as the agent
-	// reaches it (sreMCPURL), built once and used for the rendered
-	// remediation mcp.json (the agent's own AEP_MCP_URL/RCA_LLM_API_KEY/
-	// handoff token come from the sre-agent-aep Secret aep-api owns).
+	// reaches it (sreMCPURL), used both for the rendered remediation
+	// mcp.json and as the rca.extraEnvs AEP_MCP_URL value (the agent's
+	// RCA_LLM_API_KEY/RCA_MODEL_NAME/RCA_LLM_BASE_URL/AEP_MCP_TOKEN come from
+	// the sre-agent-aep Secret aep-api owns instead, via secretKeyRef).
 	RcaServiceURL, AEMCPURL string
-	AEHandoff               bool
+	// MCPHostname is aep-mcp-server's https hostname (--mcp-hostname, the
+	// same one AEMCPURL was built from), passed to the platform release as
+	// sreAgent.mcpHostname so the chart and this command can't drift.
+	MCPHostname string
+	AEHandoff   bool
 	// Org is the OpenChoreo org whose observability-plane SRE agent aep-api's
 	// reconciler pushes the LLM key/model and handoff token to.
 	Org string
-	// RcaName is the RCA/SRE agent Deployment name (--rca-name), and
-	// AEPNamespace the AEP namespace (--namespace) aep-api's ServiceAccount
-	// lives in. Both feed sreAgentPushRoleTmpl and the platform chart's
+	// RcaName is the RCA/SRE agent Deployment name, set from
+	// findSREAgentDeployment's discovery (not the --rca-name flag: the chart
+	// can rename it, e.g. ai-rca-agent -> sre-agent in 1.2.0). AEPNamespace is
+	// the AEP namespace (--namespace) aep-api's ServiceAccount lives in. Both
+	// feed sreAgentPushRoleTmpl and the platform chart's
 	// sreAgent.{deployment,org,namespace,secret,mcpHostname} values.
 	RcaName, AEPNamespace string
 }
@@ -167,6 +190,15 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm is required but was not found in PATH\nInstall it from https://helm.sh/docs/intro/install/ and try again")
+	}
+
+	// This command flips sreAgent.* on the AEP platform release via `aectl
+	// platform update`'s own code path; without an explicit chart source that
+	// call falls back to the unversioned OCI chart, silently upgrading the
+	// platform release to whatever is latest on GHCR. Fail fast rather than
+	// risk that.
+	if srePlatformChart == "" && srePlatformVersion == "" {
+		return fmt.Errorf("--platform-chart or --platform-version is required (pins the platform chart this command's internal `aectl platform update` upgrades — without one it would silently pull the latest unpinned chart from GHCR)")
 	}
 
 	client, err := k8s.NewClient(kubeconfig)
@@ -198,10 +230,10 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		RcaHost:             sreRcaHost,
 		AEHandoff:           sreAEHandoff,
 		Org:                 sreOrg,
-		RcaName:             sreRcaName,
 		AEPNamespace:        sreNamespace,
 	}
 	p.AEMCPURL = sreMCPURL(sreMCPHost, sreMCPPort)
+	p.MCPHostname = sreMCPHost
 	// Split on the LAST colon so a registry port (registry:5000/img:tag) is
 	// kept in the repo; image tags never contain a colon.
 	if i := strings.LastIndex(sreAdapterImage, ":"); i > 0 && i < len(sreAdapterImage)-1 {
@@ -274,23 +306,14 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Secrets synced")
 
-	// 3. AE-owned Secret + push Role/RoleBinding, then flip the platform
-	// release's sreAgent.* values so aep-api's reconciler knows where to push
-	// the agent's LLM key/model/base URL and handoff token, and so the
-	// aep-mcp-server route/grant/policy the agent's extension needs render.
-	// Ahead of the Helm step below: the RCA container's rca.extraEnvs
-	// secretKeyRefs need sre-agent-aep to exist before it starts.
-	ui.Step("Applying the AE-owned SRE agent Secret and aep-api's push Role")
-	if err := ensureSREAgentSecret(ctx, applier, sreObsNamespace, p); err != nil {
+	// 3. AE-owned Secret, create-only. Ahead of the Helm step below: the RCA
+	// container's rca.extraEnvs secretKeyRefs need sre-agent-aep to exist
+	// before it starts (its actual content is unset until aep-api's
+	// reconciler pushes into it — that's fine, the container just waits).
+	ui.Step("Applying the AE-owned SRE agent Secret")
+	if err := ensureSREAgentSecret(ctx, client, sreObsNamespace, p); err != nil {
 		return fmt.Errorf("ensure sre-agent-aep secret: %w", err)
 	}
-	if err := applyTemplate(ctx, applier, "sre-push-role", sreObsNamespace, sreAgentPushRoleTmpl, p); err != nil {
-		return fmt.Errorf("apply aep-api-sre-push Role/RoleBinding: %w", err)
-	}
-	if err := updatePlatformSreAgent(ctx, p); err != nil {
-		return fmt.Errorf("wire sreAgent.* on the platform release: %w", err)
-	}
-	ui.Success("AE-owned Secret, push Role and platform sreAgent.* wiring applied")
 
 	// 4. Helm: enable the SRE agent on the installed plane, or install both
 	// OpenChoreo charts.
@@ -314,14 +337,32 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	p.RcaServiceURL = fmt.Sprintf("http://%s:8080", agentDeploy)
+	// The chart may have renamed the Deployment (ai-rca-agent -> sre-agent in
+	// 1.2.0); use the name actually running, never the --rca-name flag.
+	p.RcaName = agentDeploy
 
-	// 5. Best-effort readiness (do NOT wait on the RCA/SRE agent deployment — it stays
-	// unwired until step 5). Warn (don't abort) so name/version drift in the
+	// 5. Push Role/RoleBinding scoped to the discovered Deployment name, then
+	// flip the platform release's sreAgent.* values so aep-api's reconciler
+	// knows where to push the agent's LLM key/model/base URL and handoff
+	// token, and so the aep-mcp-server route/grant/policy the agent's
+	// extension needs render.
+	ui.Step("Applying aep-api's push Role and the platform sreAgent.* wiring")
+	if err := applyTemplate(ctx, applier, "sre-push-role", sreObsNamespace, sreAgentPushRoleTmpl, p); err != nil {
+		return fmt.Errorf("apply aep-api-sre-push Role/RoleBinding: %w", err)
+	}
+	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion); err != nil {
+		return fmt.Errorf("wire sreAgent.* on the platform release: %w", err)
+	}
+	ui.Success("Push Role and platform sreAgent.* wiring applied")
+
+	// 6. Best-effort readiness (do NOT wait on the RCA/SRE agent deployment —
+	// it stays unwired until step 7 patches observer-config with
+	// RCA_SERVICE_URL). Warn (don't abort) so name/version drift in the
 	// upstream charts can't wedge the install.
 	waitForDeployment(ctx, client, sreObsNamespace, "observer", 5*time.Minute)
 	waitForDeployment(ctx, client, sreObsNamespace, "controller-manager", 5*time.Minute)
 
-	// 6. Alert->RCA auto-trigger + AEP handoff wiring (post-helm ConfigMap
+	// 7. Alert->RCA auto-trigger + AEP handoff wiring (post-helm ConfigMap
 	// patches; the charts don't expose all these keys). In-cluster URLs.
 	ui.Step("Wiring alert->RCA auto-trigger + AEP handoff")
 	if err := patchConfigMap(ctx, client, sreObsNamespace, "observer-config", map[string]string{
@@ -343,7 +384,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}
 
-	// 7. Authz grants, plus the route and ClusterObservabilityPlane CR for a
+	// 8. Authz grants, plus the route and ClusterObservabilityPlane CR for a
 	// plane aectl installed.
 	ui.Step("Applying authz grants")
 	if err := applyTemplate(ctx, applier, "sre-grants", sreObsNamespace, sreGrantsTmpl, p); err != nil {
@@ -356,7 +397,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 8. OpenSearch index-template bootstrap (detect + self-heal).
+	// 9. OpenSearch index-template bootstrap (detect + self-heal).
 	ui.Step("Running OpenSearch index-template bootstrap job")
 	if err := k8s.RunJob(ctx, client, openSearchBootstrapJob(sreObsNamespace), os.Stdout); err != nil {
 		ui.Warn(fmt.Sprintf("index-template bootstrap job did not complete cleanly: %v", err))
@@ -406,37 +447,65 @@ func applyTemplate(ctx context.Context, applier *k8s.Applier, fieldManager, ns, 
 // sre-agent-aep does not already exist. aep-api's reconciler owns its actual
 // content (LLM key/model/base URL, handoff token); a re-run of `aectl sre
 // install` must never clobber values it already pushed.
-func ensureSREAgentSecret(ctx context.Context, applier *k8s.Applier, ns string, p sreParams) error {
-	existing, err := applier.Get(ctx, "v1", "Secret", ns, "sre-agent-aep")
+func ensureSREAgentSecret(ctx context.Context, client kubernetes.Interface, ns string, p sreParams) error {
+	if _, err := client.CoreV1().Secrets(ns).Get(ctx, "sre-agent-aep", metav1.GetOptions{}); err == nil {
+		return nil // already present; aep-api may have pushed real values here — never overwrite
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("get sre-agent-aep secret: %w", err)
+	}
+
+	t, err := template.New("sre-agent-secret").Parse(sreAgentAEOwnedSecretTmpl)
 	if err != nil {
 		return err
 	}
-	if existing != nil {
-		return nil
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, p); err != nil {
+		return err
 	}
-	return applyTemplate(ctx, applier, "sre-agent-secret", ns, sreAgentAEOwnedSecretTmpl, p)
+	var sec corev1.Secret
+	if err := yaml.Unmarshal(buf.Bytes(), &sec); err != nil {
+		return fmt.Errorf("decode sre-agent-aep secret template: %w", err)
+	}
+	if _, err := client.CoreV1().Secrets(ns).Create(ctx, &sec, metav1.CreateOptions{}); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return nil // race: another install created it first
+		}
+		return fmt.Errorf("create sre-agent-aep secret: %w", err)
+	}
+	return nil
 }
 
-// updatePlatformSreAgent reuses `aectl platform update`'s own code path
-// (runUpdate — the one deployments/scripts/setup-sre.sh used to shell out to)
-// in-process, setting only the flags this command cares about. The other
-// platform-update flags (release name, chart version/source, image overrides)
-// keep the defaults their own `init()` already assigned, and --reuse-values
-// is implied (updateResetValues stays false), so this only ever adds the
-// sreAgent.* overrides on top of whatever the platform release already has.
-func updatePlatformSreAgent(ctx context.Context, p sreParams) error {
-	prevNamespace, prevSets := updateNamespace, updateHelmSets
-	defer func() { updateNamespace, updateHelmSets = prevNamespace, prevSets }()
-	updateNamespace = p.AEPNamespace
-	updateHelmSets = []string{
-		"sreAgent.enabled=true",
-		"sreAgent.org=" + p.Org,
-		"sreAgent.namespace=" + p.ObsNamespace,
-		"sreAgent.deployment=" + p.RcaName,
-		"sreAgent.secret=sre-agent-aep",
-		"sreAgent.mcpHostname=" + sreMCPHost,
+// sreAgentPlatformUpdateConfig builds the platformUpdateConfig that flips
+// sreAgent.* on the AEP platform release. Split out from
+// updatePlatformSreAgent so the (sreParams, chartPath, chartVersion) ->
+// platformUpdateConfig mapping — in particular that the chart source always
+// reaches the config — is unit-testable without shelling out to helm.
+func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion string) platformUpdateConfig {
+	return platformUpdateConfig{
+		Namespace:    p.AEPNamespace,
+		Release:      defaultPlatformRelease,
+		ChartPath:    chartPath,
+		ChartVersion: chartVersion,
+		HelmSets: []string{
+			"sreAgent.enabled=true",
+			"sreAgent.org=" + p.Org,
+			"sreAgent.namespace=" + p.ObsNamespace,
+			"sreAgent.deployment=" + p.RcaName,
+			"sreAgent.secret=sre-agent-aep",
+			"sreAgent.mcpHostname=" + p.MCPHostname,
+		},
 	}
-	return runUpdate(updateCmd, nil)
+}
+
+// updatePlatformSreAgent flips sreAgent.* on the AEP platform release by
+// calling platformUpdate directly (the same function `aectl platform
+// update`'s cobra RunE calls) — no shared package-level state with that
+// command, and this call's own ctx is honored rather than a fresh
+// context.Background(). chartPath/chartVersion pin the chart source
+// (runSreInstall requires one of them up front) so this never falls back to
+// platformUpdate's own unpinned-OCI default.
+func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion string) error {
+	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion))
 }
 
 // ensureClusterGatewayCA copies the cluster gateway CA cert from the

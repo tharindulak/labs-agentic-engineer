@@ -50,6 +50,11 @@ AEP_NS="${AEP_NS:-wso2-aep}"
 OBS_NS="${OBS_NS:-openchoreo-observability-plane}"
 AECTL="${AECTL:-$REPO_ROOT/tools/aectl/aectl-skaffold}"
 ALERT_RULE_TRAIT="$REPO_ROOT/deployments/manifests/api-platform/observability-alert-rule-trait.yaml"
+# `aectl sre install` uses this to pin the platform chart when it flips
+# sreAgent.* on the platform release (via its own internal `aectl platform
+# update` call) — the same local chart `make dev-env` installed the release
+# from, so that step never drifts it to an unpinned GHCR "latest".
+PLATFORM_CHART="${PLATFORM_CHART:-$REPO_ROOT/deployments/helm-charts/platform}"
 
 kubectl() { command kubectl --context "$CLUSTER_CONTEXT" "$@"; }
 fail() { echo "❌ $1" >&2; [ $# -gt 1 ] && echo "   $2" >&2; exit 1; }
@@ -78,7 +83,7 @@ kubectl apply -f "$ALERT_RULE_TRAIT"
 # ── 2. SRE agent on the observability plane ─────────────────────────────────
 echo "🤖 Running aectl sre install"
 "$AECTL" sre install --namespace "$AEP_NS" --obs-namespace "$OBS_NS" --assets-root "$REPO_ROOT" \
-    --org "${AEP_ORG:-default}"
+    --org "${AEP_ORG:-default}" --platform-chart "$PLATFORM_CHART"
 
 echo ""
 echo "✅ SRE handoff wired. Runbook: docs/developer-guide/sre-handoff-runbook.md"
