@@ -501,10 +501,31 @@ type SREAgentConfig struct {
 	Namespace  string
 	Deployment string
 	Secret     string
+
+	// Seed is the install-time SRE model connection `aectl sre install`
+	// writes without a user token (Task A2's `sre-model-seed` Secret, read
+	// from SRE_AGENT_SEED_API_KEY / SRE_AGENT_SEED_MODEL /
+	// SRE_AGENT_SEED_BASE_URL). organization.SreModelConnectionService.ApplySeed
+	// applies it at most once per distinct value.
+	Seed SREAgentSeed
 }
 
 // Enabled reports whether a push target is fully configured. All four
 // fields must be set together — a partial target is not addressable.
 func (c SREAgentConfig) Enabled() bool {
 	return c.Org != "" && c.Namespace != "" && c.Deployment != "" && c.Secret != ""
+}
+
+// SREAgentSeed is the install-time SRE model connection candidate. The key is
+// never logged.
+type SREAgentSeed struct {
+	APIKey  string
+	Model   string
+	BaseURL string
+}
+
+// Present reports whether the seed carries enough to attempt (a key and a
+// model; BaseURL defaults when both are set — see the loader).
+func (s SREAgentSeed) Present() bool {
+	return s.APIKey != "" && s.Model != ""
 }

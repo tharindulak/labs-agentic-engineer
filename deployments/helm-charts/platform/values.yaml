@@ -311,6 +311,13 @@ sreAgent:
   deployment: "sre-agent"
   secret: "sre-agent-aep"
   mcpHostname: "aep-mcp.openchoreo.localhost"
+  # seed.secretName names a Secret (apiKey/model/baseURL keys) `aectl sre
+  # install` writes in this namespace so aep-api can apply an install-time SRE
+  # model connection for the owning org without a user token (Task A1/A2). ""
+  # (default) wires none of the SRE_AGENT_SEED_* env vars — the reconciler
+  # then never attempts a seed. Only takes effect when sreAgent.enabled.
+  seed:
+    secretName: ""
 
 # Temporal workflow engine that drives the devflow workflows. aep-api runs the
 # worker in-process and dials the frontend below. Backed by the postgres

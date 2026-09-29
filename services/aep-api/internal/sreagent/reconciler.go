@@ -30,6 +30,16 @@ import (
 // `helm upgrade` that drops the hash annotation or resets replicas.
 const reconcileInterval = 60 * time.Second
 
+// Seeder applies the install-time SRE model seed for org, once, before a pass
+// resolves the effective connection (organization.SreModelConnectionService.
+// ApplySeed, adapted so this package need not import the seed's config-side
+// values). The returned string is the outcome (organization.SeedOutcome, as
+// text); a non-nil error is logged and the pass continues on whatever
+// connection already applies.
+type Seeder interface {
+	ApplySeed(ctx context.Context, org string) (string, error)
+}
+
 // Kube is the observability plane's Kubernetes API as the reconciler uses it.
 type Kube interface {
 	PatchSecretData(ctx context.Context, ns, name string, data map[string][]byte) error
@@ -48,6 +58,7 @@ type Reconciler struct {
 	kube     Kube
 	eff      func(ctx context.Context, org string) (organization.EffectiveSRE, error)
 	tokens   Tokens
+	seeder   Seeder
 	kick     chan struct{}
 	interval time.Duration
 }
@@ -58,6 +69,14 @@ func NewReconciler(cfg config.SREAgentConfig, kube Kube,
 	eff func(ctx context.Context, org string) (organization.EffectiveSRE, error), tokens Tokens) *Reconciler {
 	return &Reconciler{cfg: cfg, kube: kube, eff: eff, tokens: tokens,
 		kick: make(chan struct{}, 1), interval: reconcileInterval}
+}
+
+// WithSeeder attaches the install-time seed step (Task A1): every pass calls
+// it for cfg.Org before resolving the effective connection. nil (the
+// default, when no seed is configured) skips the step entirely. Chainable.
+func (r *Reconciler) WithSeeder(s Seeder) *Reconciler {
+	r.seeder = s
+	return r
 }
 
 // Run makes the boot pass, then a pass on every tick and every kick until ctx
@@ -131,6 +150,11 @@ func (r *Reconciler) pass(ctx context.Context) {
 // the pods the annotation rolls start on the new values; replicas follow.
 func (r *Reconciler) reconcile(ctx context.Context) error {
 	org, ns := r.cfg.Org, r.cfg.Namespace
+	if r.seeder != nil {
+		if _, err := r.seeder.ApplySeed(ctx, org); err != nil {
+			slog.WarnContext(ctx, "sreagent.seed_failed", "org", org, "err", err)
+		}
+	}
 	eff, err := r.eff(ctx, org)
 	if err != nil {
 		return fmt.Errorf("effective connection: %w", err)

@@ -17,6 +17,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -47,9 +48,26 @@ func newSREAgentReconciler(cfg config.Config, tokens sreagent.Tokens,
 		return nil, fmt.Errorf("sre agent reconciler: %w", err)
 	}
 	rec := sreagent.NewReconciler(cfg.SREAgent, kube, sreModels.EffectiveSRE, tokens)
+	if seed := cfg.SREAgent.Seed; seed.Present() {
+		rec = rec.WithSeeder(sreModelSeeder{svc: sreModels,
+			seed: organization.Seed{BaseURL: seed.BaseURL, Model: seed.Model, APIKey: seed.APIKey}})
+	}
 	sreModels.OnChange(rec.Kick)
 	models.OnChange(rec.Kick)
 	slog.Info("SRE agent reconciler", "org", cfg.SREAgent.Org, "namespace", cfg.SREAgent.Namespace,
 		"deployment", cfg.SREAgent.Deployment)
 	return rec, nil
+}
+
+// sreModelSeeder adapts SreModelConnectionService.ApplySeed to
+// sreagent.Seeder, with the seed's values (from config.SREAgentConfig.Seed)
+// bound in — the reconciler itself never sees them.
+type sreModelSeeder struct {
+	svc  *organization.SreModelConnectionService
+	seed organization.Seed
+}
+
+func (s sreModelSeeder) ApplySeed(ctx context.Context, org string) (string, error) {
+	outcome, err := s.svc.ApplySeed(ctx, org, s.seed)
+	return string(outcome), err
 }

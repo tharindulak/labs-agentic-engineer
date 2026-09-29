@@ -135,6 +135,16 @@ connect-callback controller, and the S2S credentials-refresh.*
   `OnChange` run after every committed change of their connection. `GET /config`'s `sreAgent` is set
   only for the org the SRE agent serves (`SREAgentStatusReader` answers ok=false for any other), and a
   failed status read shows as `failed`, never as a failed GET.
+- **An install-time SRE model seed applies at most once** (`SreModelConnectionService.ApplySeed`,
+  `sre_model_seed.go`): `aectl sre install` writes the seed as env vars
+  (`config.SREAgentConfig.Seed`, read by the sreagent `Reconciler` through a `Seeder` it does not
+  otherwise depend on); a stored connection always wins over a seed (never even probed); otherwise
+  the seed runs the same Check/Persist path a console save takes, actor `aectl-seed`. A hash of the
+  seed's three values under `org_secrets` `sre-model/seed-applied` (`<hash>:applied` or
+  `<hash>:refused`) remembers whether this exact seed was already tried, so a reconciler pass that
+  calls it every tick costs one read once tried; a changed seed (a different model, a rotated key) is
+  tried again. A refusal is logged and returned as an outcome, never an error — it must not stop the
+  reconciler from reconciling whatever connection already applies.
 - **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**
   `ProvisionPublisherForBuild` (actor `build-provision`) ensures the Thunder publisher app and stamps
   `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns

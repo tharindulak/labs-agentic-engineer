@@ -262,6 +262,87 @@ func TestRun_BootPassThenKick(t *testing.T) {
 	}
 }
 
+// orderRecorder tracks the sequence of steps a reconcile pass took, across
+// goroutine-safe fakes.
+type orderRecorder struct {
+	mu    sync.Mutex
+	order []string
+}
+
+func (r *orderRecorder) add(s string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.order = append(r.order, s)
+}
+
+func (r *orderRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.order)
+}
+
+// recordingSeeder is a Seeder that records its call on rec and answers err.
+type recordingSeeder struct {
+	rec *orderRecorder
+	err error
+}
+
+func (s recordingSeeder) ApplySeed(_ context.Context, org string) (string, error) {
+	s.rec.add("seed:" + org)
+	return "applied", s.err
+}
+
+// effectiveRecording is like effective(e), but also records the call on rec
+// so a test can assert the seed step ran before the effective-connection read.
+func effectiveRecording(rec *orderRecorder, e organization.EffectiveSRE) func(context.Context, string) (organization.EffectiveSRE, error) {
+	return func(_ context.Context, org string) (organization.EffectiveSRE, error) {
+		rec.add("eff:" + org)
+		return e, nil
+	}
+}
+
+// TestReconcile_SeederRunsFirstAndToleratesError guards the wiring a Seeder
+// needs: it runs before the effective-connection read on every pass, and a
+// failing Seeder does not stop the pass from pushing the (unrelated)
+// effective connection it already has.
+func TestReconcile_SeederRunsFirstAndToleratesError(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	rec := &orderRecorder{}
+	seeder := recordingSeeder{rec: rec, err: errors.New("seed probe refused")}
+	kube := &fakeKube{dep: DeploymentState{Replicas: 0, TemplateHash: ""}}
+	r := NewReconciler(testCfg, kube, effectiveRecording(rec, override), fixedTokens{}).WithSeeder(seeder)
+
+	if err := r.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := rec.snapshot(); len(got) != 2 || got[0] != "seed:"+testOrg || got[1] != "eff:"+testOrg {
+		t.Fatalf("order = %v, want [seed:%s eff:%s]", got, testOrg, testOrg)
+	}
+	if got := kube.writes(); len(got) == 0 {
+		t.Fatal("reconcile did nothing after a seeder error, want the pass to continue")
+	}
+	if !strings.Contains(buf.String(), "seed probe refused") {
+		t.Fatalf("want the seeder error logged, got %q", buf.String())
+	}
+}
+
+// TestReconcile_WithoutSeederStillReconciles guards the default: a nil
+// Seeder (no seed configured) does not change behavior at all.
+func TestReconcile_WithoutSeederStillReconciles(t *testing.T) {
+	kube := &fakeKube{dep: DeploymentState{Replicas: 0, TemplateHash: ""}}
+	r := NewReconciler(testCfg, kube, effective(override), fixedTokens{})
+	if err := r.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := kube.writes(); len(got) == 0 {
+		t.Fatal("reconcile did nothing, want the push to still happen without a Seeder")
+	}
+}
+
 func TestReconcile_NeverLogsSecretValues(t *testing.T) {
 	var buf bytes.Buffer
 	var mu sync.Mutex

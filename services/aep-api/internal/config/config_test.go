@@ -173,3 +173,83 @@ func TestLoad_SREAgentConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestLoad_SREAgentSeed pins the install-time seed's env wiring (Task A1):
+// Present() is true only with both a key and a model, and the base URL
+// defaults to the OpenAI endpoint only then — never as a bare default that
+// would make an absent seed look present.
+func TestLoad_SREAgentSeed(t *testing.T) {
+	t.Run("key and model populate Seed with the default base URL", func(t *testing.T) {
+		setRequiredLoadEnv(t)
+		t.Setenv("SRE_AGENT_SEED_API_KEY", "sk-seed-0123456789")
+		t.Setenv("SRE_AGENT_SEED_MODEL", "gpt-4o-mini")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+		if !cfg.SREAgent.Seed.Present() {
+			t.Fatal("Seed.Present() = false, want true")
+		}
+		if cfg.SREAgent.Seed.APIKey != "sk-seed-0123456789" {
+			t.Errorf("APIKey = %q", cfg.SREAgent.Seed.APIKey)
+		}
+		if cfg.SREAgent.Seed.Model != "gpt-4o-mini" {
+			t.Errorf("Model = %q", cfg.SREAgent.Seed.Model)
+		}
+		if cfg.SREAgent.Seed.BaseURL != "https://api.openai.com/v1" {
+			t.Errorf("BaseURL = %q, want the default", cfg.SREAgent.Seed.BaseURL)
+		}
+	})
+
+	t.Run("an explicit base URL overrides the default", func(t *testing.T) {
+		setRequiredLoadEnv(t)
+		t.Setenv("SRE_AGENT_SEED_API_KEY", "sk-seed-0123456789")
+		t.Setenv("SRE_AGENT_SEED_MODEL", "gpt-4o-mini")
+		t.Setenv("SRE_AGENT_SEED_BASE_URL", "https://llm.internal/v1")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+		if cfg.SREAgent.Seed.BaseURL != "https://llm.internal/v1" {
+			t.Errorf("BaseURL = %q, want the explicit value", cfg.SREAgent.Seed.BaseURL)
+		}
+	})
+
+	for _, missing := range []string{"SRE_AGENT_SEED_API_KEY", "SRE_AGENT_SEED_MODEL"} {
+		t.Run("missing "+missing+" is not Present", func(t *testing.T) {
+			setRequiredLoadEnv(t)
+			vals := map[string]string{"SRE_AGENT_SEED_API_KEY": "sk-seed-0123456789", "SRE_AGENT_SEED_MODEL": "gpt-4o-mini"}
+			for k, v := range vals {
+				if k == missing {
+					continue
+				}
+				t.Setenv(k, v)
+			}
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v, want nil", err)
+			}
+			if cfg.SREAgent.Seed.Present() {
+				t.Fatalf("Seed.Present() = true with %s unset, want false", missing)
+			}
+		})
+	}
+
+	t.Run("neither set is not Present and no default base URL leaks in", func(t *testing.T) {
+		setRequiredLoadEnv(t)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+		if cfg.SREAgent.Seed.Present() {
+			t.Fatal("Seed.Present() = true with neither env var set, want false")
+		}
+		if cfg.SREAgent.Seed.BaseURL != "" {
+			t.Errorf("BaseURL = %q, want empty when the seed is not present", cfg.SREAgent.Seed.BaseURL)
+		}
+	})
+}

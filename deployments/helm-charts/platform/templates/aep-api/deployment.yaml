@@ -265,6 +265,32 @@ spec:
               value: {{ .Values.sreAgent.deployment | quote }}
             - name: SRE_AGENT_SECRET
               value: {{ .Values.sreAgent.secret | quote }}
+            {{- if .Values.sreAgent.seed.secretName }}
+            # Install-time SRE model seed (Task A1/A2): `aectl sre install`
+            # writes sreAgent.seed.secretName in this namespace so aep-api can
+            # apply an SRE model connection for the owning org without a user
+            # token. optional: true — the reconciler's seed step is a no-op
+            # (config.SREAgentSeed.Present() == false) if any key is absent,
+            # so a Secret missing a key never blocks the pod from starting.
+            - name: SRE_AGENT_SEED_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sreAgent.seed.secretName | quote }}
+                  key: apiKey
+                  optional: true
+            - name: SRE_AGENT_SEED_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sreAgent.seed.secretName | quote }}
+                  key: model
+                  optional: true
+            - name: SRE_AGENT_SEED_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sreAgent.seed.secretName | quote }}
+                  key: baseURL
+                  optional: true
+            {{- end }}
             {{- end }}
             {{- if .Values.temporal.enabled }}
             # Temporal (devflow workflows). Points the in-process worker at the
