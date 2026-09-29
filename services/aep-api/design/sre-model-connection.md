@@ -62,12 +62,16 @@ plain-HTTP in-cluster apiserver client shared with `thunderapp` via
 - Runs a 60-second tick, plus an immediate kick on every SRE model connection
   or org model connection save (`OnChange`), so a Console save reaches the
   cluster without waiting for the next tick.
-- `Status(ctx, org)` answers `GET /config`'s `sreAgent.status`
-  (`unconfigured | applying | running | failed`) for the **one** org this
-  plane serves — any other org gets no `sreAgent` at all, never another
-  org's status. A cluster-read failure never fails the request: `Get` logs a
-  warning and projects `status: failed` with a reason, so settings stay
-  loadable when the observability plane's apiserver is unreachable.
+- `Status(ctx, org)` reports the rollout (`unconfigured | applying | running
+  | failed` with a reason) for the **one** org this plane serves — any other
+  org reads back `ok=false`, never another org's status. A cluster-read
+  failure is returned as an error, unchanged.
+- `organization.Service.sreAgentProjection`, called from `Service.Get` for
+  `GET /config`, is what degrades that error: it catches it, logs a warning
+  (`slog.WarnContext`), and projects `status: failed` with the reason "SRE
+  agent status unavailable: cannot read the observability plane" in its
+  place. So `GET /config` never fails because of it — settings stay loadable
+  when the observability plane's apiserver is unreachable.
 
 aep-api needs a namespaced `Role` in the observability-plane namespace to do
 any of this — `aep-api-sre-push` (get/update/patch on the named Secret,
