@@ -153,6 +153,70 @@ spec:
 	}
 }
 
+// A Deployment carrying the right component label but no container named
+// after the component must fail with the same "no container named" error a
+// renamed agent container would hit, not silently no-op.
+func TestAddExtensionsMountNoMatchingContainer(t *testing.T) {
+	in := []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-agent
+  labels: {app.kubernetes.io/component: sre-agent}
+spec:
+  template:
+    spec:
+      containers:
+        - name: not-the-agent
+          image: ghcr.io/openchoreo/sre-agent:v1.3.0
+      volumes: []
+`)
+	_, err := addExtensionsMount(in, "sre-agent")
+	if err == nil || !strings.Contains(err.Error(), `no container named "sre-agent"`) {
+		t.Fatalf("want a \"no container named\" error, got %v", err)
+	}
+}
+
+// The post-renderer must be a surgical edit: any pod-spec or container field
+// the vendored k8s.io/api types don't model must survive untouched, and no
+// zero-value field (like `resources: {}`, which a typed corev1.Container
+// round-trip introduces) may be added.
+func TestAddExtensionsMountPreservesUnknownFields(t *testing.T) {
+	in := []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-agent
+  labels: {app.kubernetes.io/component: sre-agent}
+spec:
+  template:
+    spec:
+      x-future-field: pod-level-value
+      dnsPolicy: ClusterFirst
+      containers:
+        - name: sre-agent
+          image: ghcr.io/openchoreo/sre-agent:v1.3.0
+          x-future-field: container-level-value
+          securityContext: {runAsNonRoot: true, runAsUser: 12000}
+      volumes: []
+`)
+	out, err := addExtensionsMount(in, "sre-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"x-future-field: pod-level-value",
+		"x-future-field: container-level-value",
+		"dnsPolicy: ClusterFirst",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("unknown field dropped, missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "resources:") {
+		t.Errorf("post-renderer must not introduce a resources field:\n%s", s)
+	}
+}
+
 func renderedPodSpec(t *testing.T, manifests []byte) corev1.PodSpec {
 	t.Helper()
 	var d struct {

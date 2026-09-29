@@ -17,14 +17,12 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 )
@@ -137,108 +135,156 @@ func addExtensionsMount(manifests []byte, component string) ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// wireSREAgentDeployment mutates only spec.template.spec.volumes,
+// spec.template.spec.initContainers, and the agent container's
+// volumeMounts, leaving every other field of the rendered pod spec exactly
+// as the chart produced it. It never round-trips the pod spec through a
+// typed corev1.PodSpec: doing so would silently drop any chart-authored
+// field the vendored k8s.io/api types don't model, and would add
+// zero-value fields (e.g. `resources: {}`) that were never there.
 func wireSREAgentDeployment(u *unstructured.Unstructured, component string) error {
-	raw, _, err := unstructured.NestedMap(u.Object, "spec", "template", "spec")
+	containers, _, err := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "containers")
 	if err != nil {
-		return err
+		return fmt.Errorf("read containers: %w", err)
 	}
-	var spec corev1.PodSpec
-	if err := convertJSON(raw, &spec); err != nil {
-		return fmt.Errorf("decode pod spec: %w", err)
-	}
-	if err := wireSREAgentPod(&spec, component); err != nil {
-		return err
-	}
-	var out map[string]interface{}
-	if err := convertJSON(spec, &out); err != nil {
-		return err
-	}
-	return unstructured.SetNestedMap(u.Object, out, "spec", "template", "spec")
-}
 
-func wireSREAgentPod(spec *corev1.PodSpec, component string) error {
-	var agent *corev1.Container
-	for i := range spec.Containers {
-		if spec.Containers[i].Name == component {
-			agent = &spec.Containers[i]
+	var agent map[string]interface{}
+	for _, c := range containers {
+		cm, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if name, _, _ := unstructured.NestedString(cm, "name"); name == component {
+			agent = cm
+			break
 		}
 	}
 	if agent == nil {
 		return fmt.Errorf("no container named %q", component)
 	}
 
-	optional := true
+	image, _, _ := unstructured.NestedString(agent, "image")
+	imagePullPolicy, _, _ := unstructured.NestedString(agent, "imagePullPolicy")
+	// NestedMap deep-copies, so the initContainer below gets its own copy.
+	securityContext, _, err := unstructured.NestedMap(agent, "securityContext")
+	if err != nil {
+		return fmt.Errorf("read agent securityContext: %w", err)
+	}
+
 	// Optional: Helm renders the agent before `sre install` applies the
 	// ConfigMap (then restarts the agent), and --ae-handoff=false never
 	// applies it; neither may keep the pod from starting.
-	addVolume(spec, corev1.Volume{Name: sreExtensionsVolume, VolumeSource: corev1.VolumeSource{
-		ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: sreExtensionsConfigMap},
-			Optional:             &optional,
-			Items: []corev1.KeyToPath{
-				{Key: sreExtensionsKeyMCPJSON, Path: "remediation/mcp.json"},
-				{Key: sreExtensionsKeyContext, Path: "remediation/CONTEXT.md"},
-				{Key: sreExtensionsKeySkillMD, Path: "remediation/skills/coding-agent-handoff/SKILL.md"},
-			},
-		},
-	}})
-	addVolume(spec, corev1.Volume{Name: sreClusterCAVolume, VolumeSource: corev1.VolumeSource{
-		ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: sreClusterCAVolume},
-			Items:                []corev1.KeyToPath{{Key: "ca.crt", Path: "ca.crt"}},
-		},
-	}})
-	addVolume(spec, corev1.Volume{Name: sreCABundleVolume, VolumeSource: corev1.VolumeSource{
-		EmptyDir: &corev1.EmptyDirVolumeSource{},
-	}})
+	volumes, _, err := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "volumes")
+	if err != nil {
+		return fmt.Errorf("read volumes: %w", err)
+	}
+	volumes = appendUnlessNamed(volumes, sreExtensionsVolumeManifest())
+	volumes = appendUnlessNamed(volumes, sreClusterCAVolumeManifest())
+	volumes = appendUnlessNamed(volumes, sreCABundleVolumeManifest())
+	if err := unstructured.SetNestedSlice(u.Object, volumes, "spec", "template", "spec", "volumes"); err != nil {
+		return fmt.Errorf("set volumes: %w", err)
+	}
 
-	addMount(agent, corev1.VolumeMount{Name: sreExtensionsVolume, MountPath: sreExtensionsMountPath, ReadOnly: true})
-	addMount(agent, corev1.VolumeMount{Name: sreCABundleVolume, MountPath: sreCABundleMountPath, ReadOnly: true})
+	mounts, _, err := unstructured.NestedSlice(agent, "volumeMounts")
+	if err != nil {
+		return fmt.Errorf("read agent volumeMounts: %w", err)
+	}
+	mounts = appendUnlessNamed(mounts, volumeMountManifest(sreExtensionsVolume, sreExtensionsMountPath, true))
+	mounts = appendUnlessNamed(mounts, volumeMountManifest(sreCABundleVolume, sreCABundleMountPath, true))
+	if err := unstructured.SetNestedSlice(agent, mounts, "volumeMounts"); err != nil {
+		return fmt.Errorf("set agent volumeMounts: %w", err)
+	}
+	if err := unstructured.SetNestedSlice(u.Object, containers, "spec", "template", "spec", "containers"); err != nil {
+		return fmt.Errorf("set containers: %w", err)
+	}
 
-	for _, c := range spec.InitContainers {
-		if c.Name == sreCABundleInit {
-			return nil
+	initContainers, _, err := unstructured.NestedSlice(u.Object, "spec", "template", "spec", "initContainers")
+	if err != nil {
+		return fmt.Errorf("read initContainers: %w", err)
+	}
+	for _, c := range initContainers {
+		cm, ok := c.(map[string]interface{})
+		if ok {
+			if name, _, _ := unstructured.NestedString(cm, "name"); name == sreCABundleInit {
+				return nil // already wired
+			}
 		}
 	}
-	spec.InitContainers = append(spec.InitContainers, corev1.Container{
-		Name:            sreCABundleInit,
-		Image:           agent.Image,
-		ImagePullPolicy: agent.ImagePullPolicy,
-		Command:         []string{"python", "-c", sreCABundleScript},
-		SecurityContext: agent.SecurityContext.DeepCopy(),
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: sreClusterCAVolume, MountPath: sreClusterCAMountPath, ReadOnly: true},
-			{Name: sreCABundleVolume, MountPath: sreCABundleMountPath},
+	initContainer := map[string]interface{}{
+		"name":    sreCABundleInit,
+		"image":   image,
+		"command": []interface{}{"python", "-c", sreCABundleScript},
+		"volumeMounts": []interface{}{
+			volumeMountManifest(sreClusterCAVolume, sreClusterCAMountPath, true),
+			volumeMountManifest(sreCABundleVolume, sreCABundleMountPath, false),
 		},
-	})
+	}
+	if imagePullPolicy != "" {
+		initContainer["imagePullPolicy"] = imagePullPolicy
+	}
+	if securityContext != nil {
+		initContainer["securityContext"] = securityContext
+	}
+	initContainers = append(initContainers, initContainer)
+	if err := unstructured.SetNestedSlice(u.Object, initContainers, "spec", "template", "spec", "initContainers"); err != nil {
+		return fmt.Errorf("set initContainers: %w", err)
+	}
 	return nil
 }
 
-func addVolume(spec *corev1.PodSpec, v corev1.Volume) {
-	for _, existing := range spec.Volumes {
-		if existing.Name == v.Name {
-			return
+// appendUnlessNamed appends item unless items already has a map with
+// the same "name" key, so wiring stays idempotent across repeated renders.
+func appendUnlessNamed(items []interface{}, item map[string]interface{}) []interface{} {
+	name, _, _ := unstructured.NestedString(item, "name")
+	for _, existing := range items {
+		m, ok := existing.(map[string]interface{})
+		if ok {
+			if n, _, _ := unstructured.NestedString(m, "name"); n == name {
+				return items
+			}
 		}
 	}
-	spec.Volumes = append(spec.Volumes, v)
+	return append(items, item)
 }
 
-func addMount(c *corev1.Container, m corev1.VolumeMount) {
-	for _, existing := range c.VolumeMounts {
-		if existing.Name == m.Name {
-			return
-		}
+func sreExtensionsVolumeManifest() map[string]interface{} {
+	return map[string]interface{}{
+		"name": sreExtensionsVolume,
+		"configMap": map[string]interface{}{
+			"name":     sreExtensionsConfigMap,
+			"optional": true,
+			"items": []interface{}{
+				map[string]interface{}{"key": sreExtensionsKeyMCPJSON, "path": "remediation/mcp.json"},
+				map[string]interface{}{"key": sreExtensionsKeyContext, "path": "remediation/CONTEXT.md"},
+				map[string]interface{}{"key": sreExtensionsKeySkillMD, "path": "remediation/skills/coding-agent-handoff/SKILL.md"},
+			},
+		},
 	}
-	c.VolumeMounts = append(c.VolumeMounts, m)
 }
 
-// convertJSON converts between an unstructured map and a typed API object
-// through their JSON form (YAML-decoded numbers are float64, which a direct
-// unstructured conversion into int fields rejects).
-func convertJSON(from, to interface{}) error {
-	b, err := json.Marshal(from)
-	if err != nil {
-		return err
+func sreClusterCAVolumeManifest() map[string]interface{} {
+	return map[string]interface{}{
+		"name": sreClusterCAVolume,
+		"configMap": map[string]interface{}{
+			"name": sreClusterCAVolume,
+			"items": []interface{}{
+				map[string]interface{}{"key": "ca.crt", "path": "ca.crt"},
+			},
+		},
 	}
-	return json.Unmarshal(b, to)
+}
+
+func sreCABundleVolumeManifest() map[string]interface{} {
+	return map[string]interface{}{
+		"name":     sreCABundleVolume,
+		"emptyDir": map[string]interface{}{},
+	}
+}
+
+func volumeMountManifest(name, mountPath string, readOnly bool) map[string]interface{} {
+	m := map[string]interface{}{"name": name, "mountPath": mountPath}
+	if readOnly {
+		m["readOnly"] = true
+	}
+	return m
 }
