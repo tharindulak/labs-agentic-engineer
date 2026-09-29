@@ -195,7 +195,10 @@ Rules the seed follows (`organization.SreModelConnectionService.ApplySeed`,
 - **A given seed is applied at most once**, tracked by a hash of its three
   values in `org_secrets`. Re-running `aectl sre install` with the same
   `--llm-*` values is a no-op; a changed value (a new model, a rotated key)
-  is tried again.
+  is tried again. Re-running with a changed key or model also rolls aep-api
+  (a pod-template annotation stamped with the seed's hash), so the new seed
+  is actually read — still applied only if the org has no stored SRE model
+  connection yet.
 - **A console removal is not re-seeded.** Disconnecting the SRE model
   connection in the Console does not bring the old seed back — the marker
   for that seed's hash still says it was already tried.

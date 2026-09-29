@@ -162,14 +162,14 @@ func TestEnsureSREModelSeedSecret_UpdatesExisting(t *testing.T) {
 func TestSreAgentPlatformUpdateConfig_SeedSecretName(t *testing.T) {
 	p := sreParams{AEPNamespace: "wso2-aep", Org: "default", ObsNamespace: "obs", RcaName: "sre-agent", MCPHostname: "aep-mcp.openchoreo.localhost"}
 
-	withoutSeed := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "")
+	withoutSeed := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "", "")
 	for _, s := range withoutSeed.HelmSets {
 		if strings.Contains(s, "sreAgent.seed.secretName") {
 			t.Errorf("HelmSets = %v, must not set sreAgent.seed.secretName when not seeding", withoutSeed.HelmSets)
 		}
 	}
 
-	withSeed := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", sreModelSeedSecretName)
+	withSeed := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", sreModelSeedSecretName, "somehash")
 	found := false
 	for _, s := range withSeed.HelmSets {
 		if s == "sreAgent.seed.secretName="+sreModelSeedSecretName {
@@ -178,5 +178,63 @@ func TestSreAgentPlatformUpdateConfig_SeedSecretName(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("HelmSets = %v, want sreAgent.seed.secretName=%s", withSeed.HelmSets, sreModelSeedSecretName)
+	}
+}
+
+// TestSreAgentPlatformUpdateConfig_SeedHash: the platform update config
+// carries sreAgent.seed.hash only when this run is actually seeding (a
+// non-empty seedSecretName) — an install run without --llm-* flags must
+// leave both values untouched on the release, same as
+// TestSreAgentPlatformUpdateConfig_SeedSecretName above.
+func TestSreAgentPlatformUpdateConfig_SeedHash(t *testing.T) {
+	p := sreParams{AEPNamespace: "wso2-aep", Org: "default", ObsNamespace: "obs", RcaName: "sre-agent", MCPHostname: "aep-mcp.openchoreo.localhost"}
+
+	withoutSeed := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "", "")
+	for _, s := range withoutSeed.HelmSets {
+		if strings.Contains(s, "sreAgent.seed.hash") {
+			t.Errorf("HelmSets = %v, must not set sreAgent.seed.hash when not seeding", withoutSeed.HelmSets)
+		}
+	}
+
+	withSeed := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", sreModelSeedSecretName, "abc123")
+	found := false
+	for _, s := range withSeed.HelmSets {
+		if s == "sreAgent.seed.hash=abc123" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("HelmSets = %v, want sreAgent.seed.hash=abc123", withSeed.HelmSets)
+	}
+}
+
+// TestSreModelSeedHash_ChangesWithModelOrKey: the hash aectl computes for a
+// seed (reused for both the seed-marker identity aep-api itself recomputes,
+// see sre_model_seed.go, and the sreAgent.seed.hash set above) must change
+// whenever the model or the key changes, and stay stable when neither does —
+// otherwise a rotated key would roll aep-api's pods needlessly, or worse, an
+// actually-changed seed wouldn't roll them at all.
+func TestSreModelSeedHash_ChangesWithModelOrKey(t *testing.T) {
+	base := sreModelSeed{APIKey: "sk-abc123", Model: "gpt-5.4", BaseURL: "https://api.openai.com/v1"}
+	baseHash := sreModelSeedHash(base)
+
+	if got := sreModelSeedHash(base); got != baseHash {
+		t.Errorf("hash is not stable for identical seeds: %q != %q", got, baseHash)
+	}
+
+	changedModel := base
+	changedModel.Model = "gpt-4"
+	if got := sreModelSeedHash(changedModel); got == baseHash {
+		t.Errorf("hash did not change when Model changed: %q", got)
+	}
+
+	changedKey := base
+	changedKey.APIKey = "sk-rotated"
+	if got := sreModelSeedHash(changedKey); got == baseHash {
+		t.Errorf("hash did not change when APIKey changed: %q", got)
+	}
+
+	if baseHash == "" {
+		t.Error("hash must not be empty")
 	}
 }

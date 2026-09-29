@@ -14,9 +14,19 @@ spec:
       app: aep-api
   template:
     metadata:
-      labels: 
+      labels:
         app: aep-api
         app.kubernetes.io/part-of: wso2-agentic-engineer
+      {{- if and .Values.sreAgent.enabled .Values.sreAgent.seed.secretName .Values.sreAgent.seed.hash }}
+      annotations:
+        # Rolls aep-api when the SRE model seed changes (Task A3): the
+        # SRE_AGENT_SEED_* env below is sourced from sreAgent.seed.secretName
+        # and is fixed at pod start, so rewriting that Secret's data alone
+        # never changes this pod template and the reconciler keeps reading
+        # the old seed. A changed hash (different key/model) changes this
+        # annotation and rolls the pods; an unchanged hash is a no-op.
+        aep.wso2.com/sre-model-seed-hash: {{ .Values.sreAgent.seed.hash | quote }}
+      {{- end }}
     spec:
       serviceAccountName: aep-api
       securityContext:

@@ -81,7 +81,7 @@ func TestHelmUpgradeArgs_ChartSource(t *testing.T) {
 // sreParams, not a global.
 func TestUpdatePlatformSreAgent_PassesChartSourceThrough(t *testing.T) {
 	p := sreParams{AEPNamespace: "wso2-aep", Org: "default", ObsNamespace: "obs", RcaName: "sre-agent", MCPHostname: "aep-mcp.openchoreo.localhost"}
-	cfg := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "")
+	cfg := sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "", "")
 	args, err := helmUpgradeArgs(cfg)
 	if err != nil {
 		t.Fatalf("helmUpgradeArgs: %v", err)

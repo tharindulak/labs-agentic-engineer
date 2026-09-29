@@ -26,6 +26,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -68,6 +70,17 @@ func resolveSreModelSeed(keyFile, model, baseURL string) (*sreModelSeed, error) 
 		return nil, fmt.Errorf("--llm-api-key-file %q is empty", keyFile)
 	}
 	return &sreModelSeed{APIKey: key, Model: model, BaseURL: baseURL}, nil
+}
+
+// sreModelSeedHash is a seed's identity hash: sha256(baseURL \x00 model \x00
+// apiKey) hex — the same formula as aep-api's seedHash
+// (services/aep-api/internal/organization/sre_model_seed.go), so the two
+// never drift apart. This is the one place aectl computes it; every caller
+// (the platform chart's sreAgent.seed.hash set — Task A3) goes through here
+// rather than re-deriving it. The key is only ever hashed, never logged.
+func sreModelSeedHash(seed sreModelSeed) string {
+	sum := sha256.Sum256([]byte(seed.BaseURL + "\x00" + seed.Model + "\x00" + seed.APIKey))
+	return hex.EncodeToString(sum[:])
 }
 
 // ensureSREModelSeedSecret create-or-updates sreModelSeedSecretName in ns

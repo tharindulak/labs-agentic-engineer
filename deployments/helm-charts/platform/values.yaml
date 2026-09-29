@@ -318,6 +318,17 @@ sreAgent:
   # then never attempts a seed. Only takes effect when sreAgent.enabled.
   seed:
     secretName: ""
+    # seed.hash is sha256(baseURL+"\x00"+model+"\x00"+apiKey) hex, computed by
+    # `aectl sre install` for the seed it just wrote (Task A3) — the same
+    # formula as aep-api's seedHash
+    # (services/aep-api/internal/organization/sre_model_seed.go). Stamped onto
+    # aep-api's pod-template annotation below so a changed seed (a rotated
+    # key, a different model) rolls the aep-api pods: env sourced from a
+    # Secret is fixed at pod start, so rewriting the Secret's data alone never
+    # changes this Deployment's pod template and the reconciler would keep
+    # reading the old seed. "" (default) renders no annotation, so an
+    # unchanged seed is a no-op re-install.
+    hash: ""
 
 # Temporal workflow engine that drives the devflow workflows. aep-api runs the
 # worker in-process and dials the frontend below. Backed by the postgres

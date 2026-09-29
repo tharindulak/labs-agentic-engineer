@@ -379,14 +379,16 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	// Secret always exists by the time aep-api's reconciler could look for
 	// it.
 	seedSecretName := ""
+	seedHash := ""
 	if seed != nil {
 		ui.Step("Writing the SRE model seed Secret")
 		if err := ensureSREModelSeedSecret(ctx, client, sreNamespace, *seed); err != nil {
 			return fmt.Errorf("write %s secret: %w", sreModelSeedSecretName, err)
 		}
 		seedSecretName = sreModelSeedSecretName
+		seedHash = sreModelSeedHash(*seed)
 	}
-	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion, seedSecretName); err != nil {
+	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion, seedSecretName, seedHash); err != nil {
 		return fmt.Errorf("wire sreAgent.* on the platform release: %w", err)
 	}
 	ui.Success("Push Role and platform sreAgent.* wiring applied")
@@ -523,8 +525,13 @@ func ensureSREAgentSecret(ctx context.Context, client kubernetes.Interface, ns s
 // sre-model-seed Secret, "" otherwise: an install run without --llm-* flags
 // must leave sreAgent.seed.secretName untouched (Never clear an
 // already-seeded org's value just because a later run didn't pass the
-// flags).
-func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, seedSecretName string) platformUpdateConfig {
+// flags). seedHash is sreModelSeedHash of that same seed (Task A3), set only
+// alongside seedSecretName: it lands on aep-api's pod-template annotation so
+// a changed seed (a rotated key, a different model) rolls aep-api's pods —
+// without it, env sourced from a Secret is fixed at pod start and a Secret
+// rewrite alone never rolls the workload, so aep-api keeps reading the old
+// seed.
+func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, seedSecretName, seedHash string) platformUpdateConfig {
 	sets := []string{
 		"sreAgent.enabled=true",
 		"sreAgent.org=" + p.Org,
@@ -535,6 +542,9 @@ func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, seedSecr
 	}
 	if seedSecretName != "" {
 		sets = append(sets, "sreAgent.seed.secretName="+seedSecretName)
+	}
+	if seedHash != "" {
+		sets = append(sets, "sreAgent.seed.hash="+seedHash)
 	}
 	return platformUpdateConfig{
 		Namespace:    p.AEPNamespace,
@@ -551,10 +561,10 @@ func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, seedSecr
 // command, and this call's own ctx is honored rather than a fresh
 // context.Background(). chartPath/chartVersion pin the chart source
 // (runSreInstall requires one of them up front) so this never falls back to
-// platformUpdate's own unpinned-OCI default. seedSecretName is
-// sreAgentPlatformUpdateConfig's own parameter, forwarded as-is.
-func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion, seedSecretName string) error {
-	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion, seedSecretName))
+// platformUpdate's own unpinned-OCI default. seedSecretName/seedHash are
+// sreAgentPlatformUpdateConfig's own parameters, forwarded as-is.
+func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion, seedSecretName, seedHash string) error {
+	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion, seedSecretName, seedHash))
 }
 
 // ensureClusterGatewayCA copies the cluster gateway CA cert from the
