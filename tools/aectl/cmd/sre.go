@@ -83,6 +83,7 @@ var (
 	sreOrgNamespace    string
 	sreOrgSecretStore  string
 	srePlatformStore   string
+	sreSkipOCVerCheck  bool
 )
 
 var sreCmd = &cobra.Command{
@@ -134,6 +135,7 @@ func init() {
 	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
+	f.BoolVar(&sreSkipOCVerCheck, "skip-oc-version-check", false, "Skip the OpenChoreo minimum version check (not recommended)")
 }
 
 // sreParams holds everything the value/manifest templates need.
@@ -177,6 +179,16 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("connect to cluster: %w", err)
 	}
+
+	if !sreSkipOCVerCheck {
+		if err := checkOCVersion(ctx, client, viper.GetString("oc.system_namespace"), minOCVersion); err != nil {
+			return err
+		}
+		ui.Success(fmt.Sprintf("OpenChoreo ≥ %s", minOCVersion))
+	} else {
+		ui.Warn("OpenChoreo version check skipped")
+	}
+
 	applier, err := k8s.NewApplier(kubeconfig)
 	if err != nil {
 		return fmt.Errorf("build applier: %w", err)

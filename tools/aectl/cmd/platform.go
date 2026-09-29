@@ -53,7 +53,7 @@ platform on a Kubernetes cluster.`,
 }
 
 const (
-	minOCVersion = "1.1.1"
+	minOCVersion = "1.3.0"
 
 	ocOpenBaoNamespace = "openbao"
 	ocOpenBaoRelease   = "openbao"
