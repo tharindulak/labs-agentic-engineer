@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Standalone OpenChoreo v1.2.5 k3d install for `aectl platform install` —
+# Standalone OpenChoreo v1.3.0 k3d install for `aectl platform install` —
 # Thunder swapped for ThunderID 1.0.0, plus the WSO2 API Platform operator
 # `aectl` requires that the official guide doesn't install at all.
 #
@@ -55,7 +55,7 @@
 # (config/runtime/user).
 #
 # Everything below that isn't the Thunder install itself is UNCHANGED from the
-# official page — same OpenChoreo version (v1.2.5 / release-v1.2), same
+# official page — same OpenChoreo version (v1.3.0 / release-v1.3), same
 # prerequisite charts, same control/data/workflow/observability plane installs,
 # same sample resources.
 #

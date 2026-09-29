@@ -180,13 +180,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("connect to cluster: %w", err)
 	}
 
-	if !sreSkipOCVerCheck {
-		if err := checkOCVersion(ctx, client, viper.GetString("oc.system_namespace"), minOCVersion); err != nil {
-			return err
-		}
-		ui.Success(fmt.Sprintf("OpenChoreo ≥ %s", minOCVersion))
-	} else {
-		ui.Warn("OpenChoreo version check skipped")
+	if err := enforceOCVersion(ctx, client, viper.GetString("oc.system_namespace"), sreSkipOCVerCheck); err != nil {
+		return err
 	}
 
 	applier, err := k8s.NewApplier(kubeconfig)
