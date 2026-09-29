@@ -46,6 +46,15 @@ const (
 	sreAssetsRootFlag = "--assets-root"
 )
 
+// The sre-agent-extensions ConfigMap and its keys, shared by the ConfigMap
+// aectl applies and the volume the post-renderer mounts it through.
+const (
+	sreExtensionsConfigMap  = "sre-agent-extensions"
+	sreExtensionsKeyMCPJSON = "mcp.json"
+	sreExtensionsKeyContext = "CONTEXT.md"
+	sreExtensionsKeySkillMD = "SKILL.md"
+)
+
 // loadSreExtensionAssets reads the remediation extension from explicitRoot
 // when it is set (the --assets-root flag), otherwise from the AE checkout
 // found by walking up from the working directory.
@@ -123,11 +132,11 @@ func renderMCPJSON(mcpJSON, mcpURL string) string {
 
 func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, ns string, assets sreExtensionAssets, mcpURL string) error {
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "sre-agent-extensions", Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: sreExtensionsConfigMap, Namespace: ns},
 		Data: map[string]string{
-			"mcp.json":   renderMCPJSON(assets.MCPJSON, mcpURL),
-			"CONTEXT.md": assets.Context,
-			"SKILL.md":   assets.SkillMD,
+			sreExtensionsKeyMCPJSON: renderMCPJSON(assets.MCPJSON, mcpURL),
+			sreExtensionsKeyContext: assets.Context,
+			sreExtensionsKeySkillMD: assets.SkillMD,
 		},
 	}
 	if _, err := client.CoreV1().ConfigMaps(ns).Create(ctx, cm, metav1.CreateOptions{}); err != nil {

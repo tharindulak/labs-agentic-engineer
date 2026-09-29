@@ -70,7 +70,6 @@ var (
 	sreRcaImageRepo    string
 	sreRcaImageTag     string
 	sreRcaPullPolicy   string
-	sreRcaName         string
 	sreAdapterImage    string
 	sreAEHandoff       bool
 	sreObserverHost    string
@@ -126,7 +125,6 @@ func init() {
 	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "ghcr.io/openchoreo/sre-agent", "RCA/SRE agent image repository")
 	f.StringVar(&sreRcaImageTag, "rca-image-tag", "v1.3.0@sha256:25e5e6c423d049460f4a60d95497747c2a99b02713faf8523a38ef8e6a85c599", "RCA/SRE agent image tag (digest-pinned so both architectures resolve the same build)")
 	f.StringVar(&sreRcaPullPolicy, "rca-image-pull-policy", "IfNotPresent", "RCA/SRE agent image pull policy")
-	f.StringVar(&sreRcaName, "rca-name", "sre-agent", "RCA/SRE agent Deployment/Service name (must match the chart's rca.name)")
 	f.StringVar(&sreAdapterImage, "adapter-image", "docker.io/tharindulak/observability-logs-opensearch-adapter:0.5.1-case-insensitive", "logs-adapter image (repo:tag)")
 	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts the SRE remediation extension)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
@@ -166,10 +164,10 @@ type sreParams struct {
 	// reconciler pushes the LLM key/model and handoff token to.
 	Org string
 	// RcaName is the RCA/SRE agent Deployment name, set from
-	// findSREAgentDeployment's discovery (not the --rca-name flag: the chart
-	// can rename it, e.g. ai-rca-agent -> sre-agent in 1.2.0). AEPNamespace is
-	// the AEP namespace (--namespace) aep-api's ServiceAccount lives in. Both
-	// feed sreAgentPushRoleTmpl and the platform chart's
+	// findSREAgentDeployment's discovery (the chart can rename it, e.g.
+	// ai-rca-agent -> sre-agent in 1.2.0). AEPNamespace is the AEP namespace
+	// (--namespace) aep-api's ServiceAccount lives in. Both feed
+	// sreAgentPushRoleTmpl and the platform chart's
 	// sreAgent.{deployment,org,namespace,secret,mcpHostname} values.
 	RcaName, AEPNamespace string
 }
@@ -338,7 +336,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	p.RcaServiceURL = fmt.Sprintf("http://%s:8080", agentDeploy)
 	// The chart may have renamed the Deployment (ai-rca-agent -> sre-agent in
-	// 1.2.0); use the name actually running, never the --rca-name flag.
+	// 1.2.0); use the name actually running.
 	p.RcaName = agentDeploy
 
 	// 5. Push Role/RoleBinding scoped to the discovered Deployment name, then
@@ -666,28 +664,48 @@ func helmInstallObsPlane(ctx context.Context, p sreParams) error {
 		"--version", sreObsPlaneVersion,
 		"--values", vals, "--timeout", "10m",
 	}
-	// --force-conflicts is a Helm v4 (server-side apply) flag; v3 rejects it as
-	// unknown. It only matters on re-runs where the post-helm ConfigMap patches
-	// (step 5) claimed chart-owned fields under a different field manager — a
-	// v4-only concern. Add it only when the installed helm supports it.
-	args = append(args, helmForceConflictsArgs(ctx)...)
-	return runHelm(ctx, "obs-plane", args...)
+	return runSREAgentHelm(ctx, "obs-plane", args)
 }
 
-// helmForceConflictsArgs returns ["--force-conflicts"] when the installed helm
-// is v4+, else nil. Best-effort: on any parse error it returns nil (safe — v3
-// behaviour needs no such flag).
-func helmForceConflictsArgs(ctx context.Context) []string {
+// runSREAgentHelm runs an observability-plane `helm upgrade` that renders the
+// SRE agent: through aectl's post-renderer (the stock chart has no
+// extraVolumes for the extension and CA bundle mounts), plus
+// --force-conflicts on Helm v4. That is a v4 (server-side apply) flag v3
+// rejects as unknown; it only matters on re-runs where the post-helm
+// ConfigMap patches claimed chart-owned fields under a different field
+// manager, a v4-only concern.
+func runSREAgentHelm(ctx context.Context, label string, args []string) error {
+	major := helmMajorVersion(ctx)
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate aectl for the helm post-renderer: %w", err)
+	}
+	flags, env, cleanup, err := sreHelmPostRenderer(major, exe)
+	if err != nil {
+		return fmt.Errorf("prepare the helm post-renderer: %w", err)
+	}
+	defer cleanup()
+	args = append(args, flags...)
+	if major >= 4 {
+		args = append(args, "--force-conflicts")
+	}
+	return runHelmWithEnv(ctx, label, env, args...)
+}
+
+// helmMajorVersion returns the installed helm's major version. Best-effort:
+// on any error it returns 0, which callers treat as pre-v4 behaviour.
+func helmMajorVersion(ctx context.Context) int {
 	out, err := exec.CommandContext(ctx, "helm", "version", "--short").Output()
 	if err != nil {
-		return nil
+		return 0
 	}
 	v := strings.TrimPrefix(strings.TrimSpace(string(out)), "v")
 	major, _, _ := strings.Cut(v, ".")
-	if n, err := strconv.Atoi(major); err == nil && n >= 4 {
-		return []string{"--force-conflicts"}
+	n, err := strconv.Atoi(major)
+	if err != nil {
+		return 0
 	}
-	return nil
+	return n
 }
 
 // helmEnableSREAgent turns on the SRE agent of a plane aectl did not install:
@@ -706,8 +724,7 @@ func helmEnableSREAgent(ctx context.Context, p sreParams, plane obsPlaneRelease)
 		"--reuse-values",
 		"--values", vals, "--timeout", "10m",
 	}
-	args = append(args, helmForceConflictsArgs(ctx)...)
-	return runHelm(ctx, "obs-plane (SRE agent)", args...)
+	return runSREAgentHelm(ctx, "obs-plane (SRE agent)", args)
 }
 
 func helmInstallObsLogs(ctx context.Context, p sreParams) error {
@@ -725,9 +742,18 @@ func helmInstallObsLogs(ctx context.Context, p sreParams) error {
 }
 
 func runHelm(ctx context.Context, label string, args ...string) error {
+	return runHelmWithEnv(ctx, label, nil, args...)
+}
+
+// runHelmWithEnv runs helm with env ("KEY=value") added to aectl's own
+// environment.
+func runHelmWithEnv(ctx context.Context, label string, env []string, args ...string) error {
 	ui.Step(fmt.Sprintf("Installing %s chart", label))
 	var out bytes.Buffer
 	c := exec.CommandContext(ctx, "helm", args...)
+	if len(env) > 0 {
+		c.Env = append(os.Environ(), env...)
+	}
 	c.Stdout = &out
 	c.Stderr = &out
 	if err := c.Run(); err != nil {

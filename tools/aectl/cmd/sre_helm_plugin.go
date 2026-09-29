@@ -61,3 +61,26 @@ runtimeConfig:
 	}
 	return srePostRenderPluginName, nil
 }
+
+// sreHelmPostRenderer returns the helm flags and extra environment that route
+// a render through `<aectlPath> sre post-render` (addExtensionsMount), for the
+// installed helm's major version, plus a cleanup to run once helm exits.
+// Helm 4 takes a post-renderer plugin by name, so the plugin is written into a
+// throwaway HELM_PLUGINS dir; Helm 3 takes the executable and its args.
+func sreHelmPostRenderer(helmMajor int, aectlPath string) (flags, env []string, cleanup func(), err error) {
+	if helmMajor < 4 {
+		return []string{"--post-renderer", aectlPath,
+			"--post-renderer-args", "sre", "--post-renderer-args", "post-render"}, nil, func() {}, nil
+	}
+	dir, err := os.MkdirTemp("", "aectl-helm-plugins-*")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	cleanup = func() { _ = os.RemoveAll(dir) }
+	name, err := writeSREPostRenderPlugin(dir, aectlPath)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, err
+	}
+	return []string{"--post-renderer", name}, []string{"HELM_PLUGINS=" + dir}, cleanup, nil
+}
