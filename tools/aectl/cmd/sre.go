@@ -144,6 +144,11 @@ type sreParams struct {
 	// Org is the OpenChoreo org whose observability-plane SRE agent aep-api's
 	// reconciler pushes the LLM key/model and handoff token to.
 	Org string
+	// RcaName is the RCA/SRE agent Deployment name (--rca-name), and
+	// AEPNamespace the AEP namespace (--namespace) aep-api's ServiceAccount
+	// lives in. Both feed sreAgentPushRoleTmpl and the platform chart's
+	// sreAgent.{deployment,org,namespace,secret,mcpHostname} values.
+	RcaName, AEPNamespace string
 }
 
 // sreMCPURL is aep-mcp-server's MCP endpoint as the SRE agent reaches it:
@@ -193,6 +198,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		RcaHost:             sreRcaHost,
 		AEHandoff:           sreAEHandoff,
 		Org:                 sreOrg,
+		RcaName:             sreRcaName,
+		AEPNamespace:        sreNamespace,
 	}
 	p.AEMCPURL = sreMCPURL(sreMCPHost, sreMCPPort)
 	// Split on the LAST colon so a registry port (registry:5000/img:tag) is
@@ -267,7 +274,25 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Secrets synced")
 
-	// 3. Helm: enable the SRE agent on the installed plane, or install both
+	// 3. AE-owned Secret + push Role/RoleBinding, then flip the platform
+	// release's sreAgent.* values so aep-api's reconciler knows where to push
+	// the agent's LLM key/model/base URL and handoff token, and so the
+	// aep-mcp-server route/grant/policy the agent's extension needs render.
+	// Ahead of the Helm step below: the RCA container's rca.extraEnvs
+	// secretKeyRefs need sre-agent-aep to exist before it starts.
+	ui.Step("Applying the AE-owned SRE agent Secret and aep-api's push Role")
+	if err := ensureSREAgentSecret(ctx, applier, sreObsNamespace, p); err != nil {
+		return fmt.Errorf("ensure sre-agent-aep secret: %w", err)
+	}
+	if err := applyTemplate(ctx, applier, "sre-push-role", sreObsNamespace, sreAgentPushRoleTmpl, p); err != nil {
+		return fmt.Errorf("apply aep-api-sre-push Role/RoleBinding: %w", err)
+	}
+	if err := updatePlatformSreAgent(ctx, p); err != nil {
+		return fmt.Errorf("wire sreAgent.* on the platform release: %w", err)
+	}
+	ui.Success("AE-owned Secret, push Role and platform sreAgent.* wiring applied")
+
+	// 4. Helm: enable the SRE agent on the installed plane, or install both
 	// OpenChoreo charts.
 	if adopt {
 		if err := helmEnableSREAgent(ctx, p, plane); err != nil {
@@ -290,13 +315,13 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	p.RcaServiceURL = fmt.Sprintf("http://%s:8080", agentDeploy)
 
-	// 4. Best-effort readiness (do NOT wait on the RCA/SRE agent deployment — it stays
+	// 5. Best-effort readiness (do NOT wait on the RCA/SRE agent deployment — it stays
 	// unwired until step 5). Warn (don't abort) so name/version drift in the
 	// upstream charts can't wedge the install.
 	waitForDeployment(ctx, client, sreObsNamespace, "observer", 5*time.Minute)
 	waitForDeployment(ctx, client, sreObsNamespace, "controller-manager", 5*time.Minute)
 
-	// 5. Alert->RCA auto-trigger + AEP handoff wiring (post-helm ConfigMap
+	// 6. Alert->RCA auto-trigger + AEP handoff wiring (post-helm ConfigMap
 	// patches; the charts don't expose all these keys). In-cluster URLs.
 	ui.Step("Wiring alert->RCA auto-trigger + AEP handoff")
 	if err := patchConfigMap(ctx, client, sreObsNamespace, "observer-config", map[string]string{
@@ -318,7 +343,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
 	}
 
-	// 6. Authz grants, plus the route and ClusterObservabilityPlane CR for a
+	// 7. Authz grants, plus the route and ClusterObservabilityPlane CR for a
 	// plane aectl installed.
 	ui.Step("Applying authz grants")
 	if err := applyTemplate(ctx, applier, "sre-grants", sreObsNamespace, sreGrantsTmpl, p); err != nil {
@@ -331,7 +356,7 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 7. OpenSearch index-template bootstrap (detect + self-heal).
+	// 8. OpenSearch index-template bootstrap (detect + self-heal).
 	ui.Step("Running OpenSearch index-template bootstrap job")
 	if err := k8s.RunJob(ctx, client, openSearchBootstrapJob(sreObsNamespace), os.Stdout); err != nil {
 		ui.Warn(fmt.Sprintf("index-template bootstrap job did not complete cleanly: %v", err))
@@ -375,6 +400,43 @@ func applyTemplate(ctx context.Context, applier *k8s.Applier, fieldManager, ns, 
 		return err
 	}
 	return applier.ApplyYAML(ctx, "aectl-sre", ns, buf.String())
+}
+
+// ensureSREAgentSecret applies sreAgentAEOwnedSecretTmpl only when
+// sre-agent-aep does not already exist. aep-api's reconciler owns its actual
+// content (LLM key/model/base URL, handoff token); a re-run of `aectl sre
+// install` must never clobber values it already pushed.
+func ensureSREAgentSecret(ctx context.Context, applier *k8s.Applier, ns string, p sreParams) error {
+	existing, err := applier.Get(ctx, "v1", "Secret", ns, "sre-agent-aep")
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+	return applyTemplate(ctx, applier, "sre-agent-secret", ns, sreAgentAEOwnedSecretTmpl, p)
+}
+
+// updatePlatformSreAgent reuses `aectl platform update`'s own code path
+// (runUpdate — the one deployments/scripts/setup-sre.sh used to shell out to)
+// in-process, setting only the flags this command cares about. The other
+// platform-update flags (release name, chart version/source, image overrides)
+// keep the defaults their own `init()` already assigned, and --reuse-values
+// is implied (updateResetValues stays false), so this only ever adds the
+// sreAgent.* overrides on top of whatever the platform release already has.
+func updatePlatformSreAgent(ctx context.Context, p sreParams) error {
+	prevNamespace, prevSets := updateNamespace, updateHelmSets
+	defer func() { updateNamespace, updateHelmSets = prevNamespace, prevSets }()
+	updateNamespace = p.AEPNamespace
+	updateHelmSets = []string{
+		"sreAgent.enabled=true",
+		"sreAgent.org=" + p.Org,
+		"sreAgent.namespace=" + p.ObsNamespace,
+		"sreAgent.deployment=" + p.RcaName,
+		"sreAgent.secret=sre-agent-aep",
+		"sreAgent.mcpHostname=" + sreMCPHost,
+	}
+	return runUpdate(updateCmd, nil)
 }
 
 // ensureClusterGatewayCA copies the cluster gateway CA cert from the
