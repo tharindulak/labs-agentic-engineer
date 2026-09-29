@@ -1,7 +1,10 @@
 # SRE-agent extensions
 
 Content mounted into the OpenChoreo SRE agent's `EXTENSIONS_DIR`
-(`/etc/openchoreo/sre-agent` by default), using the SRE agent extension point.
+(`/opt/aep/sre-agent-extensions`), using the SRE agent extension point. A
+Helm post-renderer (`aectl sre post-render`) mounts the ConfigMap holding
+this content into the rendered `sre-agent` Deployment — see
+`deployments/helm-charts/design/sre-agent-install.md`.
 
 The AE handoff lives under `remediation/` because the remediation agent already
 has the RCA report, root cause, evidence, and recommended actions in scope. That
