@@ -150,6 +150,76 @@ cd tools/aectl
 go test ./cmd -run 'SRE|Extensions'
 ```
 
+## Seed the SRE model at install
+
+`aectl sre install` can seed the org's SRE model connection at install time,
+so the agent has a model before anyone opens the Console. Write the key to a
+`0600` file, pass it and the model to the install command, and delete the
+file afterwards — the key is only ever read from a file, never taken as a
+flag value or logged.
+
+```bash
+umask 077
+echo -n "$OPEN_API_KEY" > /tmp/sre-llm-key
+
+cd tools/aectl
+go run . sre install --org <org> --platform-chart deployments/helm-charts/platform \
+    --llm-api-key-file /tmp/sre-llm-key --llm-model gpt-5.4
+
+rm /tmp/sre-llm-key
+```
+
+`make dev-env` forwards the same seed through env vars, so `setup-sre.sh`
+passes it to `aectl sre install` on your behalf:
+
+```bash
+SRE_LLM_API_KEY_FILE=/tmp/sre-llm-key SRE_LLM_MODEL=gpt-5.4 WITH_AGENT_MANAGER=0 make dev-env
+```
+
+`--llm-base-url` (`SRE_LLM_BASE_URL`) defaults to `https://api.openai.com/v1`
+and rarely needs setting.
+
+Verify without ever printing the key itself:
+
+```bash
+kubectl -n wso2-aep get secret sre-model-seed -o jsonpath='{.data.apiKey}' | base64 -d | wc -c
+kubectl -n wso2-aep get secret sre-model-seed -o jsonpath='{.data.model}' | base64 -d; echo
+kubectl -n openchoreo-observability-plane get secret sre-agent-aep -o jsonpath='{.data.RCA_LLM_API_KEY}' | base64 -d | wc -c
+```
+
+Rules the seed follows (`organization.SreModelConnectionService.ApplySeed`,
+[`sre-model-connection.md`](../../services/aep-api/design/sre-model-connection.md)):
+
+- **A Console/API save always wins.** The seed is never applied, and never
+  even probed, once the org has a stored SRE model connection.
+- **A given seed is applied at most once**, tracked by a hash of its three
+  values in `org_secrets`. Re-running `aectl sre install` with the same
+  `--llm-*` values is a no-op; a changed value (a new model, a rotated key)
+  is tried again.
+- **A console removal is not re-seeded.** Disconnecting the SRE model
+  connection in the Console does not bring the old seed back — the marker
+  for that seed's hash still says it was already tried.
+- **A refused seed is logged once and not retried.** A validation or probe
+  failure is logged as `sre_model.seed_refused` and marked tried; nothing
+  retries it until the seed's values change or a Console/API save succeeds.
+- **Rotating the key is a Console/API concern**, same as the org's main
+  model connection — re-running `aectl sre install` with a new key only
+  takes effect when the org still has no stored connection.
+
+The key lives in the Secret `sre-model-seed` in `wso2-aep` until you delete
+it. That is safe once the seed has applied (`kubectl -n wso2-aep get secret
+sre-model-seed` no longer being read by anything on the next reconcile):
+
+```bash
+kubectl -n wso2-aep delete secret sre-model-seed
+```
+
+**Without aectl**, save the SRE model connection directly through the same
+probe/persist path a Console save takes: `PATCH /config` with a `sreLlm`
+body, through `http://console.ae.localhost:8080/aep-api-service/api/v1/config`
+with a signed-in user's token. This is a save, not a seed — it always wins
+over, and is never touched by, the install-time seed above.
+
 ## Migration from a pre-1.3.0 install
 
 Earlier revisions of this plane ran an AE-patched image

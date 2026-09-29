@@ -79,6 +79,39 @@ get/patch on the named Deployment and its `/scale` subresource, list on
 pods), bound to the `aep-api` ServiceAccount, applied by `aectl sre install`.
 RBAC and OpenBao hardening beyond this narrow Role are out of scope here.
 
+## Install-time seed
+
+`aectl sre install --llm-api-key-file/--llm-model` (Task A2) can seed the SRE
+model connection at install time, so the agent has a model before anyone
+opens the Console. It writes the three values into a Secret named by the
+platform chart's `sreAgent.seed.secretName` value in the AE namespace, which
+the deployment template wires into `SRE_AGENT_SEED_API_KEY` /
+`SRE_AGENT_SEED_MODEL` / `SRE_AGENT_SEED_BASE_URL` (`config.SREAgentSeed`,
+all optional `secretKeyRef`s — a Secret missing a key never blocks the pod
+from starting).
+
+`organization.SreModelConnectionService.ApplySeed`
+(`internal/organization/sre_model_seed.go`) is the one place a seed becomes a
+connection. It runs on the reconciler's own tick, ahead of
+`ResolveEffectiveSRE`, and applies at most once per distinct seed:
+
+- **Already stored**: a connection already saved (Console or API) always
+  wins — the seed is not even probed.
+- **Unseen seed**: probed and persisted through the same `Check`/`Persist`
+  path a Console save takes (`Persist(ctx, org, "aectl-seed", draft)`), then
+  remembered by a sha256 of its three values under the `org_secrets` key
+  `sre-model/seed-applied` (`"<hash>:applied"`).
+- **Seen seed**: the marker's hash matches — skipped, no re-probe.
+- **Refused**: the probe or validation failed. Logged
+  (`sre_model.seed_refused`, with the refusal's `SectionError` code) and
+  marked `"<hash>:refused"` so it is not retried until the seed's values
+  change or a Console/API save succeeds.
+
+A changed seed (a rotated key, a different model) is tried again even though
+the org still has no stored connection; disconnecting a Console-saved
+connection does not bring an already-tried seed back, since its marker
+already reflects that seed's outcome.
+
 ## The sqlite report store is a single point of failure
 
 The stock agent's RCA report history lives in sqlite on a `ReadWriteOnce`

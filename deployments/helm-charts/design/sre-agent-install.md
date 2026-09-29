@@ -90,6 +90,25 @@ absent, then installs/upgrades (idempotent). It then:
    `ClusterObservabilityPlane` CR.
 7. The OpenSearch index-template detect/self-heal Job.
 
+### Install-time SRE model seed (opt-in)
+
+Three flags, orthogonal to everything above: `--llm-api-key-file` (path; the
+key is read from the file, trimmed, and never taken as a flag value or
+logged), `--llm-model` (e.g. `gpt-5.4`), and `--llm-base-url` (default
+`https://api.openai.com/v1`). `--llm-api-key-file` and `--llm-model` must be
+given together — one without the other is an error; neither is unchanged
+behaviour (no seed, no `sreAgent.seed.secretName`).
+
+When given, aectl create-or-updates a Secret `sre-model-seed` in the **AE
+namespace** (`apiKey`/`model`/`baseURL` keys), ahead of the internal `aectl
+platform update` that flips `sreAgent.*` on the platform release, and adds
+`--set sreAgent.seed.secretName=sre-model-seed` to that update — so the
+Secret always exists by the time aep-api could read it. A run without the
+flags leaves `sreAgent.seed.secretName` alone: it never clears an
+already-seeded org's value. See
+[`sre-model-connection.md`](../../../services/aep-api/design/sre-model-connection.md#install-time-seed)
+for what aep-api does with the seed.
+
 ### Prerequisite
 
 `aectl init` must run first. It registers the `openchoreo-rca-agent` Thunder
