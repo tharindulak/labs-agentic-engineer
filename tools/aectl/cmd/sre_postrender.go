@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -72,7 +73,16 @@ var srePostRenderCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		out, err := addExtensionsMount(in, srePostRenderComponent)
+		// The Helm plugin (sre_helm_plugin.go) invokes this with no args, so by
+		// default any accepted component label matches: sreAgentComponents
+		// covers both the 1.2.0+ "sre-agent" label and the pre-1.2.0
+		// "ai-rca-agent" label an adopted plane may still carry. An explicit
+		// --component narrows matching to that one value.
+		accepted := sreAgentComponents
+		if cmd.Flags().Changed("component") {
+			accepted = []string{srePostRenderComponent}
+		}
+		out, err := addExtensionsMount(in, accepted)
 		if err != nil {
 			return err
 		}
@@ -84,17 +94,19 @@ var srePostRenderCmd = &cobra.Command{
 func init() {
 	sreCmd.AddCommand(srePostRenderCmd)
 	srePostRenderCmd.Flags().StringVar(&srePostRenderComponent, "component", "sre-agent",
-		"app.kubernetes.io/component label (and container name) of the SRE agent Deployment: the chart's rca.name")
+		"app.kubernetes.io/component label (and container name) to restrict matching to; "+
+			"unset, any of sreAgentComponents matches (the chart's rca.name, current or pre-1.2.0)")
 }
 
 var manifestSeparator = regexp.MustCompile(`(?m)^---[ \t]*\n?`)
 
 // addExtensionsMount wires the extensions mount and the CA bundle into the
-// Deployment labelled app.kubernetes.io/component=component, on its container
-// of the same name. Other documents pass through verbatim. Idempotent. It
-// fails when no such Deployment is in the stream, so a chart change that
-// renames the agent cannot silently drop the mounts.
-func addExtensionsMount(manifests []byte, component string) ([]byte, error) {
+// Deployment whose app.kubernetes.io/component label is in accepted, on its
+// container named after that matched label value. Other documents pass
+// through verbatim. Idempotent. It fails when no such Deployment is in the
+// stream, so a chart change that renames the agent beyond accepted cannot
+// silently drop the mounts.
+func addExtensionsMount(manifests []byte, accepted []string) ([]byte, error) {
 	var docs []string
 	for _, d := range manifestSeparator.Split(string(manifests), -1) {
 		if strings.TrimSpace(d) != "" {
@@ -108,7 +120,8 @@ func addExtensionsMount(manifests []byte, component string) ([]byte, error) {
 			return nil, fmt.Errorf("decode manifest %d: %w", i, err)
 		}
 		u := unstructured.Unstructured{Object: obj}
-		if obj == nil || u.GetKind() != "Deployment" || u.GetLabels()["app.kubernetes.io/component"] != component {
+		component := u.GetLabels()["app.kubernetes.io/component"]
+		if obj == nil || u.GetKind() != "Deployment" || !slices.Contains(accepted, component) {
 			continue
 		}
 		if err := wireSREAgentDeployment(&u, component); err != nil {
@@ -122,7 +135,8 @@ func addExtensionsMount(manifests []byte, component string) ([]byte, error) {
 		found = true
 	}
 	if !found {
-		return nil, fmt.Errorf("no Deployment labelled app.kubernetes.io/component=%s in the rendered manifests", component)
+		return nil, fmt.Errorf("no Deployment labelled app.kubernetes.io/component in (%s) in the rendered manifests",
+			strings.Join(accepted, ", "))
 	}
 	var b strings.Builder
 	for _, d := range docs {

@@ -44,7 +44,7 @@ spec:
           volumeMounts: [{name: auth-config, mountPath: /etc/openchoreo}]
       volumes: [{name: auth-config, configMap: {name: observer-auth-config}}]
 `)
-	out, err := addExtensionsMount(in, "sre-agent")
+	out, err := addExtensionsMount(in, []string{"sre-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,15 +58,79 @@ spec:
 			t.Errorf("missing %q:\n%s", want, s)
 		}
 	}
-	again, _ := addExtensionsMount(out, "sre-agent")
+	again, _ := addExtensionsMount(out, []string{"sre-agent"})
 	if strings.Count(string(again), "name: sre-agent-extensions") != strings.Count(s, "name: sre-agent-extensions") {
 		t.Error("must be idempotent")
 	}
 	if strings.Count(string(again), "name: aep-ca-bundle") != strings.Count(s, "name: aep-ca-bundle") {
 		t.Error("CA bundle wiring must be idempotent")
 	}
-	if _, err := addExtensionsMount([]byte("kind: Service\n"), "sre-agent"); err == nil {
+	if _, err := addExtensionsMount([]byte("kind: Service\n"), []string{"sre-agent"}); err == nil {
 		t.Error("must fail when no SRE agent Deployment is rendered")
+	}
+}
+
+// A pre-1.2.0 chart labels the Deployment (and its container) ai-rca-agent
+// instead of sre-agent. When --component was not explicitly set, aectl passes
+// the full sreAgentComponents accept-list, so an adopted legacy plane's
+// Deployment still gets wired instead of failing the helm upgrade.
+func TestAddExtensionsMountLegacyComponent(t *testing.T) {
+	in := []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-rca-agent
+  labels: {app.kubernetes.io/component: ai-rca-agent}
+spec:
+  template:
+    spec:
+      containers:
+        - name: ai-rca-agent
+          image: ghcr.io/openchoreo/sre-agent:v1.1.0
+          securityContext: {runAsNonRoot: true, runAsUser: 12000}
+      volumes: []
+`)
+	out, err := addExtensionsMount(in, sreAgentComponents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"name: sre-agent-extensions", "mountPath: /opt/aep/sre-agent-extensions",
+		"name: aep-ca-bundle",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("legacy ai-rca-agent Deployment not wired, missing %q:\n%s", want, s)
+		}
+	}
+
+	again, err := addExtensionsMount(out, sreAgentComponents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(again), "name: aep-ca-bundle") != strings.Count(s, "name: aep-ca-bundle") {
+		t.Error("legacy wiring must be idempotent")
+	}
+}
+
+// An explicit --component must restrict matching to that one value, even
+// when the accept-list would otherwise also match a legacy ai-rca-agent
+// Deployment.
+func TestAddExtensionsMountExplicitComponentRestricts(t *testing.T) {
+	in := []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-rca-agent
+  labels: {app.kubernetes.io/component: ai-rca-agent}
+spec:
+  template:
+    spec:
+      containers:
+        - name: ai-rca-agent
+          image: ghcr.io/openchoreo/sre-agent:v1.1.0
+      volumes: []
+`)
+	if _, err := addExtensionsMount(in, []string{"sre-agent"}); err == nil {
+		t.Error("explicit --component=sre-agent must not match an ai-rca-agent Deployment")
 	}
 }
 
@@ -90,7 +154,7 @@ spec:
           securityContext: {runAsNonRoot: true, runAsUser: 12000, allowPrivilegeEscalation: false}
       volumes: []
 `)
-	out, err := addExtensionsMount(in, "sre-agent")
+	out, err := addExtensionsMount(in, []string{"sre-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +207,7 @@ spec:
 		}
 	}
 
-	again, err := addExtensionsMount(out, "sre-agent")
+	again, err := addExtensionsMount(out, []string{"sre-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +234,7 @@ spec:
           image: ghcr.io/openchoreo/sre-agent:v1.3.0
       volumes: []
 `)
-	_, err := addExtensionsMount(in, "sre-agent")
+	_, err := addExtensionsMount(in, []string{"sre-agent"})
 	if err == nil || !strings.Contains(err.Error(), `no container named "sre-agent"`) {
 		t.Fatalf("want a \"no container named\" error, got %v", err)
 	}
@@ -198,7 +262,7 @@ spec:
           securityContext: {runAsNonRoot: true, runAsUser: 12000}
       volumes: []
 `)
-	out, err := addExtensionsMount(in, "sre-agent")
+	out, err := addExtensionsMount(in, []string{"sre-agent"})
 	if err != nil {
 		t.Fatal(err)
 	}
