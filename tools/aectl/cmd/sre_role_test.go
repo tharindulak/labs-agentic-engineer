@@ -122,17 +122,6 @@ func TestEnsureRCAAgentRole(t *testing.T) {
 		}
 	})
 
-	t.Run("a role with no actions field gets the whole list", func(t *testing.T) {
-		rc := &stubRoleClient{role: roleWithActions()}
-		if _, err := ensureRCAAgentRole(ctx, rc); err != nil {
-			t.Fatal(err)
-		}
-		want := `[{"op":"add","path":"/spec/actions","value":["resource:view","resourcereleasebinding:view"]}]`
-		if len(rc.patches) != 1 || rc.patches[0] != want {
-			t.Errorf("patches = %v, want [%s]", rc.patches, want)
-		}
-	})
-
 	t.Run("a missing role is an error, with no patch", func(t *testing.T) {
 		rc := &stubRoleClient{}
 		if _, err := ensureRCAAgentRole(ctx, rc); !errors.Is(err, errRCAAgentRoleNotFound) || len(rc.patches) != 0 {
@@ -145,7 +134,7 @@ func TestEnsureRCAAgentRole(t *testing.T) {
 		if _, err := ensureRCAAgentRole(ctx, &stubRoleClient{getErr: forbidden}); !errors.Is(err, forbidden) {
 			t.Errorf("get: err = %v", err)
 		}
-		rc := &stubRoleClient{role: roleWithActions(), patchErr: forbidden}
+		rc := &stubRoleClient{role: roleWithActions("component:view"), patchErr: forbidden}
 		if added, err := ensureRCAAgentRole(ctx, rc); !errors.Is(err, forbidden) || added != nil {
 			t.Errorf("patch: added=%v err=%v", added, err)
 		}

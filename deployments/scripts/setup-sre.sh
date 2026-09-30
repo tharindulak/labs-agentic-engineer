@@ -34,9 +34,9 @@
 #      mounts the AE remediation extension. aep-api's own reconciler pushes
 #      the org's LLM key/model and handoff token into the agent's Secret.
 #
-# The SRE agent has no key of its own: until the org's model connection is saved
-# in the Console, its pod waits for aep-api to push one. Save the key, then
-# re-run this script (only step 2 then changes anything).
+# The SRE agent has no key of its own: it waits at 0 replicas until an SRE
+# model applies (saved in the Console), which aep-api then pushes, with no
+# re-run of this script.
 #
 # Optionally, set SRE_LLM_API_KEY_FILE (path to a file holding the key) and
 # SRE_LLM_MODEL (and SRE_LLM_BASE_URL) to have `aectl sre install` seed an

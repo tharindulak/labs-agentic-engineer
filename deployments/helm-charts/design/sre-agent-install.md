@@ -41,8 +41,7 @@ which the AE handoff needs. It runs unchanged on the 1.2.5 plane:
   overridden;
 - OpenChoreo 1.2.5's MCP server serves every tool the agent calls, with the
   same names, arguments and response shapes;
-- the one gap, two actions missing from the `rca-agent` role, is closed by
-  aectl ([below](#rca-agent-role)).
+- the one gap is closed by aectl ([`rca-agent` role](#rca-agent-role)).
 
 ## `aectl sre install --org <org>`
 
@@ -69,10 +68,7 @@ absent, then installs/upgrades (idempotent). It then:
    `aep-api-sre-push` + `RoleBinding` that let aep-api's `aep-api`
    ServiceAccount get/update/patch that one Secret, get/patch the discovered
    Deployment and its `/scale` subresource, and list pods.
-3. `helm upgrade --install` of the two OpenChoreo charts (an installed
-   plane is upgraded at its own chart version with `--reuse-values`; only a
-   cluster with no plane gets `--obs-plane-version`, default `1.2.5`), with
-   the agent's
+3. `helm upgrade --install` of the two OpenChoreo charts, with the agent's
    `rca.extraEnvs` carrying `EXTENSIONS_DIR`, `AEP_MCP_URL`,
    `SSL_CERT_FILE=/opt/aep/ca/ca-bundle.crt`, and the four
    `secretKeyRef`s onto `sre-agent-aep` — so the model, key and MCP token
@@ -211,18 +207,11 @@ install` adds whichever are missing with a JSON patch
 is.
 
 If aectl cannot patch the role (no RBAC for `clusterauthzroles`, or no
-`rca-agent` role), it warns and the install continues. The agent still
-completes RCA and remediation, but cannot see Resources or
-ResourceReleaseBindings. To grant them by hand, add whichever action the
-role lacks:
-
-```
-kubectl patch clusterauthzrole.openchoreo.dev rca-agent --type=json \
-  -p '[{"op":"add","path":"/spec/actions/-","value":"resource:view"},{"op":"add","path":"/spec/actions/-","value":"resourcereleasebinding:view"}]'
-```
-
-`aectl sre uninstall` leaves the role alone: aectl cannot tell the actions it
-added from the ones the chart ships.
+`rca-agent` role), it warns with the `kubectl patch` to run by hand, and the
+install continues: the agent still completes RCA and remediation, without
+visibility into Resources and ResourceReleaseBindings. `aectl sre uninstall`
+leaves the role alone, since aectl cannot tell the actions it added from the
+ones the chart ships.
 
 ## Moving to OpenChoreo 1.3.0 later
 

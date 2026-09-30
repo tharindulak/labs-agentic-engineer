@@ -139,23 +139,12 @@ func (a *Applier) Exists(ctx context.Context, apiVersion, kind, namespace, name 
 // (and no error) when it is not found, and an error for any other failure
 // (e.g. the CRD itself is not installed).
 func (a *Applier) Get(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error) {
-	gv, err := schema.ParseGroupVersion(apiVersion)
+	ri, namespaced, err := a.resourceFor(apiVersion, kind, namespace)
 	if err != nil {
-		return nil, fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
+		return nil, err
 	}
-	gvk := gv.WithKind(kind)
-	mapping, err := a.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return nil, fmt.Errorf("resolve %s: %w", gvk.String(), err)
-	}
-	var ri dynamic.ResourceInterface
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		if namespace == "" {
-			return nil, fmt.Errorf("namespace is required for namespaced kind %s", gvk.String())
-		}
-		ri = a.dyn.Resource(mapping.Resource).Namespace(namespace)
-	} else {
-		ri = a.dyn.Resource(mapping.Resource)
+	if namespaced && namespace == "" {
+		return nil, fmt.Errorf("namespace is required for namespaced kind %s/%s", apiVersion, kind)
 	}
 	obj, err := ri.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -171,20 +160,9 @@ func (a *Applier) Get(ctx context.Context, apiVersion, kind, namespace, name str
 // resolving the GVK through discovery. A missing object is not an error (delete
 // is idempotent). namespace is ignored for cluster-scoped kinds.
 func (a *Applier) Delete(ctx context.Context, apiVersion, kind, namespace, name string) error {
-	gv, err := schema.ParseGroupVersion(apiVersion)
+	ri, _, err := a.resourceFor(apiVersion, kind, namespace)
 	if err != nil {
-		return fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
-	}
-	gvk := gv.WithKind(kind)
-	mapping, err := a.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", gvk.String(), err)
-	}
-	var ri dynamic.ResourceInterface
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		ri = a.dyn.Resource(mapping.Resource).Namespace(namespace)
-	} else {
-		ri = a.dyn.Resource(mapping.Resource)
+		return err
 	}
 	if err := ri.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete %s/%s: %w", kind, name, err)
@@ -192,29 +170,34 @@ func (a *Applier) Delete(ctx context.Context, apiVersion, kind, namespace, name 
 	return nil
 }
 
-// Patch sends one patch of patchType to the object identified by
-// apiVersion/kind/namespace/name, resolving the GVK through discovery.
-// namespace is ignored for cluster-scoped kinds. Unlike ApplyYAML it claims no
-// field ownership, so it is the way to edit a field another manager (a Helm
-// release) owns: a server-side apply of a list would take the whole list.
+// Patch patches one object without claiming field ownership, so it can edit a
+// field another manager (a Helm release) owns, where server-side apply would
+// take the whole field. namespace is ignored for cluster-scoped kinds.
 func (a *Applier) Patch(ctx context.Context, apiVersion, kind, namespace, name string, patchType types.PatchType, body []byte) error {
-	gv, err := schema.ParseGroupVersion(apiVersion)
+	ri, _, err := a.resourceFor(apiVersion, kind, namespace)
 	if err != nil {
-		return fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
-	}
-	gvk := gv.WithKind(kind)
-	mapping, err := a.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", gvk.String(), err)
-	}
-	var ri dynamic.ResourceInterface
-	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
-		ri = a.dyn.Resource(mapping.Resource).Namespace(namespace)
-	} else {
-		ri = a.dyn.Resource(mapping.Resource)
+		return err
 	}
 	if _, err := ri.Patch(ctx, name, patchType, body, metav1.PatchOptions{}); err != nil {
 		return fmt.Errorf("patch %s/%s: %w", kind, name, err)
 	}
 	return nil
+}
+
+// resourceFor resolves apiVersion/kind through discovery to its dynamic
+// client, scoped to namespace when the kind is namespaced, and reports which.
+func (a *Applier) resourceFor(apiVersion, kind, namespace string) (dynamic.ResourceInterface, bool, error) {
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return nil, false, fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
+	}
+	gvk := gv.WithKind(kind)
+	mapping, err := a.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve %s: %w", gvk.String(), err)
+	}
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		return a.dyn.Resource(mapping.Resource).Namespace(namespace), true, nil
+	}
+	return a.dyn.Resource(mapping.Resource), false, nil
 }

@@ -429,7 +429,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("apply grants: %w", err)
 	}
 	ui.Step("Checking the rca-agent role covers the SRE agent's tools")
-	reportRCAAgentRole(ensureRCAAgentRole(ctx, applier))
+	addedActions, roleErr := ensureRCAAgentRole(ctx, applier)
+	reportRCAAgentRole(addedActions, roleErr)
 	if !adopt {
 		ui.Step("Applying HTTPRoute and ClusterObservabilityPlane")
 		if err := applyTemplate(ctx, applier, "sre-crs", sreObsNamespace, srePlaneCRsTmpl, p); err != nil {

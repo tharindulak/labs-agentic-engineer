@@ -14,19 +14,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// sre_role.go — the rca-agent role actions the stock v1.3.0 SRE agent needs
-// on an OpenChoreo 1.2.5 control plane.
-//
-// The agent's get_resource, list_resource_release_bindings and
-// get_resource_release_binding tools are filtered out of its catalog unless
-// the caller's role holds resource:view and resourcereleasebinding:view.
-// OpenChoreo 1.3.0's chart grants both to rca-agent; 1.2.5's does not. The
-// role is a list item in the control-plane chart's bootstrap.roles values,
-// which Helm cannot merge into, so `aectl sre install` adds the missing
-// actions with a JSON patch. On a 1.3.0 control plane it finds nothing to add.
-//
-// `aectl sre uninstall` leaves the role alone: aectl cannot tell the actions
-// it added from the ones the chart ships.
+// The v1.3.0 SRE agent's Resource and ResourceReleaseBinding tools need two
+// actions OpenChoreo 1.2.5's rca-agent role lacks. The role is a list item in
+// the control-plane chart's values, which Helm cannot merge into, so aectl
+// patches it (deployments/helm-charts/design/sre-agent-install.md).
 
 package cmd
 
@@ -49,22 +40,18 @@ const (
 	rcaAgentRoleName       = "rca-agent"
 )
 
-// rcaAgentActions are the actions the v1.3.0 agent's tools need beyond what
-// OpenChoreo 1.2.5's rca-agent role grants.
 var rcaAgentActions = []string{"resource:view", "resourcereleasebinding:view"}
 
 var errRCAAgentRoleNotFound = errors.New("ClusterAuthzRole rca-agent not found")
 
-// roleClient is the slice of *kubernetes.Applier the role step uses, so the
-// step can be tested without a cluster.
+// roleClient is the part of *kubernetes.Applier the role step needs.
 type roleClient interface {
 	Get(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error)
 	Patch(ctx context.Context, apiVersion, kind, namespace, name string, patchType types.PatchType, body []byte) error
 }
 
-// ensureRCAAgentRole adds whichever of rcaAgentActions the rca-agent role
-// lacks, in one JSON patch, and returns the actions it added. A role that
-// already holds them all is left untouched.
+// ensureRCAAgentRole adds the rcaAgentActions the role lacks, in one patch,
+// and returns them.
 func ensureRCAAgentRole(ctx context.Context, rc roleClient) ([]string, error) {
 	role, err := rc.Get(ctx, rcaAgentRoleAPIVersion, rcaAgentRoleKind, "", rcaAgentRoleName)
 	if err != nil {
@@ -73,7 +60,7 @@ func ensureRCAAgentRole(ctx context.Context, rc roleClient) ([]string, error) {
 	if role == nil {
 		return nil, errRCAAgentRoleNotFound
 	}
-	have, found, err := unstructured.NestedStringSlice(role.Object, "spec", "actions")
+	have, _, err := unstructured.NestedStringSlice(role.Object, "spec", "actions")
 	if err != nil {
 		return nil, fmt.Errorf("read %s spec.actions: %w", rcaAgentRoleName, err)
 	}
@@ -81,17 +68,12 @@ func ensureRCAAgentRole(ctx context.Context, rc roleClient) ([]string, error) {
 	if len(missing) == 0 {
 		return nil, nil
 	}
-	body, err := rcaAgentRolePatch(missing, found)
-	if err != nil {
-		return nil, err
-	}
-	if err := rc.Patch(ctx, rcaAgentRoleAPIVersion, rcaAgentRoleKind, "", rcaAgentRoleName, types.JSONPatchType, body); err != nil {
+	if err := rc.Patch(ctx, rcaAgentRoleAPIVersion, rcaAgentRoleKind, "", rcaAgentRoleName, types.JSONPatchType, rcaAgentRolePatch(missing)); err != nil {
 		return nil, err
 	}
 	return missing, nil
 }
 
-// missingActions returns the entries of want that have lacks, in want's order.
 func missingActions(have, want []string) []string {
 	held := make(map[string]bool, len(have))
 	for _, a := range have {
@@ -106,34 +88,31 @@ func missingActions(have, want []string) []string {
 	return missing
 }
 
-// rcaAgentRolePatch is the JSON patch that adds actions to the role: one
-// append per action, or the whole list when the role has no actions field.
-func rcaAgentRolePatch(actions []string, haveList bool) ([]byte, error) {
+// rcaAgentRolePatch appends each action to the role's spec.actions.
+func rcaAgentRolePatch(actions []string) []byte {
 	type op struct {
 		Op    string `json:"op"`
 		Path  string `json:"path"`
-		Value any    `json:"value"`
-	}
-	if !haveList {
-		return json.Marshal([]op{{Op: "add", Path: "/spec/actions", Value: actions}})
+		Value string `json:"value"`
 	}
 	ops := make([]op, 0, len(actions))
 	for _, a := range actions {
 		ops = append(ops, op{Op: "add", Path: "/spec/actions/-", Value: a})
 	}
-	return json.Marshal(ops)
+	body, _ := json.Marshal(ops) // cannot fail: a slice of string-only structs
+	return body
 }
 
-// reportRCAAgentRole prints the role step's outcome. A failure is a warning,
-// not an install error: without the actions the agent still completes RCA and
-// remediation, it just cannot see Resources or ResourceReleaseBindings.
+// reportRCAAgentRole prints the role step's outcome. A failure only warns: the
+// agent still completes RCA and remediation without the two actions.
 func reportRCAAgentRole(added []string, err error) {
 	switch {
 	case err != nil:
-		ui.Warn(fmt.Sprintf("Could not add %s to the %s role: %v. "+
-			"The SRE agent's get_resource, list_resource_release_bindings and get_resource_release_binding tools stay unavailable, "+
-			"so RCA cannot see Resources or ResourceReleaseBindings. To grant them, add any action the role lacks: %s",
-			strings.Join(rcaAgentActions, " and "), rcaAgentRoleName, err, rcaAgentRoleManualPatch()))
+		ui.Warn(strings.Join([]string{
+			fmt.Sprintf("Could not add %s to the %s role: %v.", strings.Join(rcaAgentActions, " and "), rcaAgentRoleName, err),
+			"The SRE agent can't use get_resource, list_resource_release_bindings or get_resource_release_binding, so RCA can't see Resources or ResourceReleaseBindings.",
+			"To grant them, add any action the role lacks: " + rcaAgentRoleManualPatch(),
+		}, " "))
 	case len(added) > 0:
 		ui.Detail(fmt.Sprintf("%s += %s", rcaAgentRoleName, strings.Join(added, ", ")))
 	default:
@@ -144,6 +123,5 @@ func reportRCAAgentRole(added []string, err error) {
 // rcaAgentRoleManualPatch is the kubectl command an operator runs when aectl
 // cannot patch the role itself.
 func rcaAgentRoleManualPatch() string {
-	body, _ := rcaAgentRolePatch(rcaAgentActions, true)
-	return fmt.Sprintf("kubectl patch clusterauthzrole.openchoreo.dev %s --type=json -p '%s'", rcaAgentRoleName, body)
+	return fmt.Sprintf("kubectl patch clusterauthzrole.openchoreo.dev %s --type=json -p '%s'", rcaAgentRoleName, rcaAgentRolePatch(rcaAgentActions))
 }

@@ -99,8 +99,7 @@ func runSreUninstall(cmd *cobra.Command, args []string) error {
 
 	// 2. Cluster-scoped CRs — these survive namespace deletion and must be
 	//    removed explicitly. They were created by the sreGrantsTmpl and
-	//    srePlaneCRsTmpl applies in aectl sre install (step 6). The actions
-	//    install adds to the chart's own rca-agent role stay (sre_role.go).
+	//    srePlaneCRsTmpl applies in aectl sre install (step 6).
 	ui.Step("Deleting cluster-scoped CRs")
 	for _, cr := range []struct{ apiVersion, kind, name string }{
 		{"openchoreo.dev/v1alpha1", "ClusterObservabilityPlane", "default"},

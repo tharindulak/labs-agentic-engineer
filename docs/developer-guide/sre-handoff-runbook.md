@@ -138,11 +138,8 @@ picks its plane mode from the cluster:
   `--obs-plane-version` (default `1.2.5`) and `--obs-logs-version`, with
   their secrets, route and `ClusterObservabilityPlane`.
 
-Either way it runs the stock v1.3.0 agent image, and it adds
-`resource:view` and `resourcereleasebinding:view` to the control plane's
-`rca-agent` role where they're missing, which OpenChoreo 1.2.5 needs. If it
-can't, it warns and prints the `kubectl patch` to run by hand. See
-[`sre-agent-install.md`](../../deployments/helm-charts/design/sre-agent-install.md#rca-agent-role).
+Either way it also completes the control plane's
+[`rca-agent` role](../../deployments/helm-charts/design/sre-agent-install.md#rca-agent-role).
 
 See
 [`deployments/helm-charts/design/sre-agent-install.md`](../../deployments/helm-charts/design/sre-agent-install.md)
@@ -237,11 +234,8 @@ bearer and an Anthropic-only key file. Moving to the stock v1.3.0 agent needs
 no OpenChoreo upgrade: it runs on the 1.2.5 plane AE already uses. It is
 still a two-step change, not an in-place config change:
 
-1. **Enable the control-plane gateway's `https` listener,** if it isn't
-   already on. The stock agent's handoff reaches aep-mcp-server over https.
-   OpenChoreo 1.2.5's chart serves the listener with `gateway.tls.enabled`,
-   `gateway.tls.hostname` and `gateway.tls.certificateRefs`, which
-   `make dev-env` sets (`deployments/scripts/setup-env-for-aectl.sh`).
+1. **Enable the control-plane gateway's `https` listener,** which the
+   handoff to aep-mcp-server uses (`make dev-env` enables it).
 2. **Re-run `aectl sre install --org <org> --platform-chart ...`.** This
    replaces the patched image with the stock one, wires the AE-owned Secret
    and push Role, mounts the extensions and CA bundle through the post-
