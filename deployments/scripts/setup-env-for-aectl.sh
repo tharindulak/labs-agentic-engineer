@@ -108,13 +108,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ============================================================================
 # Versions — everything except THUNDER_* is copied straight from the official
-# page for release-v1.2 / v1.2.5. Bump OC_BRANCH/OC_VERSION together if you
-# track a newer release; the Thunder coordinates are independent of both.
+# page for release-v1.2 / v1.2.5 (the minimum AEP's aectl enforces — see
+# tools/aectl/cmd/platform.go's minOCVersion). Bump OC_BRANCH/OC_VERSION together if you track a newer release; the
+# Thunder coordinates are independent of both.
 # ============================================================================
 OC_BRANCH="release-v1.2"
 OC_VERSION="1.2.5"
 CLUSTER_NAME="openchoreo"
 CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"
+
+# Dev control-plane gateway https listener (SRE agent -> aep-mcp-server, see
+# deployments/scripts/setup-sre.sh / tools/aectl/cmd/sre.go's --mcp-hostname).
+# The wildcard covers every *.openchoreo.localhost hostname the gateway
+# fronts (aep-mcp, observer, rca-agent, ...), issued off the control-plane
+# chart's own "cluster-gateway-ca" CA via its "cluster-gateway-selfsigned-
+# issuer" Issuer (both chart-managed, created unconditionally — see
+# install/helm/openchoreo-control-plane/templates/cluster-gateway/{issuer,
+# ca-certificate,selfsigned-issuer}.yaml in the openchoreo/openchoreo repo).
+DEV_GATEWAY_TLS_HOSTNAME="*.openchoreo.localhost"
+DEV_GATEWAY_TLS_SECRET="openchoreo-gateway-wildcard-tls"
+DEV_GATEWAY_CA_ISSUER="cluster-gateway-selfsigned-issuer"
 
 THUNDER_CHART="oci://ghcr.io/thunder-id/helm-charts/thunderid"
 THUNDER_VERSION="1.0.0"
@@ -1027,6 +1040,9 @@ helm upgrade --install openchoreo-control-plane \
     --version "${OC_VERSION}" \
     --namespace openchoreo-control-plane --create-namespace \
     --values "${RAW}/install/k3d/single-cluster/values-cp.yaml" \
+    --set gateway.tls.enabled=true \
+    --set "gateway.tls.hostname=${DEV_GATEWAY_TLS_HOSTNAME}" \
+    --set-json "gateway.tls.certificateRefs=[{\"name\":\"${DEV_GATEWAY_TLS_SECRET}\"}]" \
     --wait --timeout 600s
 
 echo "⏳ Waiting for Control Plane..."
@@ -1053,6 +1069,47 @@ for binding in $(kubectl get clusterauthzrolebindings.openchoreo.dev -o jsonpath
     echo "   ✓ ${binding} -> client_id"
 done
 echo "✅ Entitlement claim is client_id"
+
+# ── rca-agent role: the actions the stock v1.3.0 SRE agent needs ───────────
+# AE runs the v1.3.0 sre-agent image on this 1.2.5 control plane. Its RCA and
+# remediation tools include get_resource, list_resource_release_bindings and
+# get_resource_release_binding, which the MCP server filters out of the tool
+# catalog unless the caller's role holds these two actions. 1.3.0's chart adds
+# them to rca-agent; 1.2.5's doesn't. The role is a list item in the chart's
+# bootstrap.roles values, which Helm can't merge into, so it's patched here.
+for action in resource:view resourcereleasebinding:view; do
+    actions="$(kubectl get clusterauthzrole.openchoreo.dev rca-agent -o jsonpath='{.spec.actions}')"
+    case "$actions" in *"\"${action}\""*) continue ;; esac
+    kubectl patch clusterauthzrole.openchoreo.dev rca-agent --type=json \
+        -p "[{\"op\":\"add\",\"path\":\"/spec/actions/-\",\"value\":\"${action}\"}]" >/dev/null
+    echo "   ✓ rca-agent += ${action}"
+done
+echo "✅ rca-agent role covers the v1.3.0 SRE agent's tools"
+
+# ── Dev gateway https listener cert ─────────────────────────────────────────
+# The Gateway CR above already declares the https listener's certificateRefs
+# (${DEV_GATEWAY_TLS_SECRET}); cert-manager issues into that Secret name once
+# this Certificate exists. Reuses the chart's own "cluster-gateway-ca" CA via
+# its "cluster-gateway-selfsigned-issuer" Issuer (both created unconditionally
+# by the control-plane chart above) rather than standing up a second CA.
+echo "🔐 Issuing the dev gateway's https cert (${DEV_GATEWAY_TLS_SECRET})..."
+kubectl wait -n openchoreo-control-plane --for=condition=Ready certificate/cluster-gateway-ca --timeout=120s
+kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ${DEV_GATEWAY_TLS_SECRET}
+  namespace: openchoreo-control-plane
+spec:
+  secretName: ${DEV_GATEWAY_TLS_SECRET}
+  issuerRef:
+    kind: Issuer
+    name: ${DEV_GATEWAY_CA_ISSUER}
+  dnsNames:
+    - "${DEV_GATEWAY_TLS_HOSTNAME}"
+EOF
+kubectl wait -n openchoreo-control-plane --for=condition=Ready "certificate/${DEV_GATEWAY_TLS_SECRET}" --timeout=120s
+echo "✅ Dev gateway https cert ready"
 
 echo "✅ Control Plane ready"
 
