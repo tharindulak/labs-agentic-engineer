@@ -191,3 +191,30 @@ func (a *Applier) Delete(ctx context.Context, apiVersion, kind, namespace, name 
 	}
 	return nil
 }
+
+// Patch sends one patch of patchType to the object identified by
+// apiVersion/kind/namespace/name, resolving the GVK through discovery.
+// namespace is ignored for cluster-scoped kinds. Unlike ApplyYAML it claims no
+// field ownership, so it is the way to edit a field another manager (a Helm
+// release) owns: a server-side apply of a list would take the whole list.
+func (a *Applier) Patch(ctx context.Context, apiVersion, kind, namespace, name string, patchType types.PatchType, body []byte) error {
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
+	}
+	gvk := gv.WithKind(kind)
+	mapping, err := a.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", gvk.String(), err)
+	}
+	var ri dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		ri = a.dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		ri = a.dyn.Resource(mapping.Resource)
+	}
+	if _, err := ri.Patch(ctx, name, patchType, body, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("patch %s/%s: %w", kind, name, err)
+	}
+	return nil
+}
